@@ -119,7 +119,7 @@ The compiled binary is `target/release/kaijulab`. Always use `--release`; `iced-
 
 ## Usage
 
-### Interactive REPL
+### Interactive TUI (default)
 
 ```bash
 cargo run --release                                      # Gemini (default)
@@ -128,14 +128,30 @@ cargo run --release -- --backend anthropic              # Anthropic Claude
 cargo run --release -- --backend ollama --model llama3.2  # local Ollama
 ```
 
-Type a task in plain English. Conversation history is preserved across turns within the same session.
+KaijuLab opens a full-screen terminal UI with five tabs:
 
 ```
-> What is this binary and what does it do?
-> Show me the strings that look like file paths
-> Disassemble the function starting at 0x401200
-> exit
+ KaijuLab v0.1.0  ·  gemini-2.5-flash  ·  3x17
+ [1] Functions  [2] Disasm  [3] Strings  [4] Imports  [5] Chat
+┌──────────────────────────────────────────────────────────────┐
+│  0x00401a50  31 ed                    xor       ebp, ebp     │
+│  0x00401a52  49 89 d1                 mov       r9, rdx      │
+│  0x00401a55  5e                       pop       rsi          │
+│  …                                                           │
+└──────────────────────────────────────────────────────────────┘
+ ● Ready                           Tab:next  1-5:tab  ↑↓:scroll
+ > Disassemble the main function
 ```
+
+| Key | Action |
+|---|---|
+| `1`–`5` (empty input) | Jump to tab |
+| `Tab` / `Shift+Tab` | Cycle tabs |
+| `↑↓` / `PgUp` / `PgDn` | Scroll panel |
+| `Enter` | Send message to agent |
+| `Ctrl+C` | Quit (or clear input) |
+
+Tool results auto-populate their tab: `list_functions` → **Functions**, `disassemble` → **Disasm**, `strings_extract` → **Strings**, `resolve_plt` → **Imports**. A `●` dot on the tab label indicates new unseen content.
 
 ### One-shot analysis
 
@@ -144,6 +160,14 @@ Pass a binary as a positional argument; KaijuLab analyses it and exits:
 ```bash
 cargo run --release -- /path/to/binary
 cargo run --release -- --backend openai /path/to/binary
+```
+
+### Plain-text REPL (`--no-tui`)
+
+For scripting, piping output, or minimal environments:
+
+```bash
+cargo run --release -- --no-tui
 ```
 
 ### CLI flags
@@ -158,6 +182,7 @@ All env vars can be overridden with flags:
 --location    <REGION> [Gemini] Vertex AI region
 --api-key     <KEY>    [OpenAI/Anthropic] API key
 --base-url    <URL>    [OpenAI/Ollama] API base URL
+--no-tui               Use plain-text REPL instead of the TUI
 ```
 
 ## Available tools
@@ -176,11 +201,12 @@ All env vars can be overridden with flags:
 
 ```
 src/
-├── main.rs          CLI entry point (clap), REPL loop (rustyline), backend factory
+├── main.rs          CLI entry point (clap), mode dispatch, backend factory
 ├── config.rs        BackendKind / BackendConfig — env vars → CLI flags → defaults
-├── agent.rs         Agentic loop — backend-agnostic, drives any LlmBackend
+├── agent.rs         Agentic loop — emits AgentEvent for TUI; falls back to ui:: for one-shot
 ├── tools.rs         RE tool implementations + ToolDefinition list
-├── ui.rs            Terminal rendering: banner, spinner, tool output, response
+├── tui.rs           ratatui TUI — 5-tab layout, async event loop, disasm syntax highlighting
+├── ui.rs            Plain-text helpers for one-shot / --no-tui mode
 └── llm/
     ├── mod.rs       LlmBackend trait + universal types
     ├── gemini.rs    Gemini / Vertex AI backend

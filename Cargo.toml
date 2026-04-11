@@ -26,7 +26,9 @@ clap = { version = "4", features = ["derive"] }
 colored = "2"
 indicatif = "0.17"
 console = "0.15"
-rustyline = "14"
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures-util = "0.3"
 
 # Binary analysis
 object = "0.36"

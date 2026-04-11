@@ -101,23 +101,3 @@ pub fn print_error(msg: &str) {
     eprintln!("\n  {} {}\n", "✗".red().bold(), msg.red());
 }
 
-// ─── Readline prompt ─────────────────────────────────────────────────────────
-
-pub fn readline(rl: &mut rustyline::DefaultEditor) -> Option<String> {
-    let prompt = format!("{} ", ">".green().bold());
-    match rl.readline(&prompt) {
-        Ok(line) => {
-            let trimmed = line.trim().to_string();
-            if !trimmed.is_empty() {
-                let _ = rl.add_history_entry(&trimmed);
-            }
-            Some(trimmed)
-        }
-        Err(rustyline::error::ReadlineError::Interrupted) => None,
-        Err(rustyline::error::ReadlineError::Eof) => None,
-        Err(e) => {
-            eprintln!("readline error: {}", e);
-            None
-        }
-    }
-}

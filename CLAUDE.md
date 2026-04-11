@@ -27,11 +27,12 @@ cargo test --release
 
 ```
 src/
-├── main.rs         CLI (clap) + REPL (rustyline) + backend factory
+├── main.rs         CLI (clap) + backend factory + mode dispatch
 ├── config.rs       BackendKind / BackendConfig — load from env vars or CLI flags
-├── agent.rs        Agentic loop — drives any LlmBackend, no backend knowledge
+├── agent.rs        Agentic loop — drives any LlmBackend; emits AgentEvent for TUI
 ├── tools.rs        RE tool implementations + ToolDefinition list
-├── ui.rs           Terminal rendering (banner, spinner, tool output, response)
+├── tui.rs          Full ratatui TUI — 5-tab layout, disasm syntax highlighting
+├── ui.rs           Plain-text fallback helpers (one-shot / --no-tui mode)
 └── llm/
     ├── mod.rs      LlmBackend trait + universal types
     │               (LlmMessage, MessageContent, ToolCall, ToolResult, ToolDefinition)
@@ -39,6 +40,47 @@ src/
     ├── openai.rs   OpenAI + Ollama     — OpenAI-compatible /chat/completions
     └── anthropic.rs  Anthropic Claude  — x-api-key, input_schema, tool_use blocks
 ```
+
+## UI modes
+
+| Mode | When | How |
+|---|---|---|
+| TUI (default) | Interactive REPL | Full ratatui TUI with 5 tabs |
+| Plain-text REPL | `--no-tui` flag | Old spinner/print output |
+| One-shot | Positional `FILE` argument | Plain-text output, then exit |
+
+### TUI layout
+
+```
+ KaijuLab v0.1.0  ·  gemini-2.5-flash  ·  3x17
+ [1] Functions  [2] Disasm  [3] Strings  [4] Imports  [5] Chat
+┌─────────────────────────────────────────────────────────────┐
+│  (scrollable content of active tab)                         │
+│                                                             │
+│  Disasm: address=yellow, bytes=gray, mnemonic=cyan,         │
+│          registers=green, immediates=magenta                │
+└─────────────────────────────────────────────────────────────┘
+ ● Ready                          Tab:next  1-5:tab  ↑↓:scroll
+ > _
+```
+
+### TUI key bindings
+
+| Key | Action |
+|---|---|
+| `1`–`5` (empty input) | Jump to tab |
+| `Tab` / `Shift+Tab` | Cycle tabs |
+| `↑↓` / `PgUp` / `PgDn` | Scroll active panel |
+| `Enter` | Send message to agent |
+| `Ctrl+C` (empty input) | Quit |
+| `Ctrl+C` (non-empty) | Clear input |
+
+### TUI architecture
+
+- `agent.rs` emits `AgentEvent` via `tokio::sync::mpsc::UnboundedChannel`
+- `tui::run_tui()` drives a `tokio::select!` loop over agent events + `crossterm::EventStream`
+- Tool results auto-populate the matching tab (`list_functions`→Functions, etc.) and mark it dirty (●)
+- Chat tab always shows the full conversation with inline tool-call previews
 
 ## Credentials — never hardcode
 
