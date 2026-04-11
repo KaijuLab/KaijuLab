@@ -56,3 +56,9 @@ anyhow = "1"
 
 # DWARF debug-info parsing
 gimli = "0.31"
+
+# Persistent project database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Windows PDB symbol loading
+pdb = "0.8"

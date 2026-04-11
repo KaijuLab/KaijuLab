@@ -1,12 +1,14 @@
-//! Persistent project sidecar — stores renames, comments, type annotations,
-//! and struct definitions across sessions.
+//! Persistent project database — stores renames, comments, type annotations,
+//! struct definitions, and vulnerability scores across sessions.
 //!
-//! The sidecar lives at `<binary>.kaiju.json` next to the binary.
-//! All data is plain JSON — human-readable and diff-friendly.
+//! Storage: SQLite (`.kaiju.db` next to the binary).
+//! Migration: if a legacy `.kaiju.json` sidecar is found and no `.kaiju.db`
+//! exists yet, the JSON is loaded and immediately migrated to SQLite.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 // ─── Struct definitions ───────────────────────────────────────────────────────
@@ -74,23 +76,81 @@ pub struct Project {
     /// Virtual address → analyst comment.
     pub comments: HashMap<u64, String>,
     /// fn_vaddr → { decompiler_var_name → user_name }
-    ///
-    /// Keys are the names as they appear in decompiler output *before* this
-    /// project's substitutions are applied (e.g. "RAX", "var_1", "arg_1").
     pub var_renames: HashMap<u64, HashMap<String, String>>,
     /// fn_vaddr → signature (return type + param types/names)
     pub signatures: HashMap<u64, FunctionSignature>,
     /// Named struct definitions, keyed by struct name.
     pub structs: HashMap<String, StructDef>,
-    /// The path to the sidecar file (not serialized).
+    /// fn_vaddr → vulnerability suspicion score (0–10).
+    pub vuln_scores: HashMap<u64, u8>,
+
+    /// SQLite database path (not serialized — set at load time).
+    #[serde(skip)]
+    pub db_path_field: Option<PathBuf>,
+    /// Legacy JSON sidecar path, kept for migration detection (not serialized).
     #[serde(skip)]
     pub sidecar_path: Option<PathBuf>,
 }
 
-impl Project {
-    // ── Persistence ──────────────────────────────────────────────────────────
+// ─── Helper: encode/decode vaddrs as "0x{:016x}" TEXT ─────────────────────────
 
-    /// Derive the sidecar path for a given binary path.
+fn vaddr_key(v: u64) -> String {
+    format!("0x{:016x}", v)
+}
+
+fn parse_vaddr(s: &str) -> u64 {
+    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    u64::from_str_radix(hex, 16).unwrap_or(0)
+}
+
+// ─── SQLite schema ────────────────────────────────────────────────────────────
+
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS renames (
+    vaddr TEXT PRIMARY KEY,
+    name  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS comments (
+    vaddr TEXT PRIMARY KEY,
+    text  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS var_renames (
+    fn_vaddr TEXT NOT NULL,
+    old_name TEXT NOT NULL,
+    new_name TEXT NOT NULL,
+    PRIMARY KEY (fn_vaddr, old_name)
+);
+CREATE TABLE IF NOT EXISTS signatures (
+    fn_vaddr TEXT PRIMARY KEY,
+    data     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS structs (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vuln_scores (
+    vaddr TEXT    PRIMARY KEY,
+    score INTEGER NOT NULL
+);
+";
+
+impl Project {
+    // ── Path helpers ──────────────────────────────────────────────────────────
+
+    /// Path to the SQLite database for a binary (primary storage).
+    pub fn db_path(binary: &str) -> PathBuf {
+        let p = PathBuf::from(binary);
+        let name = p
+            .file_name()
+            .map(|n| format!("{}.kaiju.db", n.to_string_lossy()))
+            .unwrap_or_else(|| "binary.kaiju.db".to_string());
+        let mut dir = p.clone();
+        dir.pop();
+        dir.push(name);
+        dir
+    }
+
+    /// Path to the legacy JSON sidecar (used for migration only).
     pub fn project_path(binary: &str) -> PathBuf {
         let p = PathBuf::from(binary);
         let name = p
@@ -103,36 +163,195 @@ impl Project {
         dir
     }
 
-    /// Load the project for a binary, or return an empty project if no sidecar exists.
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    /// Load the project for a binary.
+    /// Checks for `.kaiju.db` first; falls back to `.kaiju.json` (migrating it
+    /// automatically to SQLite on first load); returns an empty project if neither exists.
     pub fn load_for(binary: &str) -> Self {
-        let path = Self::project_path(binary);
-        if !path.exists() {
-            return Self {
-                sidecar_path: Some(path),
-                ..Default::default()
-            };
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(s) => {
-                let mut p: Project = serde_json::from_str(&s).unwrap_or_default();
-                p.sidecar_path = Some(path);
-                p
+        let db   = Self::db_path(binary);
+        let json = Self::project_path(binary);
+
+        if db.exists() {
+            if let Ok(p) = Self::load_from_db(&db) {
+                return p;
             }
-            Err(_) => Self {
-                sidecar_path: Some(path),
-                ..Default::default()
-            },
+        }
+
+        if json.exists() {
+            let mut p = Self::load_from_json(&json);
+            p.db_path_field = Some(db.clone());
+            p.sidecar_path  = Some(json);
+            // Migrate JSON → SQLite (best-effort; ignore errors)
+            let _ = p.save();
+            return p;
+        }
+
+        // No existing data
+        Project {
+            db_path_field: Some(db),
+            sidecar_path:  Some(json),
+            ..Default::default()
         }
     }
 
-    /// Persist to the sidecar file.
+    fn load_from_db(path: &PathBuf) -> anyhow::Result<Self> {
+        let conn = Connection::open(path)?;
+        Self::init_schema(&conn)?;
+
+        let mut p = Project {
+            db_path_field: Some(path.clone()),
+            ..Default::default()
+        };
+
+        // renames
+        {
+            let mut stmt = conn.prepare("SELECT vaddr, name FROM renames")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows.flatten() {
+                p.renames.insert(parse_vaddr(&row.0), row.1);
+            }
+        }
+        // comments
+        {
+            let mut stmt = conn.prepare("SELECT vaddr, text FROM comments")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows.flatten() {
+                p.comments.insert(parse_vaddr(&row.0), row.1);
+            }
+        }
+        // var_renames
+        {
+            let mut stmt = conn.prepare("SELECT fn_vaddr, old_name, new_name FROM var_renames")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            for row in rows.flatten() {
+                p.var_renames
+                    .entry(parse_vaddr(&row.0))
+                    .or_default()
+                    .insert(row.1, row.2);
+            }
+        }
+        // signatures
+        {
+            let mut stmt = conn.prepare("SELECT fn_vaddr, data FROM signatures")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows.flatten() {
+                if let Ok(sig) = serde_json::from_str::<FunctionSignature>(&row.1) {
+                    p.signatures.insert(parse_vaddr(&row.0), sig);
+                }
+            }
+        }
+        // structs
+        {
+            let mut stmt = conn.prepare("SELECT name, data FROM structs")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows.flatten() {
+                if let Ok(def) = serde_json::from_str::<StructDef>(&row.1) {
+                    p.structs.insert(row.0, def);
+                }
+            }
+        }
+        // vuln_scores
+        {
+            let mut stmt = conn.prepare("SELECT vaddr, score FROM vuln_scores")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            for row in rows.flatten() {
+                p.vuln_scores.insert(parse_vaddr(&row.0), row.1.clamp(0, 10) as u8);
+            }
+        }
+
+        Ok(p)
+    }
+
+    fn load_from_json(path: &PathBuf) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Project>(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn init_schema(conn: &Connection) -> anyhow::Result<()> {
+        conn.execute_batch(SCHEMA)?;
+        Ok(())
+    }
+
+    /// Persist to the SQLite database.
     pub fn save(&self) -> anyhow::Result<()> {
         let path = self
-            .sidecar_path
+            .db_path_field
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("No sidecar path set"))?;
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+            .ok_or_else(|| anyhow::anyhow!("No database path set"))?;
+
+        let conn = Connection::open(path)?;
+        Self::init_schema(&conn)?;
+
+        // Clear and rewrite (simple; fine for project sizes we handle)
+        conn.execute_batch("
+            DELETE FROM renames;
+            DELETE FROM comments;
+            DELETE FROM var_renames;
+            DELETE FROM signatures;
+            DELETE FROM structs;
+            DELETE FROM vuln_scores;
+        ")?;
+
+        for (vaddr, name) in &self.renames {
+            conn.execute(
+                "INSERT INTO renames (vaddr, name) VALUES (?1, ?2)",
+                params![vaddr_key(*vaddr), name],
+            )?;
+        }
+        for (vaddr, text) in &self.comments {
+            conn.execute(
+                "INSERT INTO comments (vaddr, text) VALUES (?1, ?2)",
+                params![vaddr_key(*vaddr), text],
+            )?;
+        }
+        for (fn_vaddr, renames) in &self.var_renames {
+            for (old, new) in renames {
+                conn.execute(
+                    "INSERT INTO var_renames (fn_vaddr, old_name, new_name) VALUES (?1, ?2, ?3)",
+                    params![vaddr_key(*fn_vaddr), old, new],
+                )?;
+            }
+        }
+        for (fn_vaddr, sig) in &self.signatures {
+            let data = serde_json::to_string(sig)?;
+            conn.execute(
+                "INSERT INTO signatures (fn_vaddr, data) VALUES (?1, ?2)",
+                params![vaddr_key(*fn_vaddr), data],
+            )?;
+        }
+        for (name, def) in &self.structs {
+            let data = serde_json::to_string(def)?;
+            conn.execute(
+                "INSERT INTO structs (name, data) VALUES (?1, ?2)",
+                params![name, data],
+            )?;
+        }
+        for (vaddr, score) in &self.vuln_scores {
+            conn.execute(
+                "INSERT INTO vuln_scores (vaddr, score) VALUES (?1, ?2)",
+                params![vaddr_key(*vaddr), *score as i64],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -187,6 +406,11 @@ impl Project {
         self.structs.insert(def.name.clone(), def);
     }
 
+    /// Set or update the vulnerability suspicion score for a function (0 = clean, 10 = critical).
+    pub fn set_vuln_score(&mut self, vaddr: u64, score: u8) {
+        self.vuln_scores.insert(vaddr, score.min(10));
+    }
+
     // ── Lookups ──────────────────────────────────────────────────────────────
 
     pub fn get_name(&self, vaddr: u64) -> Option<String> {
@@ -199,6 +423,10 @@ impl Project {
 
     pub fn get_signature(&self, fn_vaddr: u64) -> Option<&FunctionSignature> {
         self.signatures.get(&fn_vaddr)
+    }
+
+    pub fn get_vuln_score(&self, vaddr: u64) -> Option<u8> {
+        self.vuln_scores.get(&vaddr).copied()
     }
 }
 
@@ -225,6 +453,14 @@ mod tests {
         assert_eq!(
             Project::project_path("/tmp/mybinary"),
             PathBuf::from("/tmp/mybinary.kaiju.json")
+        );
+    }
+
+    #[test]
+    fn db_path_adds_kaiju_db() {
+        assert_eq!(
+            Project::db_path("/tmp/mybinary"),
+            PathBuf::from("/tmp/mybinary.kaiju.db")
         );
     }
 
@@ -301,7 +537,6 @@ mod tests {
 
     #[test]
     fn set_param_type_sparse_no_panic() {
-        // Setting param 3 without setting 1 or 2 must not panic
         let mut p = Project::default();
         p.set_param_type(0x401000, 3, "int".to_string());
         let sig = p.get_signature(0x401000).unwrap();
@@ -319,6 +554,18 @@ mod tests {
         let sig = p.get_signature(0x401000).unwrap();
         assert_eq!(sig.param_names[0].as_deref(), Some("url"));
         assert_eq!(sig.param_names[1].as_deref(), Some("url_len"));
+    }
+
+    // ── vuln scores ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn vuln_score_clamp() {
+        let mut p = Project::default();
+        p.set_vuln_score(0x401000, 255); // clamped to 10
+        assert_eq!(p.get_vuln_score(0x401000), Some(10));
+        p.set_vuln_score(0x401000, 7);
+        assert_eq!(p.get_vuln_score(0x401000), Some(7));
+        assert_eq!(p.get_vuln_score(0x999999), None);
     }
 
     // ── struct definitions ───────────────────────────────────────────────────
@@ -359,7 +606,7 @@ mod tests {
             ],
         };
         assert_eq!(def.field_at(0).map(|f| f.name.as_str()), Some("a"));
-        assert_eq!(def.field_at(3).map(|f| f.name.as_str()), Some("a")); // still inside field a
+        assert_eq!(def.field_at(3).map(|f| f.name.as_str()), Some("a"));
         assert_eq!(def.field_at(4).map(|f| f.name.as_str()), Some("b"));
         assert!(def.field_at(8).is_none());
     }
@@ -381,12 +628,12 @@ mod tests {
         assert!(c.trim_end().ends_with("};"));
     }
 
-    // ── save / load roundtrip ────────────────────────────────────────────────
+    // ── save / load roundtrip (SQLite) ───────────────────────────────────────
 
     #[test]
     fn save_load_roundtrip() {
         let bin = fake_bin_path();
-        let sidecar = Project::project_path(&bin);
+        let db = Project::db_path(&bin);
 
         {
             let mut p = Project::load_for(&bin);
@@ -396,6 +643,7 @@ mod tests {
             p.set_return_type(0x401000, "int".to_string());
             p.set_param_type(0x401000, 1, "int".to_string());
             p.set_param_name(0x401000, 1, "argc".to_string());
+            p.set_vuln_score(0x401000, 8);
             p.define_struct(StructDef {
                 name: "ctx".to_string(),
                 total_size: 8,
@@ -408,7 +656,7 @@ mod tests {
             p.save().expect("save failed");
         }
 
-        assert!(sidecar.exists(), "sidecar file should have been created");
+        assert!(db.exists(), "database file should have been created");
 
         let p2 = Project::load_for(&bin);
         assert_eq!(p2.get_name(0x401000), Some("main".to_string()));
@@ -423,8 +671,9 @@ mod tests {
             Some("int")
         );
         assert!(p2.structs.contains_key("ctx"));
+        assert_eq!(p2.get_vuln_score(0x401000), Some(8));
 
-        let _ = std::fs::remove_file(&sidecar);
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]
@@ -435,5 +684,6 @@ mod tests {
         assert!(p.var_renames.is_empty());
         assert!(p.signatures.is_empty());
         assert!(p.structs.is_empty());
+        assert!(p.vuln_scores.is_empty());
     }
 }

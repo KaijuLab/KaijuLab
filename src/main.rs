@@ -168,13 +168,24 @@ Available commands:
   strings       <path> [min_len]        Extract strings
   disassemble   <path> [vaddr]          Disassemble at vaddr (default: entry point)
   functions     <path> [max]            List functions
-  imports       <path>                  Resolve PLT imports
+  imports       <path>                  Resolve PLT / PE imports
   decompile     <path> [vaddr]          Decompile function at vaddr (default: entry point)
+  decompile_flat <path> <base> <vaddr> [arch]  Decompile from raw firmware
   xrefs         <path> <vaddr>          Cross-references (callers) to a function
+  callgraph     <path>                  Static call graph for the binary
+  cfg           <path> <vaddr>          Control flow graph for a function
   dwarf         <path>                  DWARF function info from debug symbols
-  rename        <path> <vaddr> <name>   Assign a name to a function (saved in .kaiju.json)
+  scan          <path> [max_fns]        Prepare vulnerability scan (top N functions)
+  explain       <path> <vaddr>          Explain a function (decompile + analysis prompt)
+  identify      <path>                  Identify known library functions by signature
+  diff          <path_a> <path_b>       Diff two binaries by function content
+  auto          <path> [top_n]          Full auto-analysis pass
+  report        <path>                  Export HTML analysis report
+  pdb           <binary> <pdb_file>     Load PDB symbols into project
+  rename        <path> <vaddr> <name>   Assign a name to a function
   comment       <path> <vaddr> <text>   Attach a comment to an address
   project       <path>                  Show saved renames/comments for a binary
+  types         <path>                  Show all type annotations
   help                                  Show this message
 
 Example:  disassemble /bin/ls 0x5880";
@@ -234,11 +245,6 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             run_tool("list_functions", json!({"path": path, "max_results": max}), tx);
         }
 
-        "imports" | "plt" => {
-            let path = parts.get(1).copied().unwrap_or("");
-            run_tool("resolve_plt", json!({"path": path}), tx);
-        }
-
         "decompile" => {
             let path  = parts.get(1).copied().unwrap_or("");
             let vaddr = parts.get(2).and_then(|s| parse_int(s)).or_else(|| {
@@ -278,6 +284,86 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         "project" => {
             let path = parts.get(1).copied().unwrap_or("");
             run_tool("load_project", json!({"path": path}), tx);
+        }
+
+        "types" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("list_types", json!({"path": path}), tx);
+        }
+
+        "imports" | "plt" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            // Try PE first, fall back to ELF PLT
+            let data = std::fs::read(path).unwrap_or_default();
+            let is_pe = matches!(
+                goblin::Object::parse(&data),
+                Ok(goblin::Object::PE(_))
+            );
+            if is_pe {
+                run_tool("resolve_pe_imports", json!({"path": path}), tx);
+            } else {
+                run_tool("resolve_plt", json!({"path": path}), tx);
+            }
+        }
+
+        "callgraph" | "call_graph" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("call_graph", json!({"path": path}), tx);
+        }
+
+        "cfg" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("cfg_view", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        "scan" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let max_fns = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(5);
+            run_tool("scan_vulnerabilities", json!({"path": path, "max_fns": max_fns}), tx);
+        }
+
+        "explain" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("explain_function", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        "identify" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("identify_library_functions", json!({"path": path}), tx);
+        }
+
+        "diff" => {
+            let path_a = parts.get(1).copied().unwrap_or("");
+            let path_b = parts.get(2).copied().unwrap_or("");
+            run_tool("diff_binary", json!({"path_a": path_a, "path_b": path_b}), tx);
+        }
+
+        "auto" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let top_n = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(5);
+            run_tool("auto_analyze", json!({"path": path, "top_n": top_n}), tx);
+        }
+
+        "report" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("export_report", json!({"path": path}), tx);
+        }
+
+        "pdb" => {
+            let binary = parts.get(1).copied().unwrap_or("");
+            let pdb    = parts.get(2).copied().unwrap_or("");
+            run_tool("load_pdb", json!({"binary_path": binary, "pdb_path": pdb}), tx);
+        }
+
+        "decompile_flat" => {
+            let path      = parts.get(1).copied().unwrap_or("");
+            let base_addr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let vaddr     = parts.get(3).and_then(|s| parse_int(s)).unwrap_or(0);
+            let arch      = parts.get(4).copied().unwrap_or("x86_64");
+            run_tool("decompile_flat",
+                json!({"path": path, "base_addr": base_addr, "vaddr": vaddr, "arch": arch}), tx);
         }
 
         other => {

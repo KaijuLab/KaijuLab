@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -39,6 +41,9 @@ pub enum AgentEvent {
     Focus { vaddr: u64, tool: String },
     /// Snapshot of the current LLM context window, for the Context tab.
     ContextUpdate(Vec<ContextEntry>),
+    /// Updated vulnerability scores from a scan_vulnerabilities / set_vuln_score run.
+    /// Maps fn_vaddr → score (0–10). TUI uses these for [!] badges in Functions tab.
+    VulnScores(HashMap<u64, u8>),
 }
 
 /// Estimated character budget before we start trimming old tool-result messages.
@@ -197,6 +202,14 @@ impl Agent {
                     ui::print_tool_output(&tool_out.output);
                 }
 
+                // After set_vuln_score, reload the project and broadcast updated scores
+                if tc.name == "set_vuln_score" {
+                    if let Some(path) = tc.args["path"].as_str() {
+                        let p = crate::project::Project::load_for(path);
+                        self.emit(AgentEvent::VulnScores(p.vuln_scores.clone()));
+                    }
+                }
+
                 results.push(ToolResult {
                     call_id: tc.id.clone(),
                     name: tc.name.clone(),
@@ -308,9 +321,9 @@ mod tests {
 /// Used to drive the Focus event for active highlighting in the TUI.
 fn extract_focus_vaddr(tool: &str, args: &serde_json::Value) -> Option<u64> {
     match tool {
-        "disassemble" | "decompile" | "xrefs_to"
+        "disassemble" | "decompile" | "xrefs_to" | "cfg_view" | "explain_function"
         | "rename_function" | "rename_variable"
-        | "set_return_type" | "set_param_type" | "set_param_name" => {
+        | "set_return_type" | "set_param_type" | "set_param_name" | "set_vuln_score" => {
             args["vaddr"].as_u64().or_else(|| args["fn_vaddr"].as_u64())
         }
         _ => None,

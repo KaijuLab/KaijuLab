@@ -41,6 +41,84 @@ pub fn decompile_function(path: &str, vaddr: u64) -> String {
     }
 }
 
+/// Decompile a function from a raw flat binary (firmware / shellcode) loaded
+/// at `base_addr`.  `arch_str` selects the SLEIGH language:
+///   "x86_64" | "x86_32" | "aarch64" | "arm32"
+pub fn decompile_function_flat(path: &str, base_addr: u64, vaddr: u64, arch_str: &str) -> String {
+    match decompile_flat_inner(path, base_addr, vaddr, arch_str) {
+        Ok(text) => text,
+        Err(e)   => format!("Decompiler error: {e}"),
+    }
+}
+
+fn decompile_flat_inner(
+    path: &str,
+    base_addr: u64,
+    vaddr: u64,
+    arch_str: &str,
+) -> anyhow::Result<String> {
+    let data = std::fs::read(path)
+        .map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
+
+    let dir = sleigh_dir();
+    let (ldefs_file, lang_id) = match arch_str {
+        "x86_64" | "x86-64" => (
+            dir.join("Processors/x86/data/languages/x86.ldefs"),
+            "x86:LE:64:default",
+        ),
+        "x86_32" | "x86-32" | "x86" => (
+            dir.join("Processors/x86/data/languages/x86.ldefs"),
+            "x86:LE:32:default",
+        ),
+        "aarch64" | "arm64" => (
+            dir.join("Processors/AARCH64/data/languages/AARCH64.ldefs"),
+            "AARCH64:LE:64:v8A",
+        ),
+        "arm32" | "arm" => (
+            dir.join("Processors/ARM/data/languages/ARM.ldefs"),
+            "ARM:LE:32:v8",
+        ),
+        other => {
+            return Err(anyhow::anyhow!(
+                "Unknown arch '{}' — use x86_64, x86_32, aarch64, or arm32",
+                other
+            ))
+        }
+    };
+
+    let ldefs_str = ldefs_file
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid SLEIGH path"))?
+        .to_string();
+
+    let lang = sleigh_compile::SleighLanguageBuilder::new(&ldefs_str, lang_id)
+        .build()
+        .map_err(|e| anyhow::anyhow!("SLEIGH build failed: {e:?}"))?;
+
+    let mut memory = Memory::new(lang);
+
+    // Load the entire file as a single flat segment at base_addr
+    let literal = memory::LiteralState::from_bytes(base_addr, data.clone());
+    let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+
+    let addr = Address(vaddr);
+    lift_function(addr, &mut memory)
+        .map_err(|e| anyhow::anyhow!("Lift failed at 0x{:x}: {e}", vaddr))?;
+
+    let hf = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        HighFunction::from_mem(addr, &memory)
+    }))
+    .map_err(|e| anyhow::anyhow!("HighFunction panicked: {:?}", panic_msg(e)))?;
+
+    hf.fill_global_symbols(&mut memory);
+
+    let ast = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hf.build_ast(&memory)))
+        .map_err(|e| anyhow::anyhow!("AST build panicked: {:?}", panic_msg(e)))?;
+
+    let output = render_ast(&ast, &hf, &memory);
+    Ok(output)
+}
+
 fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
 

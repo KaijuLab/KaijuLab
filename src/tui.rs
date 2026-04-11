@@ -121,6 +121,8 @@ pub struct App {
     pub history_cursor: Option<usize>,
     /// Saved live input while the user is browsing history.
     pub input_saved: String,
+    /// fn_vaddr → vulnerability score (0–10), drives [!] / [!!] badges.
+    pub fn_vuln_scores: std::collections::HashMap<u64, u8>,
 }
 
 impl App {
@@ -143,6 +145,7 @@ impl App {
             input_history: Vec::new(),
             history_cursor: None,
             input_saved: String::new(),
+            fn_vuln_scores: std::collections::HashMap::new(),
         }
     }
 
@@ -223,6 +226,12 @@ impl App {
                     })
                     .collect();
                 self.tab_dirty[Tab::Context as usize] = true;
+            }
+
+            AgentEvent::VulnScores(scores) => {
+                self.fn_vuln_scores.extend(scores);
+                // Re-mark Functions tab dirty so badges render immediately
+                self.tab_dirty[Tab::Functions as usize] = true;
             }
         }
     }
@@ -772,7 +781,10 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
                 }
             })
             .collect(),
-        Tab::Functions => raw.iter().map(|l| highlight_addr_table(l)).collect(),
+        Tab::Functions => raw
+            .iter()
+            .map(|l| highlight_fn_line(l, &app.fn_vuln_scores))
+            .collect(),
         Tab::Imports   => raw.iter().map(|l| highlight_addr_table(l)).collect(),
         Tab::Strings   => raw.iter().map(|l| highlight_strings(l)).collect(),
         Tab::Decompile => raw.iter().map(|l| highlight_decompile(l)).collect(),
@@ -1043,6 +1055,47 @@ fn highlight_disasm(line: &str) -> Line<'static> {
     }
 
     Line::from(spans)
+}
+
+/// Highlight a Functions-tab line, injecting a [!] or [!!] badge when a
+/// vulnerability score is known for the address on that line.
+fn highlight_fn_line(
+    line: &str,
+    scores: &std::collections::HashMap<u64, u8>,
+) -> Line<'static> {
+    let t = line.trim_start_matches("  ");
+    if t.starts_with("0x") {
+        if let Some(sp) = t.find(|c: char| c.is_whitespace()) {
+            let addr_str = &t[..sp];
+            let name     = t[sp..].trim_start();
+            let vaddr    = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16)
+                .unwrap_or(0);
+
+            let badge: Option<Span<'static>> = scores.get(&vaddr).and_then(|&s| {
+                if s >= 7 {
+                    Some(Span::styled(" [!!]", Style::new().fg(Color::Red).bold()))
+                } else if s >= 4 {
+                    Some(Span::styled(" [!]", Style::new().fg(Color::Yellow).bold()))
+                } else if s > 0 {
+                    Some(Span::styled(" [·]", Style::new().fg(Color::DarkGray)))
+                } else {
+                    None
+                }
+            });
+
+            let mut spans: Vec<Span<'static>> = vec![
+                Span::raw("  "),
+                Span::styled(addr_str.to_string(), Style::new().fg(Color::Yellow)),
+                Span::raw("  "),
+                Span::styled(name.to_string(), Style::new().fg(Color::Green)),
+            ];
+            if let Some(b) = badge {
+                spans.push(b);
+            }
+            return Line::from(spans);
+        }
+    }
+    Line::styled(line.to_string(), Style::new().fg(Color::DarkGray))
 }
 
 /// Highlight a line of the form `  0x<addr>  <name>` (functions / PLT table).
