@@ -1,7 +1,10 @@
 use std::io;
 
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -112,6 +115,12 @@ pub struct App {
     pub focused_addr: Option<u64>,
     /// Live snapshot of the LLM context window.
     pub context_entries: Vec<ContextEntry>,
+    /// Messages the user has sent (most recent last), for ↑↓ history navigation.
+    pub input_history: Vec<String>,
+    /// Current position in `input_history` while navigating; `None` when at the live input.
+    pub history_cursor: Option<usize>,
+    /// Saved live input while the user is browsing history.
+    pub input_saved: String,
 }
 
 impl App {
@@ -131,6 +140,9 @@ impl App {
             should_quit: false,
             focused_addr: None,
             context_entries: Vec::new(),
+            input_history: Vec::new(),
+            history_cursor: None,
+            input_saved: String::new(),
         }
     }
 
@@ -263,15 +275,40 @@ impl App {
                 None
             }
 
-            // Scrolling
+            // ↑↓ — command history navigation (touchpad scrolls via mouse events)
             KeyCode::Up => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_add(3);
+                if self.input_history.is_empty() {
+                    return None;
+                }
+                let new_cursor = match self.history_cursor {
+                    None => {
+                        self.input_saved = self.input.clone();
+                        self.input_history.len() - 1
+                    }
+                    Some(i) if i > 0 => i - 1,
+                    Some(i) => i, // already at oldest entry
+                };
+                self.history_cursor = Some(new_cursor);
+                self.input = self.input_history[new_cursor].clone();
+                self.input_cursor = self.input.len();
                 None
             }
             KeyCode::Down => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_sub(3);
+                match self.history_cursor {
+                    None => {} // not in history mode
+                    Some(i) if i + 1 < self.input_history.len() => {
+                        let next = i + 1;
+                        self.history_cursor = Some(next);
+                        self.input = self.input_history[next].clone();
+                        self.input_cursor = self.input.len();
+                    }
+                    Some(_) => {
+                        // Past the newest entry — return to live input
+                        self.history_cursor = None;
+                        self.input = self.input_saved.clone();
+                        self.input_cursor = self.input.len();
+                    }
+                }
                 None
             }
             KeyCode::PageUp => {
@@ -291,6 +328,12 @@ impl App {
                 if msg.is_empty() || self.is_loading {
                     return None;
                 }
+                // Record in history (skip consecutive duplicates)
+                if self.input_history.last().map_or(true, |last| last != &msg) {
+                    self.input_history.push(msg.clone());
+                }
+                self.history_cursor = None;
+                self.input_saved = String::new();
                 self.chat.push(ChatMsg::User(msg.clone()));
                 self.input.clear();
                 self.input_cursor = 0;
@@ -334,11 +377,29 @@ impl App {
                 None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Typing a character exits history-navigation mode
+                self.history_cursor = None;
+                self.input_saved = String::new();
                 self.input.insert(self.input_cursor, c);
                 self.input_cursor += 1;
                 None
             }
             _ => None,
+        }
+    }
+
+    /// Handle a mouse event (scroll wheel / touchpad).
+    pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) {
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                let s = &mut self.scroll[self.active_tab as usize];
+                *s = s.saturating_add(3);
+            }
+            MouseEventKind::ScrollDown => {
+                let s = &mut self.scroll[self.active_tab as usize];
+                *s = s.saturating_sub(3);
+            }
+            _ => {}
         }
     }
 }
@@ -351,10 +412,10 @@ pub async fn run_tui(
     backend_name: &str,
     initial_file: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    // Enter alternate screen
+    // Enter alternate screen and enable mouse for scroll events
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -374,7 +435,7 @@ pub async fn run_tui(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original_hook(info);
     }));
 
@@ -398,6 +459,9 @@ pub async fn run_tui(
                             user_tx.send(msg).await?;
                         }
                     }
+                    Some(Ok(Event::Mouse(mouse))) => {
+                        app.handle_mouse(mouse);
+                    }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.autoresize()?;
                     }
@@ -418,7 +482,7 @@ pub async fn run_tui(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -734,7 +798,7 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         ("●", Color::Green)
     };
 
-    let keybinds = "Tab:next  1-7:tab  ↑↓:scroll  Ctrl+C:quit";
+    let keybinds = "Tab:next  1-7:tab  ↑↓:history  PgUp/Dn:scroll  Ctrl+C:quit";
     let status = format!(" {} {}", icon, app.status);
 
     // Right-align the keybind hint
