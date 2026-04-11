@@ -30,6 +30,7 @@ rustyline = "14"
 
 # Binary analysis
 object = "0.36"
+goblin = "0.8"
 iced-x86 = "1"
 
 # Auth

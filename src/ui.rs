@@ -71,7 +71,7 @@ pub fn print_tool_output(output: &str) {
             "│".dimmed(),
             "…".yellow(),
             (lines.len() - MAX_LINES).to_string().yellow(),
-            "more lines (truncated)".dimmed()
+            "more lines (shown to LLM, truncated here)".dimmed()
         );
     }
     println!("  {}", "└─────────────────────────────────────────────────────────┘".dimmed());

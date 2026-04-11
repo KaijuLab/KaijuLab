@@ -17,7 +17,7 @@ cargo run --release -- /path/to/binary                   # one-shot analysis
 cargo run --release -- --help                            # flag reference
 ```
 
-Run tests (none yet, but for future work):
+Run tests:
 
 ```bash
 cargo test --release
@@ -90,6 +90,25 @@ impl LlmBackend for MyBackend {
 4. Add a variant to `BackendKind` and `BackendConfig` in `src/config.rs`.
 
 5. Add a match arm in `build_backend()` in `src/main.rs`.
+
+## Available RE tools
+
+| Tool | Key behaviour |
+|---|---|
+| `file_info` | Includes LOAD segment table (vaddr ↔ file offset) — the LLM needs this to call `disassemble` correctly |
+| `hexdump` | Raw file offset only |
+| `strings_extract` | Optional `section` param (e.g. `.rodata`) narrows scan to avoid opcode noise |
+| `disassemble` | Accepts `vaddr` — auto-translates to file offset via LOAD segments; or raw `offset` |
+| `read_section` | Hex dump of a named section |
+| `resolve_plt` | `.rela.plt` + `.dynsym` → stub address → symbol name map (ELF only, uses goblin) |
+| `list_functions` | Symbol table if available; prologue scan (`endbr64` / `push rbp; mov rbp,rsp`) for stripped binaries |
+
+### vaddr / file-offset distinction
+
+ELF virtual addresses ≠ file offsets.  The `disassemble` tool now internally
+resolves vaddr → file offset using the LOAD segment table, so passing
+`vaddr=entry_point` just works.  The old bug (passing vaddr as an offset →
+disassembling the ELF header at byte 0) is fixed.
 
 ## Key design decisions
 

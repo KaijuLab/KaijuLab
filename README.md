@@ -164,11 +164,13 @@ All env vars can be overridden with flags:
 
 | Tool | Description |
 |---|---|
-| `file_info` | Parse ELF / PE / Mach-O headers: format, arch, entry point, section table, imports |
+| `file_info` | Parse ELF / PE / Mach-O headers: format, arch, entry point, LOAD segment table (vaddr ↔ file offset), section table, imports |
 | `hexdump` | Hex + ASCII dump at an arbitrary file offset |
-| `strings_extract` | Extract printable ASCII strings with file offsets |
-| `disassemble` | Disassemble x86 / x86-64 bytes in Intel syntax (up to 60 instructions) |
+| `strings_extract` | Extract printable ASCII strings; optional `section` filter (e.g. `.rodata`) to avoid code-byte noise |
+| `disassemble` | Disassemble x86 / x86-64 bytes in Intel syntax; accepts `vaddr` (auto-translated via LOAD segments) or raw `offset` |
 | `read_section` | Hex dump of a named section (`.text`, `.rodata`, etc.) |
+| `resolve_plt` | Map PLT stub addresses → imported symbol names via `.rela.plt` + dynamic symbol table |
+| `list_functions` | List functions: symbol table for non-stripped binaries; prologue scan (`endbr64` / `push rbp; mov rbp,rsp`) for stripped ones |
 
 ## Project layout
 
