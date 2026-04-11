@@ -10,6 +10,16 @@ use crate::ui;
 /// Events the agent emits so the TUI can update its panels in real time.
 /// When no channel is attached (one-shot / plain-text mode) these are never
 /// created — the agent falls back to the `ui::print_*` functions instead.
+/// Lightweight summary of one message in the LLM history, for the Context tab.
+#[derive(Debug, Clone)]
+pub struct ContextEntry {
+    pub role: &'static str,   // "user" | "assistant"
+    pub kind: &'static str,   // "text" | "tool_call" | "tool_result"
+    pub tool_name: Option<String>,
+    pub char_count: usize,
+    pub preview: String,      // first ~100 chars of content
+}
+
 #[derive(Debug)]
 pub enum AgentEvent {
     /// LLM is generating a response.
@@ -24,6 +34,11 @@ pub enum AgentEvent {
     Done,
     /// API or tool error.
     Error(String),
+    /// The agent is actively examining a virtual address.
+    /// The TUI uses this to highlight and scroll to the address.
+    Focus { vaddr: u64, tool: String },
+    /// Snapshot of the current LLM context window, for the Context tab.
+    ContextUpdate(Vec<ContextEntry>),
 }
 
 /// Estimated character budget before we start trimming old tool-result messages.
@@ -100,6 +115,9 @@ impl Agent {
             // ── Trim history to stay within context budget ──────────────────
             trim_history(&mut self.history);
 
+            // ── Snapshot the context window for the Context tab ─────────────
+            self.emit(AgentEvent::ContextUpdate(snapshot_context(&self.history)));
+
             // ── Call the LLM ────────────────────────────────────────────────
             self.emit(AgentEvent::Thinking);
             let spinner = if !self.tui_mode() {
@@ -153,6 +171,11 @@ impl Agent {
             let mut results: Vec<ToolResult> = Vec::new();
             for tc in &tool_calls {
                 let display = args_display(&tc.args);
+
+                // Emit a Focus event so the TUI can highlight the address
+                if let Some(vaddr) = extract_focus_vaddr(&tc.name, &tc.args) {
+                    self.emit(AgentEvent::Focus { vaddr, tool: tc.name.clone() });
+                }
 
                 if self.tui_mode() {
                     self.emit(AgentEvent::ToolCall {
@@ -280,6 +303,68 @@ mod tests {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Extract a virtual address from tool arguments, if the tool operates on one.
+/// Used to drive the Focus event for active highlighting in the TUI.
+fn extract_focus_vaddr(tool: &str, args: &serde_json::Value) -> Option<u64> {
+    match tool {
+        "disassemble" | "decompile" | "xrefs_to"
+        | "rename_function" | "rename_variable"
+        | "set_return_type" | "set_param_type" | "set_param_name" => {
+            args["vaddr"].as_u64().or_else(|| args["fn_vaddr"].as_u64())
+        }
+        _ => None,
+    }
+}
+
+/// Build a lightweight snapshot of the current history for the Context tab.
+fn snapshot_context(history: &[crate::llm::LlmMessage]) -> Vec<ContextEntry> {
+    use crate::llm::MessageContent;
+
+    let mut entries = Vec::new();
+    for msg in history {
+        let role = match msg.role {
+            crate::llm::MessageRole::User      => "user",
+            crate::llm::MessageRole::Assistant => "assistant",
+        };
+        for content in &msg.content {
+            let entry = match content {
+                MessageContent::Text(t) => ContextEntry {
+                    role,
+                    kind: "text",
+                    tool_name: None,
+                    char_count: t.len(),
+                    preview: truncate_preview(t, 100),
+                },
+                MessageContent::ToolCall(tc) => ContextEntry {
+                    role,
+                    kind: "tool_call",
+                    tool_name: Some(tc.name.clone()),
+                    char_count: tc.args.to_string().len(),
+                    preview: truncate_preview(&tc.args.to_string(), 100),
+                },
+                MessageContent::ToolResult(tr) => ContextEntry {
+                    role,
+                    kind: "tool_result",
+                    tool_name: Some(tr.name.clone()),
+                    char_count: tr.content.len(),
+                    preview: truncate_preview(&tr.content, 100),
+                },
+            };
+            entries.push(entry);
+        }
+    }
+    entries
+}
+
+fn truncate_preview(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}
 
 fn args_display(args: &serde_json::Value) -> String {
     match args.as_object() {

@@ -20,7 +20,7 @@ use crate::agent::AgentEvent;
 
 // ─── Tab identifiers ─────────────────────────────────────────────────────────
 
-const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Decompile", "Strings", "Imports", "Chat"];
+const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Decompile", "Strings", "Imports", "Chat", "Context"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -30,6 +30,7 @@ pub enum Tab {
     Strings    = 3,
     Imports    = 4,
     Chat       = 5,
+    Context    = 6,
 }
 
 impl Tab {
@@ -41,6 +42,7 @@ impl Tab {
             3 => Some(Tab::Strings),
             4 => Some(Tab::Imports),
             5 => Some(Tab::Chat),
+            6 => Some(Tab::Context),
             _ => None,
         }
     }
@@ -66,6 +68,17 @@ impl Tab {
     }
 }
 
+// ─── Context entries (mirrors agent::ContextEntry) ────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct ContextEntry {
+    pub role: String,
+    pub kind: String,
+    pub tool_name: Option<String>,
+    pub char_count: usize,
+    pub preview: String,
+}
+
 // ─── Chat messages ────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -82,12 +95,12 @@ pub enum ChatMsg {
 pub struct App {
     pub active_tab: Tab,
     /// Latest content for each dedicated panel (indexed by Tab as usize).
-    pub tab_lines: [Vec<String>; 6],
+    pub tab_lines: [Vec<String>; 7],
     /// Whether each tab has unseen content (shows a dot indicator).
-    pub tab_dirty: [bool; 6],
+    pub tab_dirty: [bool; 7],
     pub chat: Vec<ChatMsg>,
     /// Scroll offsets for each tab (lines from top for panels; lines from bottom for chat).
-    pub scroll: [u16; 6],
+    pub scroll: [u16; 7],
     pub input: String,
     pub input_cursor: usize,
     pub status: String,
@@ -95,6 +108,10 @@ pub struct App {
     pub backend_name: String,
     pub binary_path: Option<String>,
     pub should_quit: bool,
+    /// The virtual address the agent is currently analysing (drives active highlighting).
+    pub focused_addr: Option<u64>,
+    /// Live snapshot of the LLM context window.
+    pub context_entries: Vec<ContextEntry>,
 }
 
 impl App {
@@ -102,9 +119,9 @@ impl App {
         App {
             active_tab: Tab::Chat,
             tab_lines: Default::default(),
-            tab_dirty: [false; 6],
+            tab_dirty: [false; 7],
             chat: Vec::new(),
-            scroll: [0u16; 6],
+            scroll: [0u16; 7],
             input: String::new(),
             input_cursor: 0,
             status: "Ready — type a task and press Enter".to_string(),
@@ -112,6 +129,8 @@ impl App {
             backend_name,
             binary_path: None,
             should_quit: false,
+            focused_addr: None,
+            context_entries: Vec::new(),
         }
     }
 
@@ -158,7 +177,50 @@ impl App {
                 self.is_loading = false;
                 self.status = format!("Error: {}", e);
             }
+
+            AgentEvent::Focus { vaddr, tool } => {
+                self.focused_addr = Some(vaddr);
+                self.status = format!("● Analysing 0x{:x} ({})", vaddr, tool);
+                // Auto-switch to and scroll the relevant tab
+                let focus_tab = match tool.as_str() {
+                    "decompile" => Tab::Decompile,
+                    "disassemble" => Tab::Disasm,
+                    _ => return, // other tools don't have a dedicated panel to scroll
+                };
+                // Auto-scroll to the focused address in the relevant panel
+                if let Some(line_idx) = self.find_addr_line(focus_tab, vaddr) {
+                    self.scroll[focus_tab as usize] = 0; // reset first
+                    // Scroll so the line is near the top (offset from bottom of content)
+                    let total = self.tab_lines[focus_tab as usize].len() as u16;
+                    let from_bottom = total.saturating_sub(line_idx as u16 + 3);
+                    self.scroll[focus_tab as usize] = from_bottom;
+                }
+                self.tab_dirty[focus_tab as usize] = true;
+            }
+
+            AgentEvent::ContextUpdate(entries) => {
+                // Convert agent::ContextEntry → tui::ContextEntry
+                self.context_entries = entries
+                    .into_iter()
+                    .map(|e| ContextEntry {
+                        role: e.role.to_string(),
+                        kind: e.kind.to_string(),
+                        tool_name: e.tool_name,
+                        char_count: e.char_count,
+                        preview: e.preview,
+                    })
+                    .collect();
+                self.tab_dirty[Tab::Context as usize] = true;
+            }
         }
+    }
+
+    /// Find the line index in a tab's content that displays a given virtual address.
+    fn find_addr_line(&self, tab: Tab, vaddr: u64) -> Option<usize> {
+        let target = format!("{:016x}", vaddr);
+        self.tab_lines[tab as usize]
+            .iter()
+            .position(|line| line.contains(&target))
     }
 
     /// Returns a user message to send to the agent, or None.
@@ -192,7 +254,7 @@ impl App {
             }
 
             // Number keys to jump to a tab (only when input field is empty)
-            KeyCode::Char(c @ '1'..='6') if self.input.is_empty() && key.modifiers.is_empty() => {
+            KeyCode::Char(c @ '1'..='7') if self.input.is_empty() && key.modifiers.is_empty() => {
                 let idx = (c as usize) - ('1' as usize);
                 if let Some(t) = Tab::from_index(idx) {
                     self.active_tab = t;
@@ -456,8 +518,9 @@ fn render_tabbar(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_content(f: &mut Frame, area: Rect, app: &App) {
     match app.active_tab {
-        Tab::Chat => render_chat(f, area, app),
-        tab       => render_panel(f, area, app, tab),
+        Tab::Chat    => render_chat(f, area, app),
+        Tab::Context => render_context(f, area, app),
+        tab          => render_panel(f, area, app, tab),
     }
 }
 
@@ -614,6 +677,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
             Tab::Strings   => "Say \"extract strings\" or \"show strings in .rodata\"",
             Tab::Imports   => "Say \"what does this binary import?\" or \"resolve the PLT\"",
             Tab::Chat      => unreachable!(),
+            Tab::Context   => unreachable!(), // handled by render_context
         };
         f.render_widget(
             Paragraph::new(Span::styled(
@@ -625,13 +689,31 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         return;
     }
 
+    // Pre-compute focused address string for highlight matching (Disasm only)
+    let focused_hex = if tab == Tab::Disasm {
+        app.focused_addr.map(|a| format!("{:016x}", a))
+    } else {
+        None
+    };
+
     let lines: Vec<Line> = match tab {
-        Tab::Disasm    => raw.iter().map(|l| highlight_disasm(l)).collect(),
+        Tab::Disasm => raw
+            .iter()
+            .map(|l| {
+                let line = highlight_disasm(l);
+                if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
+                    apply_focus_highlight(line)
+                } else {
+                    line
+                }
+            })
+            .collect(),
         Tab::Functions => raw.iter().map(|l| highlight_addr_table(l)).collect(),
         Tab::Imports   => raw.iter().map(|l| highlight_addr_table(l)).collect(),
         Tab::Strings   => raw.iter().map(|l| highlight_strings(l)).collect(),
         Tab::Decompile => raw.iter().map(|l| highlight_decompile(l)).collect(),
         Tab::Chat      => unreachable!(),
+        Tab::Context   => unreachable!(),
     };
 
     let scroll = app.scroll[tab as usize];
@@ -652,7 +734,7 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         ("●", Color::Green)
     };
 
-    let keybinds = "Tab:next  1-5:tab  ↑↓:scroll  Ctrl+C:quit";
+    let keybinds = "Tab:next  1-7:tab  ↑↓:scroll  Ctrl+C:quit";
     let status = format!(" {} {}", icon, app.status);
 
     // Right-align the keybind hint
@@ -707,6 +789,126 @@ fn render_input(f: &mut Frame, area: Rect, app: &App) {
             y: inner.y,
         });
     }
+}
+
+// ─ Context panel ──────────────────────────────────────────────────────────────
+
+fn render_context(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " Context ",
+            Style::new().fg(Color::Cyan).bold(),
+        ))
+        .border_style(Style::new().fg(Color::DarkGray));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if app.context_entries.is_empty() {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "  (no context yet — send a message to start an agent turn)",
+                Style::new().fg(Color::DarkGray).italic(),
+            )),
+            inner,
+        );
+        return;
+    }
+
+    let total_chars: usize = app.context_entries.iter().map(|e| e.char_count).sum();
+    const BAR_W: usize = 10;
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // ── Summary header ──────────────────────────────────────────────────────
+    lines.push(Line::from(vec![
+        Span::styled("  Context window  ", Style::new().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} chars", total_chars),
+            Style::new().fg(Color::Yellow),
+        ),
+        Span::styled("  in  ", Style::new().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} entries", app.context_entries.len()),
+            Style::new().fg(Color::Yellow),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "  ─────────────────────────────────────────────────────────────",
+        Style::new().fg(Color::DarkGray),
+    )));
+
+    // ── Per-entry rows ──────────────────────────────────────────────────────
+    for entry in &app.context_entries {
+        let role_style = match entry.role.as_str() {
+            "user"      => Style::new().fg(Color::Cyan),
+            "assistant" => Style::new().fg(Color::Magenta),
+            _           => Style::new().fg(Color::Gray),
+        };
+
+        let (kind_label, kind_style) = match entry.kind.as_str() {
+            "text"        => ("text      ", Style::new().fg(Color::White)),
+            "tool_call"   => ("tool_call ", Style::new().fg(Color::Yellow)),
+            "tool_result" => ("tool_res  ", Style::new().fg(Color::Green)),
+            other         => (other,        Style::new().fg(Color::DarkGray)),
+        };
+
+        // Proportional bar (at least 1 block if nonzero)
+        let filled = if total_chars > 0 {
+            ((entry.char_count * BAR_W) / total_chars).max(if entry.char_count > 0 { 1 } else { 0 })
+        } else {
+            0
+        };
+        let bar = format!(
+            "{}{}",
+            "█".repeat(filled),
+            "░".repeat(BAR_W.saturating_sub(filled))
+        );
+
+        // Tool name badge (shown instead of blank when present)
+        let tool_badge = entry
+            .tool_name
+            .as_deref()
+            .map(|n| format!("[{}] ", n))
+            .unwrap_or_default();
+
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{:<9}", entry.role), role_style),
+            Span::raw("  "),
+            Span::styled(kind_label.to_string(), kind_style),
+            Span::raw("  "),
+            Span::styled(bar, Style::new().fg(Color::Blue)),
+            Span::raw(" "),
+            Span::styled(
+                format!("{:>6}c", entry.char_count),
+                Style::new().fg(Color::DarkGray),
+            ),
+            Span::raw("  "),
+            Span::styled(tool_badge, Style::new().fg(Color::Yellow)),
+            Span::styled(entry.preview.clone(), Style::new().fg(Color::Gray).italic()),
+        ]));
+    }
+
+    let scroll = app.scroll[Tab::Context as usize];
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        inner,
+    );
+}
+
+// ─── Active-highlight helper ──────────────────────────────────────────────────
+
+/// Apply a dark-gray background to every span in a line, making it stand out
+/// as the currently-focused instruction in the Disasm panel.
+fn apply_focus_highlight(line: Line<'static>) -> Line<'static> {
+    let spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .map(|s| Span::styled(s.content, s.style.bg(Color::DarkGray)))
+        .collect();
+    Line::from(spans)
 }
 
 // ─── Syntax highlighting ─────────────────────────────────────────────────────
