@@ -681,14 +681,137 @@ fn replace_identifier(s: &str, from: &str, to: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::decompile_function;
+    use super::*;
+    use crate::project::{FunctionSignature, Project, StructDef, StructField};
+
+    // ── replace_identifier ───────────────────────────────────────────────────
+
+    #[test]
+    fn replace_identifier_simple() {
+        assert_eq!(replace_identifier("RDI + 1", "RDI", "arg_1"), "arg_1 + 1");
+    }
+
+    #[test]
+    fn replace_identifier_does_not_replace_partial() {
+        // "RDIM" must not become "arg_1M"
+        assert_eq!(replace_identifier("RDIM", "RDI", "arg_1"), "RDIM");
+    }
+
+    #[test]
+    fn replace_identifier_at_start_of_string() {
+        assert_eq!(replace_identifier("RDI;", "RDI", "arg_1"), "arg_1;");
+    }
+
+    #[test]
+    fn replace_identifier_at_end_of_string() {
+        assert_eq!(replace_identifier("foo = RDI", "RDI", "arg_1"), "foo = arg_1");
+    }
+
+    #[test]
+    fn replace_identifier_multiple_occurrences() {
+        let s = "if (RDI > 0) { return RDI; }";
+        assert_eq!(
+            replace_identifier(s, "RDI", "arg_1"),
+            "if (arg_1 > 0) { return arg_1; }"
+        );
+    }
+
+    #[test]
+    fn replace_identifier_longer_name_first() {
+        // Simulates the "arg_10 before arg_1" ordering
+        let mut s = "arg_10 + arg_1".to_string();
+        // Replace longer name first
+        s = replace_identifier(&s, "arg_10", "count");
+        s = replace_identifier(&s, "arg_1",  "buf");
+        assert_eq!(s, "count + buf");
+    }
+
+    // ── apply_project_annotations ────────────────────────────────────────────
+
+    #[test]
+    fn strips_64bit_mask() {
+        let mut p = Project::default();
+        let mut out = "x = y & 0xffffffffffffffff;".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert_eq!(out, "x = y;");
+    }
+
+    #[test]
+    fn renames_sysv64_arg_registers() {
+        let p = Project::default();
+        let mut out = "void FUN(int32_t RDI, int32_t RSI) { return RDI + RSI; }".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert!(out.contains("arg_1"), "RDI should become arg_1");
+        assert!(out.contains("arg_2"), "RSI should become arg_2");
+        assert!(!out.contains("RDI"),  "no raw RDI should remain");
+        assert!(!out.contains("RSI"),  "no raw RSI should remain");
+    }
+
+    #[test]
+    fn applies_var_renames_from_project() {
+        let mut p = Project::default();
+        p.rename_var(0x401000, "arg_1".to_string(), "buf".to_string());
+        p.rename_var(0x401000, "arg_2".to_string(), "len".to_string());
+
+        let mut out = "void f(int32_t arg_1, int32_t arg_2) { return arg_1 + arg_2; }".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert!(out.contains("buf"), "arg_1 should become buf");
+        assert!(out.contains("len"), "arg_2 should become len");
+    }
+
+    #[test]
+    fn var_renames_not_applied_to_wrong_function() {
+        let mut p = Project::default();
+        p.rename_var(0x402000, "arg_1".to_string(), "buf".to_string()); // different addr
+
+        let mut out = "void f(int32_t arg_1) {}".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        // arg_1 was renamed to arg_1 by SysV64 pass (RDI → arg_1 stays), project rename not applied
+        assert!(!out.contains("buf"));
+    }
+
+    #[test]
+    fn applies_return_type_override() {
+        let mut p = Project::default();
+        p.set_return_type(0x401000, "int".to_string());
+
+        let mut out = "void FUN_0x401000(int32_t arg_1) {\n  return arg_1;\n}".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert!(out.starts_with("int "), "return type should be replaced");
+        assert!(!out.starts_with("void "), "void should be gone");
+    }
+
+    #[test]
+    fn applies_param_type_override() {
+        let mut p = Project::default();
+        p.set_param_type(0x401000, 1, "const char*".to_string());
+
+        let mut out = "void f(int32_t arg_1) {}".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert!(out.contains("const char* arg_1"));
+        assert!(!out.contains("int32_t arg_1"));
+    }
+
+    #[test]
+    fn applies_param_name_and_type_together() {
+        let mut p = Project::default();
+        p.set_param_type(0x401000, 1, "size_t".to_string());
+        p.set_param_name(0x401000, 1, "count".to_string());
+
+        let mut out = "void f(int32_t arg_1) { return arg_1; }".to_string();
+        apply_project_annotations(&mut out, &p, 0x401000);
+        assert!(out.contains("size_t count"), "should have typed+renamed param");
+        assert!(!out.contains("arg_1"), "old name should be gone");
+    }
+
+    // ── decompile_function end-to-end (requires external binary) ────────────
 
     /// Compile a small x86-64 binary with:
     ///   x86_64-linux-gnu-gcc -O0 -static -o /tmp/simple_x86_64 /tmp/simple.c
     /// where simple.c contains:  int add(int a, int b) { return a + b; }
     /// nm output: 0000000000401745 T add
     #[test]
-    #[ignore] // requires /tmp/simple_x86_64 — run with: cargo test --release -- --ignored
+    #[ignore]
     fn test_decompile_x86_64() {
         let result = decompile_function("/tmp/simple_x86_64", 0x401745);
         assert!(!result.is_empty(), "decompile returned empty string");

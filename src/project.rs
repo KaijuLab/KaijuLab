@@ -201,3 +201,239 @@ impl Project {
         self.signatures.get(&fn_vaddr)
     }
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_bin_path() -> String {
+        format!(
+            "/tmp/kaijulab_test_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        )
+    }
+
+    // ── project_path derivation ───────────────────────────────────────────────
+
+    #[test]
+    fn project_path_adds_kaiju_json() {
+        assert_eq!(
+            Project::project_path("/tmp/mybinary"),
+            PathBuf::from("/tmp/mybinary.kaiju.json")
+        );
+    }
+
+    #[test]
+    fn project_path_preserves_existing_extension() {
+        assert_eq!(
+            Project::project_path("/home/user/crackme.elf"),
+            PathBuf::from("/home/user/crackme.elf.kaiju.json")
+        );
+    }
+
+    // ── rename / comment ─────────────────────────────────────────────────────
+
+    #[test]
+    fn rename_and_lookup() {
+        let mut p = Project::default();
+        p.rename(0x401000, "main".to_string());
+        assert_eq!(p.get_name(0x401000), Some("main".to_string()));
+        assert_eq!(p.get_name(0x401001), None);
+    }
+
+    #[test]
+    fn rename_overwrites_previous() {
+        let mut p = Project::default();
+        p.rename(0x401000, "old".to_string());
+        p.rename(0x401000, "new".to_string());
+        assert_eq!(p.get_name(0x401000), Some("new".to_string()));
+    }
+
+    #[test]
+    fn comment_and_lookup() {
+        let mut p = Project::default();
+        p.comment(0x401010, "sets up stack frame".to_string());
+        assert_eq!(p.get_comment(0x401010), Some("sets up stack frame"));
+        assert_eq!(p.get_comment(0xdeadbeef), None);
+    }
+
+    // ── variable renames ─────────────────────────────────────────────────────
+
+    #[test]
+    fn var_rename_stored_per_function() {
+        let mut p = Project::default();
+        p.rename_var(0x401000, "arg_1".to_string(), "buf".to_string());
+        p.rename_var(0x401000, "arg_2".to_string(), "len".to_string());
+        p.rename_var(0x402000, "arg_1".to_string(), "fd".to_string());
+
+        assert_eq!(p.var_renames[&0x401000]["arg_1"], "buf");
+        assert_eq!(p.var_renames[&0x401000]["arg_2"], "len");
+        assert_eq!(p.var_renames[&0x402000]["arg_1"], "fd");
+        assert!(!p.var_renames[&0x402000].contains_key("arg_2"));
+    }
+
+    // ── signatures ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn set_and_get_return_type() {
+        let mut p = Project::default();
+        p.set_return_type(0x401000, "int".to_string());
+        assert_eq!(
+            p.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            Some("int")
+        );
+    }
+
+    #[test]
+    fn set_param_type_one_indexed() {
+        let mut p = Project::default();
+        p.set_param_type(0x401000, 1, "const char*".to_string());
+        p.set_param_type(0x401000, 2, "size_t".to_string());
+        let sig = p.get_signature(0x401000).unwrap();
+        assert_eq!(sig.param_types[0].as_deref(), Some("const char*"));
+        assert_eq!(sig.param_types[1].as_deref(), Some("size_t"));
+    }
+
+    #[test]
+    fn set_param_type_sparse_no_panic() {
+        // Setting param 3 without setting 1 or 2 must not panic
+        let mut p = Project::default();
+        p.set_param_type(0x401000, 3, "int".to_string());
+        let sig = p.get_signature(0x401000).unwrap();
+        assert_eq!(sig.param_types.len(), 3);
+        assert!(sig.param_types[0].is_none());
+        assert!(sig.param_types[1].is_none());
+        assert_eq!(sig.param_types[2].as_deref(), Some("int"));
+    }
+
+    #[test]
+    fn set_param_name_one_indexed() {
+        let mut p = Project::default();
+        p.set_param_name(0x401000, 1, "url".to_string());
+        p.set_param_name(0x401000, 2, "url_len".to_string());
+        let sig = p.get_signature(0x401000).unwrap();
+        assert_eq!(sig.param_names[0].as_deref(), Some("url"));
+        assert_eq!(sig.param_names[1].as_deref(), Some("url_len"));
+    }
+
+    // ── struct definitions ───────────────────────────────────────────────────
+
+    #[test]
+    fn define_and_retrieve_struct() {
+        let mut p = Project::default();
+        p.define_struct(StructDef {
+            name: "node".to_string(),
+            total_size: 16,
+            fields: vec![
+                StructField { offset: 0,  size: 8, name: "next".to_string(),  type_str: "struct node*".to_string() },
+                StructField { offset: 8,  size: 4, name: "value".to_string(), type_str: "int32_t".to_string() },
+                StructField { offset: 12, size: 4, name: "flags".to_string(), type_str: "uint32_t".to_string() },
+            ],
+        });
+        assert!(p.structs.contains_key("node"));
+        assert_eq!(p.structs["node"].total_size, 16);
+        assert_eq!(p.structs["node"].fields.len(), 3);
+    }
+
+    #[test]
+    fn struct_overwrite() {
+        let mut p = Project::default();
+        p.define_struct(StructDef { name: "s".to_string(), total_size: 4, fields: vec![] });
+        p.define_struct(StructDef { name: "s".to_string(), total_size: 8, fields: vec![] });
+        assert_eq!(p.structs["s"].total_size, 8);
+    }
+
+    #[test]
+    fn struct_field_at_offset() {
+        let def = StructDef {
+            name: "s".to_string(),
+            total_size: 8,
+            fields: vec![
+                StructField { offset: 0, size: 4, name: "a".to_string(), type_str: "int".to_string() },
+                StructField { offset: 4, size: 4, name: "b".to_string(), type_str: "int".to_string() },
+            ],
+        };
+        assert_eq!(def.field_at(0).map(|f| f.name.as_str()), Some("a"));
+        assert_eq!(def.field_at(3).map(|f| f.name.as_str()), Some("a")); // still inside field a
+        assert_eq!(def.field_at(4).map(|f| f.name.as_str()), Some("b"));
+        assert!(def.field_at(8).is_none());
+    }
+
+    #[test]
+    fn struct_to_c_format() {
+        let def = StructDef {
+            name: "point".to_string(),
+            total_size: 8,
+            fields: vec![
+                StructField { offset: 0, size: 4, name: "x".to_string(), type_str: "int".to_string() },
+                StructField { offset: 4, size: 4, name: "y".to_string(), type_str: "int".to_string() },
+            ],
+        };
+        let c = def.to_c();
+        assert!(c.starts_with("struct point {"));
+        assert!(c.contains("int x;"));
+        assert!(c.contains("int y;"));
+        assert!(c.trim_end().ends_with("};"));
+    }
+
+    // ── save / load roundtrip ────────────────────────────────────────────────
+
+    #[test]
+    fn save_load_roundtrip() {
+        let bin = fake_bin_path();
+        let sidecar = Project::project_path(&bin);
+
+        {
+            let mut p = Project::load_for(&bin);
+            p.rename(0x401000, "main".to_string());
+            p.comment(0x401010, "prologue".to_string());
+            p.rename_var(0x401000, "arg_1".to_string(), "argc".to_string());
+            p.set_return_type(0x401000, "int".to_string());
+            p.set_param_type(0x401000, 1, "int".to_string());
+            p.set_param_name(0x401000, 1, "argc".to_string());
+            p.define_struct(StructDef {
+                name: "ctx".to_string(),
+                total_size: 8,
+                fields: vec![StructField {
+                    offset: 0, size: 8,
+                    name: "ptr".to_string(),
+                    type_str: "void*".to_string(),
+                }],
+            });
+            p.save().expect("save failed");
+        }
+
+        assert!(sidecar.exists(), "sidecar file should have been created");
+
+        let p2 = Project::load_for(&bin);
+        assert_eq!(p2.get_name(0x401000), Some("main".to_string()));
+        assert_eq!(p2.get_comment(0x401010), Some("prologue"));
+        assert_eq!(p2.var_renames[&0x401000]["arg_1"], "argc");
+        assert_eq!(
+            p2.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            Some("int")
+        );
+        assert_eq!(
+            p2.get_signature(0x401000).and_then(|s| s.param_types[0].as_deref()),
+            Some("int")
+        );
+        assert!(p2.structs.contains_key("ctx"));
+
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn load_nonexistent_returns_empty() {
+        let p = Project::load_for("/tmp/definitely_does_not_exist_kaijulab.bin");
+        assert!(p.renames.is_empty());
+        assert!(p.comments.is_empty());
+        assert!(p.var_renames.is_empty());
+        assert!(p.signatures.is_empty());
+        assert!(p.structs.is_empty());
+    }
+}

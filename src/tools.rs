@@ -1413,4 +1413,173 @@ mod tests {
         assert!(filtered_count <= all_count, "section filter returned MORE strings than full scan");
         assert!(filtered.output.contains("in '.rodata'"), "section label missing:\n{}", filtered.output);
     }
+
+    // ── disassemble stops at ret ─────────────────────────────────────────────
+
+    #[test]
+    fn disassemble_stops_at_ret() {
+        // Disassemble a large window; the output should end at the first ret,
+        // not at the 60-instruction truncation marker.
+        let r = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 1024}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        // Should contain a ret instruction
+        assert!(r.output.contains(" ret"), "expected a ret instruction:\n{}", r.output);
+        // Should NOT be truncated at 200 instructions (ret fires first for any real function)
+        assert!(!r.output.contains("truncated at 200"), "should have stopped at ret before 200 insns:\n{}", r.output);
+    }
+
+    // ── list_functions JSON output ───────────────────────────────────────────
+
+    #[test]
+    fn list_functions_json_output() {
+        let r = dispatch("list_functions", &json!({"path": SAMPLE_ORW, "json": true}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        let v: serde_json::Value = serde_json::from_str(&r.output)
+            .expect("output should be valid JSON");
+        assert!(v["functions"].is_array(), "should have 'functions' array");
+        assert!(v["total"].is_number(), "should have 'total' count");
+    }
+
+    // ── xrefs_to ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn xrefs_to_unknown_address_returns_no_refs() {
+        // 0x1 is not a real function — no one calls it
+        let r = dispatch("xrefs_to", &json!({"path": SAMPLE_ORW, "vaddr": 0x1_u64}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("No call"), "expected no-call message:\n{}", r.output);
+    }
+
+    #[test]
+    fn xrefs_to_requires_vaddr() {
+        let r = dispatch("xrefs_to", &json!({"path": SAMPLE_ORW, "vaddr": 0_u64}));
+        assert!(r.output.contains("Error:"), "should error without vaddr");
+    }
+
+    // ── dwarf_info ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn dwarf_info_stripped_binary_returns_no_entries() {
+        // 3x17 and orw are stripped — no DWARF expected
+        let r = dispatch("dwarf_info", &json!({"path": SAMPLE}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        // Either empty result or the "no DWARF" message, but no crash
+        assert!(
+            r.output.contains("No DWARF") || r.output.contains("0 entries") || r.output.contains("functions"),
+            "unexpected output:\n{}", r.output
+        );
+    }
+
+    // ── project tools (rename_function, add_comment, rename_variable, etc.) ──
+
+    fn temp_bin() -> String {
+        format!(
+            "/tmp/kaijulab_tool_test_{}.bin",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        )
+    }
+
+    #[test]
+    fn rename_function_saves_and_loads() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        let r = dispatch("rename_function", &json!({"path": bin, "vaddr": 0x401000_u64, "name": "parse"}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("parse"), "name should appear in output:\n{}", r.output);
+
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(p.get_name(0x401000), Some("parse".to_string()));
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn add_comment_saves_and_loads() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        dispatch("add_comment", &json!({"path": bin, "vaddr": 0x401010_u64, "comment": "stack pivot"}));
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(p.get_comment(0x401010), Some("stack pivot"));
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn rename_variable_saves() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        let r = dispatch("rename_variable", &json!({
+            "path": bin, "fn_vaddr": 0x401000_u64, "old_name": "arg_1", "new_name": "buf"
+        }));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(p.var_renames[&0x401000]["arg_1"], "buf");
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn set_return_type_saves() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        dispatch("set_return_type", &json!({"path": bin, "fn_vaddr": 0x401000_u64, "type_str": "int"}));
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(
+            p.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            Some("int")
+        );
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn set_param_type_saves() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        dispatch("set_param_type", &json!({
+            "path": bin, "fn_vaddr": 0x401000_u64, "param_n": 1_u64, "type_str": "const char*"
+        }));
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(
+            p.get_signature(0x401000).and_then(|s| s.param_types[0].as_deref()),
+            Some("const char*")
+        );
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn define_struct_saves_and_lists() {
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        let r = dispatch("define_struct", &json!({
+            "path": bin,
+            "struct_name": "header",
+            "total_size": 8,
+            "fields": [
+                {"offset": 0, "size": 4, "name": "magic", "type_str": "uint32_t"},
+                {"offset": 4, "size": 4, "name": "size",  "type_str": "uint32_t"}
+            ]
+        }));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("magic") && r.output.contains("size"), "fields should appear:\n{}", r.output);
+
+        let list = dispatch("list_types", &json!({"path": bin}));
+        assert!(list.output.contains("header"), "struct name should appear in list_types:\n{}", list.output);
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    #[test]
+    fn list_types_empty_project() {
+        let bin = temp_bin();
+        let r = dispatch("list_types", &json!({"path": bin}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("No type annotations"), "should report empty:\n{}", r.output);
+    }
+
+    #[test]
+    fn load_project_nonexistent_reports_path() {
+        let bin = temp_bin();
+        let r = dispatch("load_project", &json!({"path": bin}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains(".kaiju.json"), "should mention sidecar path:\n{}", r.output);
+    }
 }

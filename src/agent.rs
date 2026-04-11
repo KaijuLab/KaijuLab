@@ -188,6 +188,97 @@ impl Agent {
     }
 }
 
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::{LlmMessage, ToolResult};
+
+    fn big_tool_result(chars: usize) -> LlmMessage {
+        LlmMessage::tool_results(vec![ToolResult {
+            call_id: "id".to_string(),
+            name: "tool".to_string(),
+            content: "x".repeat(chars),
+        }])
+    }
+
+    fn user_msg(s: &str) -> LlmMessage {
+        LlmMessage::user_text(s)
+    }
+
+    #[test]
+    fn trim_does_nothing_when_under_budget() {
+        let mut history = vec![
+            user_msg("hello"),
+            big_tool_result(100),
+        ];
+        let before = history.len();
+        trim_history(&mut history);
+        assert_eq!(history.len(), before, "nothing should be trimmed");
+    }
+
+    #[test]
+    fn trim_drops_oldest_tool_result_first() {
+        // Two tool results, combined > MAX_HISTORY_CHARS
+        let big = MAX_HISTORY_CHARS / 2 + 1000;
+        let mut history = vec![
+            user_msg("task"),
+            big_tool_result(big),   // oldest tool result
+            big_tool_result(big),   // newer tool result
+        ];
+        trim_history(&mut history);
+        // At least one tool result should have been removed
+        let remaining_tool_results = history
+            .iter()
+            .filter(|m| m.is_tool_result_message())
+            .count();
+        assert!(remaining_tool_results < 2, "should have dropped at least one tool result");
+    }
+
+    #[test]
+    fn trim_never_drops_user_text() {
+        let big = MAX_HISTORY_CHARS / 2 + 1000;
+        let mut history = vec![
+            user_msg("important context"),
+            user_msg("more context"),
+            big_tool_result(big),
+            big_tool_result(big),
+        ];
+        trim_history(&mut history);
+        // Both user messages must survive
+        let user_texts: Vec<_> = history
+            .iter()
+            .flat_map(|m| m.texts())
+            .collect();
+        assert!(user_texts.contains(&"important context"));
+        assert!(user_texts.contains(&"more context"));
+    }
+
+    #[test]
+    fn trim_stops_when_under_budget() {
+        // The huge result is oldest; once it's dropped the budget is satisfied
+        // and the small result (newer) should survive.
+        let mut history = vec![
+            user_msg("q"),
+            big_tool_result(MAX_HISTORY_CHARS + 1000), // huge — oldest, dropped first
+            big_tool_result(100),                      // small — newer, survives
+        ];
+        trim_history(&mut history);
+        assert!(
+            history.iter().any(|m| m.is_tool_result_message()),
+            "the small (newer) tool result should survive after the huge one is dropped"
+        );
+    }
+
+    #[test]
+    fn trim_handles_empty_history() {
+        let mut history: Vec<LlmMessage> = vec![];
+        trim_history(&mut history); // must not panic
+        assert!(history.is_empty());
+    }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn args_display(args: &serde_json::Value) -> String {

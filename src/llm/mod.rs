@@ -122,6 +122,117 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
 }
 
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_msg(s: &str) -> LlmMessage {
+        LlmMessage::user_text(s)
+    }
+
+    fn tool_result_msg(content: &str) -> LlmMessage {
+        LlmMessage::tool_results(vec![ToolResult {
+            call_id: "id1".to_string(),
+            name: "some_tool".to_string(),
+            content: content.to_string(),
+        }])
+    }
+
+    fn mixed_msg() -> LlmMessage {
+        // A message with both text and a tool result (unusual but possible)
+        LlmMessage {
+            role: MessageRole::User,
+            content: vec![
+                MessageContent::Text("context".to_string()),
+                MessageContent::ToolResult(ToolResult {
+                    call_id: "id2".to_string(),
+                    name: "tool".to_string(),
+                    content: "output".to_string(),
+                }),
+            ],
+        }
+    }
+
+    #[test]
+    fn estimated_chars_text() {
+        let m = text_msg("hello world"); // 11 chars
+        assert_eq!(m.estimated_chars(), 11);
+    }
+
+    #[test]
+    fn estimated_chars_tool_result() {
+        let m = tool_result_msg("abc"); // 3 + 16 overhead
+        assert_eq!(m.estimated_chars(), 3 + 16);
+    }
+
+    #[test]
+    fn estimated_chars_empty() {
+        let m = LlmMessage { role: MessageRole::User, content: vec![] };
+        assert_eq!(m.estimated_chars(), 0);
+    }
+
+    #[test]
+    fn is_tool_result_message_true() {
+        let m = tool_result_msg("output");
+        assert!(m.is_tool_result_message());
+    }
+
+    #[test]
+    fn is_tool_result_message_false_for_text() {
+        let m = text_msg("hello");
+        assert!(!m.is_tool_result_message());
+    }
+
+    #[test]
+    fn is_tool_result_message_false_for_empty() {
+        let m = LlmMessage { role: MessageRole::User, content: vec![] };
+        assert!(!m.is_tool_result_message());
+    }
+
+    #[test]
+    fn is_tool_result_message_false_for_mixed() {
+        // A message with both text and tool_result is not purely tool results
+        assert!(!mixed_msg().is_tool_result_message());
+    }
+
+    #[test]
+    fn tool_calls_returns_only_tool_calls() {
+        let m = LlmMessage {
+            role: MessageRole::Assistant,
+            content: vec![
+                MessageContent::Text("thinking...".to_string()),
+                MessageContent::ToolCall(ToolCall {
+                    id: "c1".to_string(),
+                    name: "file_info".to_string(),
+                    args: serde_json::json!({"path": "/bin/ls"}),
+                }),
+            ],
+        };
+        let calls = m.tool_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "file_info");
+    }
+
+    #[test]
+    fn texts_returns_only_text() {
+        let m = LlmMessage {
+            role: MessageRole::Assistant,
+            content: vec![
+                MessageContent::Text("hello".to_string()),
+                MessageContent::ToolCall(ToolCall {
+                    id: "c1".to_string(),
+                    name: "file_info".to_string(),
+                    args: serde_json::json!({}),
+                }),
+                MessageContent::Text(" world".to_string()),
+            ],
+        };
+        assert_eq!(m.texts(), vec!["hello", " world"]);
+    }
+}
+
 // ─── Backend trait ────────────────────────────────────────────────────────────
 
 #[async_trait]
