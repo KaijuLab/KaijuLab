@@ -160,13 +160,14 @@ const MANUAL_HELP: &str = "\
 No LLM configured — running in manual tool mode.
 
 Available commands:
+  ls          [path]                  List files in a directory
   file_info   <path>                  Binary metadata
   hexdump     <path> [offset] [len]   Hex dump
   strings     <path> [min_len]        Extract strings
-  disassemble <path> <vaddr>          Disassemble at virtual address
+  disassemble <path> [vaddr]          Disassemble at vaddr (default: entry point)
   functions   <path> [max]            List functions
   imports     <path>                  Resolve PLT imports
-  decompile   <path> <vaddr>          Decompile function at virtual address
+  decompile   <path> [vaddr]          Decompile function at vaddr (default: entry point)
   help                                Show this message
 
 Example:  disassemble /bin/ls 0x5880";
@@ -181,6 +182,13 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
     match cmd.as_str() {
         "help" | "" => {
             send(agent::AgentEvent::LlmText(MANUAL_HELP.to_string()));
+            send(agent::AgentEvent::Done);
+        }
+
+        "ls" => {
+            let dir = parts.get(1).copied().unwrap_or(".");
+            let output = cmd_ls(dir);
+            send(agent::AgentEvent::LlmText(output));
             send(agent::AgentEvent::Done);
         }
 
@@ -204,7 +212,12 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
 
         "disassemble" | "disasm" => {
             let path  = parts.get(1).copied().unwrap_or("");
-            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).or_else(|| {
+                match infer_entry_point(path) {
+                    Ok(ep) => Some(ep),
+                    Err(e) => { let _ = tx.send(agent::AgentEvent::Error(e)); None }
+                }
+            }).unwrap_or(0);
             run_tool("disassemble", json!({"path": path, "vaddr": vaddr}), tx);
         }
 
@@ -221,7 +234,12 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
 
         "decompile" => {
             let path  = parts.get(1).copied().unwrap_or("");
-            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).or_else(|| {
+                match infer_entry_point(path) {
+                    Ok(ep) => Some(ep),
+                    Err(e) => { let _ = tx.send(agent::AgentEvent::Error(e)); None }
+                }
+            }).unwrap_or(0);
             run_tool("decompile", json!({"path": path, "vaddr": vaddr}), tx);
         }
 
@@ -230,6 +248,30 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
                 "Unknown command '{}'. Type 'help' for usage.", other
             )));
             send(agent::AgentEvent::Done);
+        }
+    }
+}
+
+fn cmd_ls(dir: &str) -> String {
+    match std::fs::read_dir(dir) {
+        Err(e) => format!("ls: {}: {}", dir, e),
+        Ok(entries) => {
+            let mut names: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    match e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        true  => format!("{}/", name),
+                        false => name,
+                    }
+                })
+                .collect();
+            names.sort();
+            if names.is_empty() {
+                format!("(empty directory: {})", dir)
+            } else {
+                names.join("\n")
+            }
         }
     }
 }
@@ -243,6 +285,14 @@ fn run_tool(name: &str, args: serde_json::Value, tx: &mpsc::UnboundedSender<agen
         output: result.output,
     });
     let _ = tx.send(agent::AgentEvent::Done);
+}
+
+/// Return the entry-point virtual address of a binary, or an error string.
+fn infer_entry_point(path: &str) -> Result<u64, String> {
+    use object::Object;
+    let data = std::fs::read(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
+    let obj = object::File::parse(&*data).map_err(|e| format!("parse error: {}", e))?;
+    Ok(obj.entry())
 }
 
 /// Parse a number, accepting 0x… hex prefixes.
