@@ -1,7 +1,9 @@
 mod agent;
 mod config;
 pub mod decompiler;
+pub mod dwarf;
 mod llm;
+pub mod project;
 mod tools;
 mod tui;
 mod ui;
@@ -160,21 +162,26 @@ const MANUAL_HELP: &str = "\
 No LLM configured — running in manual tool mode.
 
 Available commands:
-  ls          [path]                  List files in a directory
-  file_info   <path>                  Binary metadata
-  hexdump     <path> [offset] [len]   Hex dump
-  strings     <path> [min_len]        Extract strings
-  disassemble <path> [vaddr]          Disassemble at vaddr (default: entry point)
-  functions   <path> [max]            List functions
-  imports     <path>                  Resolve PLT imports
-  decompile   <path> [vaddr]          Decompile function at vaddr (default: entry point)
-  help                                Show this message
+  ls            [path]                  List files in a directory
+  file_info     <path>                  Binary metadata
+  hexdump       <path> [offset] [len]   Hex dump
+  strings       <path> [min_len]        Extract strings
+  disassemble   <path> [vaddr]          Disassemble at vaddr (default: entry point)
+  functions     <path> [max]            List functions
+  imports       <path>                  Resolve PLT imports
+  decompile     <path> [vaddr]          Decompile function at vaddr (default: entry point)
+  xrefs         <path> <vaddr>          Cross-references (callers) to a function
+  dwarf         <path>                  DWARF function info from debug symbols
+  rename        <path> <vaddr> <name>   Assign a name to a function (saved in .kaiju.json)
+  comment       <path> <vaddr> <text>   Attach a comment to an address
+  project       <path>                  Show saved renames/comments for a binary
+  help                                  Show this message
 
 Example:  disassemble /bin/ls 0x5880";
 
 /// Parse a user-typed command and fire AgentEvents into the TUI channel.
 fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {
-    let parts: Vec<&str> = input.trim().splitn(4, ' ').collect();
+    let parts: Vec<&str> = input.trim().splitn(5, ' ').collect();
     let cmd = parts.first().copied().unwrap_or("").to_lowercase();
 
     let send = |ev| { let _ = tx.send(ev); };
@@ -241,6 +248,36 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
                 }
             }).unwrap_or(0);
             run_tool("decompile", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        "xrefs" | "xref" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("xrefs_to", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        "dwarf" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("dwarf_info", json!({"path": path}), tx);
+        }
+
+        "rename" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let name  = parts.get(3).copied().unwrap_or("");
+            run_tool("rename_function", json!({"path": path, "vaddr": vaddr, "name": name}), tx);
+        }
+
+        "comment" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let vaddr   = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let comment = parts.get(3).copied().unwrap_or("");
+            run_tool("add_comment", json!({"path": path, "vaddr": vaddr, "comment": comment}), tx);
+        }
+
+        "project" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("load_project", json!({"path": path}), tx);
         }
 
         other => {

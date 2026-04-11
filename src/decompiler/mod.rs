@@ -64,9 +64,23 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
                 "x86:LE:32:default",
             )
         }
+        Some(object::Architecture::Aarch64) | Some(object::Architecture::Aarch64_Ilp32) => {
+            let dir = sleigh_dir();
+            (
+                dir.join("Processors/AARCH64/data/languages/AARCH64.ldefs"),
+                "AARCH64:LE:64:v8A",
+            )
+        }
+        Some(object::Architecture::Arm) => {
+            let dir = sleigh_dir();
+            (
+                dir.join("Processors/ARM/data/languages/ARM.ldefs"),
+                "ARM:LE:32:v8",
+            )
+        }
         other => {
             return Err(anyhow::anyhow!(
-                "Unsupported architecture {:?} — decompiler supports x86/x86-64 only",
+                "Unsupported architecture {:?} — decompiler supports x86/x86-64/ARM/AArch64",
                 other
             ))
         }
@@ -154,6 +168,35 @@ fn load_binary(data: &[u8], memory: &mut Memory) -> anyhow::Result<()> {
                 }
             }
         }
+        Object::Mach(mach) => {
+            use goblin::mach::{Mach, SingleArch};
+            let macho = match mach {
+                Mach::Binary(m) => m,
+                Mach::Fat(multi) => {
+                    // Pick the first MachO arch from a fat binary
+                    let mut found = None;
+                    for arch_result in &multi {
+                        if let Ok(SingleArch::MachO(m)) = arch_result {
+                            found = Some(m);
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(m) => m,
+                        None => return Err(anyhow::anyhow!("No MachO arch found in fat binary")),
+                    }
+                }
+            };
+            for seg in &macho.segments {
+                let seg_addr = seg.vmaddr;
+                let seg_data = seg.data;
+                if seg_addr == 0 || seg_data.is_empty() {
+                    continue;
+                }
+                let literal = LiteralState::from_bytes(seg_addr, seg_data.to_vec());
+                let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+            }
+        }
         _ => return Err(anyhow::anyhow!("Unsupported binary format")),
     }
     Ok(())
@@ -168,7 +211,7 @@ fn lift_function(addr: Address, memory: &mut Memory) -> anyhow::Result<()> {
         .get_at_point(addr)
         .ok_or_else(|| anyhow::anyhow!("Address 0x{:x} not mapped", addr.0))?;
 
-    let (section_addr, bytes_slice) = match &state.kind {
+    let (_section_addr, bytes_slice) = match &state.kind {
         LiteralKind::Data(items) => {
             let offset = (addr.0 - state.addr.0) as usize;
             (state.addr, &items[offset..] as *const [u8])
@@ -500,7 +543,62 @@ fn render_stmt(
 fn render_ast(ast: &AbstractSyntaxTree, hf: &HighFunction, mem: &Memory) -> String {
     let mut out = String::new();
     render_stmt(&mut out, ast.entry(), ast, hf, mem, 0);
+    simplify_output(&mut out);
     out
+}
+
+/// Post-process decompiler output to improve readability:
+///
+/// - Strip trivial 64-bit width masks (`& 0xffffffffffffffff`)
+/// - Rename SysV AMD64 argument registers to `arg_N` in function signatures
+fn simplify_output(out: &mut String) {
+    // 1. Remove `& 0xffffffffffffffff` — meaningless 64-bit mask.
+    *out = out.replace(" & 0xffffffffffffffff", "");
+
+    // 2. Rename SysV64 argument registers to readable names.
+    //    The decompiler emits the raw SLEIGH varnode names like RDI, RSI, etc.
+    const SYSV64_ARGS: &[(&str, &str)] = &[
+        ("RDI", "arg_1"),
+        ("RSI", "arg_2"),
+        ("RDX", "arg_3"),
+        ("RCX", "arg_4"),
+        ("R8", "arg_5"),
+        ("R9", "arg_6"),
+    ];
+    for (reg, name) in SYSV64_ARGS {
+        // Only rename as standalone identifiers (bounded by non-alphanumeric chars)
+        *out = replace_identifier(out, reg, name);
+    }
+}
+
+/// Replace all occurrences of `from` that appear as a complete identifier
+/// (not surrounded by alphanumeric chars or underscores).
+fn replace_identifier(s: &str, from: &str, to: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(from) {
+        let before_ok = pos == 0 || {
+            let b = rest.as_bytes()[pos - 1];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        let after_ok = {
+            let end = pos + from.len();
+            end >= rest.len() || {
+                let b = rest.as_bytes()[end];
+                !b.is_ascii_alphanumeric() && b != b'_'
+            }
+        };
+        if before_ok && after_ok {
+            result.push_str(&rest[..pos]);
+            result.push_str(to);
+            rest = &rest[pos + from.len()..];
+        } else {
+            result.push_str(&rest[..pos + 1]);
+            rest = &rest[pos + 1..];
+        }
+    }
+    result.push_str(rest);
+    result
 }
 
 #[cfg(test)]

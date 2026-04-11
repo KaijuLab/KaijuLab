@@ -53,3 +53,6 @@ async-trait = "0.1"
 
 # Error handling
 anyhow = "1"
+
+# DWARF debug-info parsing
+gimli = "0.31"

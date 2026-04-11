@@ -26,6 +26,28 @@ pub enum AgentEvent {
     Error(String),
 }
 
+/// Estimated character budget before we start trimming old tool-result messages.
+/// ~80 K chars ≈ 20 K tokens, comfortable headroom under typical 128 K limits.
+const MAX_HISTORY_CHARS: usize = 80_000;
+
+/// Drop the oldest tool-result messages from `history` until the total estimated
+/// character count falls below `MAX_HISTORY_CHARS`.  Plain user/assistant text is
+/// never dropped so the conversation thread stays coherent.
+fn trim_history(history: &mut Vec<crate::llm::LlmMessage>) {
+    loop {
+        let total: usize = history.iter().map(|m| m.estimated_chars()).sum();
+        if total <= MAX_HISTORY_CHARS {
+            break;
+        }
+        // Find the earliest tool-result message and remove it
+        if let Some(pos) = history.iter().position(|m| m.is_tool_result_message()) {
+            history.remove(pos);
+        } else {
+            break; // nothing left to drop
+        }
+    }
+}
+
 const SYSTEM_PROMPT: &str = "\
 You are KaijuLab, an expert reverse-engineering assistant. \
 You analyse binary files using the tools available to you. \
@@ -75,6 +97,9 @@ impl Agent {
         self.history.push(LlmMessage::user_text(user_input));
 
         loop {
+            // ── Trim history to stay within context budget ──────────────────
+            trim_history(&mut self.history);
+
             // ── Call the LLM ────────────────────────────────────────────────
             self.emit(AgentEvent::Thinking);
             let spinner = if !self.tui_mode() {

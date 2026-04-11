@@ -86,6 +86,27 @@ impl LlmMessage {
             })
             .collect()
     }
+
+    /// Rough character count across all content items (used for context-window budgeting).
+    pub fn estimated_chars(&self) -> usize {
+        self.content
+            .iter()
+            .map(|c| match c {
+                MessageContent::Text(t) => t.len(),
+                MessageContent::ToolCall(tc) => tc.name.len() + tc.args.to_string().len() + 16,
+                MessageContent::ToolResult(tr) => tr.content.len() + 16,
+            })
+            .sum()
+    }
+
+    /// True when this message consists entirely of tool results (safe to drop when trimming).
+    pub fn is_tool_result_message(&self) -> bool {
+        !self.content.is_empty()
+            && self
+                .content
+                .iter()
+                .all(|c| matches!(c, MessageContent::ToolResult(_)))
+    }
 }
 
 // ─── Universal tool definition ────────────────────────────────────────────────

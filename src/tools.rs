@@ -2,6 +2,7 @@ use object::{Architecture, Object, ObjectSection, ObjectSegment, ObjectSymbol};
 use serde_json::{json, Value};
 
 use crate::llm::ToolDefinition;
+use crate::project::Project;
 
 // ─── Tool result ─────────────────────────────────────────────────────────────
 
@@ -48,11 +49,28 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
         "list_functions" => list_functions(
             &str_arg(args, "path"),
             args["max_results"].as_u64().unwrap_or(50) as usize,
+            args["json"].as_bool().unwrap_or(false),
         ),
         "decompile" => decompile(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
         ),
+        "xrefs_to" => xrefs_to(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+        ),
+        "dwarf_info" => dwarf_info(&str_arg(args, "path")),
+        "rename_function" => rename_function(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+            &str_arg(args, "name"),
+        ),
+        "add_comment" => add_comment(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+            &str_arg(args, "comment"),
+        ),
+        "load_project" => load_project(&str_arg(args, "path")),
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -301,11 +319,25 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
         ));
     }
 
-    let end   = (file_offset + length).min(data.len());
+    // If we have a vaddr and the binary has a symbol at that address, cap length to symbol size.
+    let effective_length = if let Some(va) = vaddr_hint {
+        if let Ok(obj) = object::File::parse(&*data) {
+            obj.symbols()
+                .find(|s| s.address() == va && s.size() > 0)
+                .map(|s| (s.size() as usize).max(length))
+                .unwrap_or(length)
+        } else {
+            length
+        }
+    } else {
+        length
+    };
+
+    let end   = (file_offset + effective_length).min(data.len());
     let slice = &data[file_offset..end];
     let ip: u64 = vaddr_hint.unwrap_or(file_offset as u64);
 
-    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic};
 
     let mut decoder   = Decoder::with_ip(bitness, slice, ip, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
@@ -318,6 +350,7 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
     let mut count = 0usize;
 
     for instr in &mut decoder {
+        let is_ret = matches!(instr.mnemonic(), Mnemonic::Ret | Mnemonic::Retf);
         if instr.is_invalid() {
             out.push_str(&format!("  {:016x}  ?? (invalid)\n", instr.ip()));
         } else {
@@ -330,8 +363,11 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
             out.push_str(&format!("  {:016x}  {:<24}  {}\n", instr.ip(), bytes, mnemonic));
         }
         count += 1;
-        if count >= 60 {
-            out.push_str("\n  … truncated at 60 instructions");
+        if is_ret {
+            break; // natural function boundary
+        }
+        if count >= 200 {
+            out.push_str("\n  … truncated at 200 instructions");
             break;
         }
     }
@@ -448,7 +484,7 @@ fn resolve_plt(path: &str) -> ToolResult {
 
 // ─── Tool: list_functions ────────────────────────────────────────────────────
 
-fn list_functions(path: &str, max_results: usize) -> ToolResult {
+fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -475,22 +511,34 @@ fn list_functions(path: &str, max_results: usize) -> ToolResult {
     };
 
     if !sym_funcs.is_empty() {
-        let total = sym_funcs.len();
+        // Re-collect with size
+        let mut with_size: Vec<(u64, u64, String)> = obj
+            .symbols()
+            .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
+            .map(|s| (s.address(), s.size(), s.name().unwrap_or("<?>").to_string()))
+            .collect();
+        with_size.sort_by_key(|(a, _, _)| *a);
+        let total = with_size.len();
+
+        if as_json {
+            let arr: Vec<serde_json::Value> = with_size
+                .iter()
+                .take(max_results)
+                .map(|(addr, size, name)| json!({"address": addr, "size": size, "name": name}))
+                .collect();
+            let val = json!({
+                "source": "symbol_table",
+                "total": total,
+                "functions": arr
+            });
+            return ToolResult::ok(val.to_string());
+        }
+
         let mut out = format!(
             "Functions from symbol table ({} total):\n\n  {:<20}  {:<8}  {}\n  {}\n",
             total, "Address", "Size", "Name", "─".repeat(55)
         );
-        // Re-collect with size for display
-        let with_size: Vec<(u64, u64, String)> = obj
-            .symbols()
-            .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
-            .map(|s| (s.address(), s.size(), s.name().unwrap_or("<?>").to_string()))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .collect();
-        let mut with_size_sorted = with_size;
-        with_size_sorted.sort_by_key(|(a, _, _)| *a);
-        for (addr, size, name) in with_size_sorted.iter().take(max_results) {
+        for (addr, size, name) in with_size.iter().take(max_results) {
             out.push_str(&format!("  0x{:016x}  {:<8}  {}\n", addr, size, name));
         }
         if total > max_results {
@@ -546,6 +594,21 @@ fn list_functions(path: &str, max_results: usize) -> ToolResult {
     }
 
     let total = found.len();
+
+    if as_json {
+        let arr: Vec<serde_json::Value> = found
+            .iter()
+            .take(max_results)
+            .map(|addr| json!({"address": addr}))
+            .collect();
+        let val = json!({
+            "source": "prologue_scan",
+            "total": total,
+            "functions": arr
+        });
+        return ToolResult::ok(val.to_string());
+    }
+
     let mut out = format!(
         "Functions from prologue scan — stripped binary ({} candidates):\n\n  {:<20}\n  {}\n",
         total, "Virtual address", "─".repeat(20)
@@ -557,6 +620,175 @@ fn list_functions(path: &str, max_results: usize) -> ToolResult {
         out.push_str(&format!("  … and {} more (use a smaller max_results range or filter by address)", total - max_results));
     }
 
+    ToolResult::ok(out)
+}
+
+// ─── Tool: xrefs_to ─────────────────────────────────────────────────────────
+
+/// Find all call sites that target `target_vaddr` by scanning the .text section.
+fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if target_vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let obj = match object::File::parse(&*data) {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
+    };
+
+    // Only x86/x86-64 supported (iced-x86 is x86-only)
+    let bitness: u32 = match obj.architecture() {
+        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+        Architecture::I386 => 32,
+        other => return ToolResult::err(format!(
+            "xrefs_to only supports x86/x86-64 (got {:?})", other
+        )),
+    };
+
+    let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
+        Some(s) => s,
+        None => return ToolResult::err("No .text section found"),
+    };
+    let text_vaddr = text_sec.address();
+    let text_bytes = match text_sec.data() {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
+    };
+
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
+    let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
+    let mut callers: Vec<u64> = Vec::new();
+
+    for instr in &mut decoder {
+        if matches!(instr.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) {
+            // Direct near calls have a concrete target in near_branch64()
+            let tgt = instr.near_branch64();
+            if tgt == target_vaddr {
+                callers.push(instr.ip());
+            }
+        }
+    }
+
+    if callers.is_empty() {
+        return ToolResult::ok(format!(
+            "No call/jmp to 0x{:x} found in .text", target_vaddr
+        ));
+    }
+
+    // Annotate each caller with its enclosing function name if available
+    let syms: Vec<(u64, u64, String)> = {
+        let mut v: Vec<_> = obj
+            .symbols()
+            .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
+            .map(|s| (s.address(), s.size(), s.name().unwrap_or("<?>").to_string()))
+            .collect();
+        v.sort_by_key(|(a, _, _)| *a);
+        v
+    };
+
+    let find_func = |addr: u64| -> String {
+        // Check project renames first
+        let p = Project::load_for(path);
+        if let Some(renamed) = p.get_name(addr) {
+            return renamed;
+        }
+        for (fn_addr, fn_size, fn_name) in &syms {
+            if addr >= *fn_addr && addr < fn_addr + fn_size {
+                return fn_name.clone();
+            }
+        }
+        "<unknown>".to_string()
+    };
+
+    let mut out = format!("Cross-references to 0x{:x} ({} callers):\n\n", target_vaddr, callers.len());
+    out.push_str(&format!("  {:<20}  {}\n  {}\n", "Caller address", "Enclosing function", "─".repeat(55)));
+    for addr in &callers {
+        let fname = find_func(*addr);
+        out.push_str(&format!("  0x{:016x}  {}\n", addr, fname));
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: dwarf_info ────────────────────────────────────────────────────────
+
+fn dwarf_info(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    match crate::dwarf::parse_dwarf_functions(path) {
+        Ok(funcs) => {
+            if funcs.is_empty() {
+                return ToolResult::ok("No DWARF debug information found (or no DW_TAG_subprogram entries)");
+            }
+            let mut out = format!("DWARF functions ({} entries):\n\n", funcs.len());
+            out.push_str(&format!("  {:<20}  {:<8}  {}\n  {}\n",
+                "Address", "Size", "Name", "─".repeat(55)));
+            for f in &funcs {
+                let size_str = f.size.map(|s| s.to_string()).unwrap_or_else(|| "?".to_string());
+                out.push_str(&format!("  0x{:016x}  {:<8}  {}\n", f.addr, size_str, f.name));
+            }
+            ToolResult::ok(out)
+        }
+        Err(e) => ToolResult::err(format!("DWARF parse error: {}", e)),
+    }
+}
+
+// ─── Tool: rename_function / add_comment / load_project ─────────────────────
+
+fn rename_function(path: &str, vaddr: u64, name: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if name.is_empty() { return ToolResult::err("'name' is required"); }
+    let mut p = Project::load_for(path);
+    p.rename(vaddr, name.to_string());
+    match p.save() {
+        Ok(_) => ToolResult::ok(format!("Renamed 0x{:x} → '{}'", vaddr, name)),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+fn add_comment(path: &str, vaddr: u64, comment: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if comment.is_empty() { return ToolResult::err("'comment' is required"); }
+    let mut p = Project::load_for(path);
+    p.comment(vaddr, comment.to_string());
+    match p.save() {
+        Ok(_) => ToolResult::ok(format!("Comment added at 0x{:x}", vaddr)),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+fn load_project(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let p = Project::load_for(path);
+    let proj_path = Project::project_path(path);
+    if !proj_path.exists() {
+        return ToolResult::ok(format!(
+            "No project file found for '{}'\nWould be saved at: {}", path, proj_path.display()
+        ));
+    }
+    let mut out = format!("Project: {}\n\n", proj_path.display());
+    if !p.renames.is_empty() {
+        out.push_str(&format!("Renames ({}):\n", p.renames.len()));
+        let mut renames: Vec<_> = p.renames.iter().collect();
+        renames.sort_by_key(|(k, _)| *k);
+        for (addr, name) in renames {
+            out.push_str(&format!("  0x{:016x}  {}\n", addr, name));
+        }
+        out.push('\n');
+    }
+    if !p.comments.is_empty() {
+        out.push_str(&format!("Comments ({}):\n", p.comments.len()));
+        let mut comments: Vec<_> = p.comments.iter().collect();
+        comments.sort_by_key(|(k, _)| *k);
+        for (addr, cmt) in comments {
+            out.push_str(&format!("  0x{:016x}  {}\n", addr, cmt));
+        }
+    }
     ToolResult::ok(out)
 }
 
@@ -658,12 +890,14 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
             description: "List functions in the binary. For non-stripped binaries, returns the symbol \
                            table. For stripped binaries, scans .text for common x86/x86-64 function \
                            prologues (endbr64, push rbp; mov rbp,rsp) as a heuristic. \
-                           The returned addresses can be passed directly to `disassemble` via `vaddr`.".into(),
+                           The returned addresses can be passed directly to `disassemble` via `vaddr`. \
+                           Pass `json: true` for machine-readable JSON output suitable for post-processing.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path":        { "type": "string",  "description": "Path to the binary file" },
-                    "max_results": { "type": "integer", "description": "Maximum functions to return (default 50)" }
+                    "max_results": { "type": "integer", "description": "Maximum functions to return (default 50)" },
+                    "json":        { "type": "boolean", "description": "Return JSON instead of formatted text (default false)" }
                 },
                 "required": ["path"]
             }),
@@ -684,6 +918,75 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     "vaddr": { "type": "integer", "description": "Virtual address of the function entry point" }
                 },
                 "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "xrefs_to".into(),
+            description: "Find all call/jmp sites in .text that target a given virtual address. \
+                           Returns a list of caller addresses with their enclosing function names (if available). \
+                           Supports x86/x86-64 only.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Target virtual address to find references to" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "dwarf_info".into(),
+            description: "Extract function names, addresses, and sizes from DWARF debug information \
+                           embedded in the binary. Returns an empty result for stripped binaries. \
+                           Useful for non-stripped binaries compiled with -g.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "rename_function".into(),
+            description: "Assign a human-readable name to a function address in the project sidecar \
+                           (saved as <binary>.kaiju.json next to the binary). \
+                           The name will appear in subsequent decompile and xrefs_to output.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Function virtual address" },
+                    "name":  { "type": "string",  "description": "Human-readable function name" }
+                },
+                "required": ["path", "vaddr", "name"]
+            }),
+        },
+        ToolDefinition {
+            name: "add_comment".into(),
+            description: "Attach an analyst comment to a virtual address in the project sidecar. \
+                           Saved persistently in <binary>.kaiju.json.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":    { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr":   { "type": "integer", "description": "Virtual address" },
+                    "comment": { "type": "string",  "description": "Comment text" }
+                },
+                "required": ["path", "vaddr", "comment"]
+            }),
+        },
+        ToolDefinition {
+            name: "load_project".into(),
+            description: "Load and display the KaijuLab project sidecar for a binary. \
+                           Shows all renames and comments previously saved for that binary. \
+                           Returns the path where the project file would be stored even if it doesn't exist yet.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
             }),
         },
     ]
