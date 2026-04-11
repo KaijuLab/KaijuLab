@@ -20,15 +20,16 @@ use crate::agent::AgentEvent;
 
 // ─── Tab identifiers ─────────────────────────────────────────────────────────
 
-const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Strings", "Imports", "Chat"];
+const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Decompile", "Strings", "Imports", "Chat"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
-    Functions = 0,
-    Disasm    = 1,
-    Strings   = 2,
-    Imports   = 3,
-    Chat      = 4,
+    Functions  = 0,
+    Disasm     = 1,
+    Decompile  = 2,
+    Strings    = 3,
+    Imports    = 4,
+    Chat       = 5,
 }
 
 impl Tab {
@@ -36,9 +37,10 @@ impl Tab {
         match n {
             0 => Some(Tab::Functions),
             1 => Some(Tab::Disasm),
-            2 => Some(Tab::Strings),
-            3 => Some(Tab::Imports),
-            4 => Some(Tab::Chat),
+            2 => Some(Tab::Decompile),
+            3 => Some(Tab::Strings),
+            4 => Some(Tab::Imports),
+            5 => Some(Tab::Chat),
             _ => None,
         }
     }
@@ -56,6 +58,7 @@ impl Tab {
         match name {
             "list_functions"  => Some(Tab::Functions),
             "disassemble"     => Some(Tab::Disasm),
+            "decompile"       => Some(Tab::Decompile),
             "strings_extract" => Some(Tab::Strings),
             "resolve_plt"     => Some(Tab::Imports),
             _ => None,
@@ -79,12 +82,12 @@ pub enum ChatMsg {
 pub struct App {
     pub active_tab: Tab,
     /// Latest content for each dedicated panel (indexed by Tab as usize).
-    pub tab_lines: [Vec<String>; 5],
+    pub tab_lines: [Vec<String>; 6],
     /// Whether each tab has unseen content (shows a dot indicator).
-    pub tab_dirty: [bool; 5],
+    pub tab_dirty: [bool; 6],
     pub chat: Vec<ChatMsg>,
     /// Scroll offsets for each tab (lines from top for panels; lines from bottom for chat).
-    pub scroll: [u16; 5],
+    pub scroll: [u16; 6],
     pub input: String,
     pub input_cursor: usize,
     pub status: String,
@@ -99,9 +102,9 @@ impl App {
         App {
             active_tab: Tab::Chat,
             tab_lines: Default::default(),
-            tab_dirty: [false; 5],
+            tab_dirty: [false; 6],
             chat: Vec::new(),
-            scroll: [0u16; 5],
+            scroll: [0u16; 6],
             input: String::new(),
             input_cursor: 0,
             status: "Ready — type a task and press Enter".to_string(),
@@ -189,7 +192,7 @@ impl App {
             }
 
             // Number keys to jump to a tab (only when input field is empty)
-            KeyCode::Char(c @ '1'..='5') if self.input.is_empty() && key.modifiers.is_empty() => {
+            KeyCode::Char(c @ '1'..='6') if self.input.is_empty() && key.modifiers.is_empty() => {
                 let idx = (c as usize) - ('1' as usize);
                 if let Some(t) = Tab::from_index(idx) {
                     self.active_tab = t;
@@ -607,6 +610,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         let hint = match tab {
             Tab::Functions => "Say \"list all functions\" or \"what functions are in this binary?\"",
             Tab::Disasm    => "Say \"disassemble the entry point\" or \"show me the main function\"",
+            Tab::Decompile => "Say \"decompile 0x<addr>\" or \"decompile the main function\"",
             Tab::Strings   => "Say \"extract strings\" or \"show strings in .rodata\"",
             Tab::Imports   => "Say \"what does this binary import?\" or \"resolve the PLT\"",
             Tab::Chat      => unreachable!(),
@@ -626,6 +630,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         Tab::Functions => raw.iter().map(|l| highlight_addr_table(l)).collect(),
         Tab::Imports   => raw.iter().map(|l| highlight_addr_table(l)).collect(),
         Tab::Strings   => raw.iter().map(|l| highlight_strings(l)).collect(),
+        Tab::Decompile => raw.iter().map(|l| highlight_decompile(l)).collect(),
         Tab::Chat      => unreachable!(),
     };
 
@@ -808,6 +813,66 @@ fn highlight_strings(line: &str) -> Line<'static> {
         }
     }
     Line::styled(line.to_string(), Style::new().fg(Color::DarkGray))
+}
+
+/// Syntax-highlight a single line of pseudo-C decompiler output.
+fn highlight_decompile(line: &str) -> Line<'static> {
+    const KEYWORDS: &[&str] = &[
+        "void", "int", "char", "unsigned", "long", "short", "return",
+        "if", "else", "while", "for", "do", "break", "continue",
+        "struct", "typedef", "static", "const",
+    ];
+
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(indent.to_string())];
+
+    // Tokenise by whitespace while preserving separators
+    let mut rest = trimmed;
+    while !rest.is_empty() {
+        // Numeric literal (0x… or decimal)
+        if let Some(end) = rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != 'x') {
+            let tok = &rest[..end.max(1)];
+            let is_num = tok.starts_with("0x") || tok.starts_with("0X")
+                || tok.parse::<i64>().is_ok();
+            let is_kw = KEYWORDS.contains(&tok);
+            let style = if is_kw {
+                Style::new().fg(Color::Cyan).bold()
+            } else if is_num {
+                Style::new().fg(Color::Magenta)
+            } else if tok.starts_with("FUN_") || tok.starts_with("DAT_") {
+                Style::new().fg(Color::Yellow)
+            } else {
+                Style::new().fg(Color::White)
+            };
+            spans.push(Span::styled(tok.to_string(), style));
+            let sep_end = end.max(1);
+            // separator chars (punctuation/spaces)
+            let sep = &rest[sep_end..];
+            let sep_len = sep.find(|c: char| c.is_alphanumeric() || c == '_').unwrap_or(sep.len());
+            if sep_len > 0 {
+                spans.push(Span::styled(
+                    sep[..sep_len].to_string(),
+                    Style::new().fg(Color::DarkGray),
+                ));
+            }
+            rest = &rest[sep_end + sep_len..];
+        } else {
+            // remaining token to end of line
+            let is_kw = KEYWORDS.contains(&rest);
+            let style = if is_kw {
+                Style::new().fg(Color::Cyan).bold()
+            } else if rest.starts_with("FUN_") || rest.starts_with("DAT_") {
+                Style::new().fg(Color::Yellow)
+            } else {
+                Style::new().fg(Color::White)
+            };
+            spans.push(Span::styled(rest.to_string(), style));
+            break;
+        }
+    }
+
+    Line::from(spans)
 }
 
 // ─── Operand tokenizer ───────────────────────────────────────────────────────

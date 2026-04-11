@@ -101,9 +101,13 @@ impl LiteralState {
                 instrs.push(i);
                 break;
             }
-            if start < bytes.len() {
-                decoder.set_inst(i.inst_next, &bytes[start..]);
+            // Consumed all bytes — push final instruction and stop.
+            // Without this break, the stale decoder state would loop infinitely.
+            if start >= bytes.len() {
+                instrs.push(i);
+                break;
             }
+            decoder.set_inst(i.inst_next, &bytes[start..]);
             instrs.push(i);
         }
 
