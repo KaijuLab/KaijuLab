@@ -1,5 +1,6 @@
 mod agent;
 mod config;
+pub mod decompiler;
 mod llm;
 mod tools;
 mod tui;
@@ -7,6 +8,7 @@ mod ui;
 
 use anyhow::Result;
 use clap::Parser;
+use serde_json::json;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
@@ -22,8 +24,8 @@ use llm::LlmBackend;
 struct Cli {
     // ── Backend selection ──────────────────────────────────────────────────────
 
-    /// LLM backend to use: gemini (default), openai, anthropic, ollama
-    #[arg(long, default_value = "gemini", value_name = "BACKEND")]
+    /// LLM backend to use: none (default), gemini, openai, anthropic, ollama
+    #[arg(long, default_value = "none", value_name = "BACKEND")]
     backend: String,
 
     /// Model ID override (each backend has its own default)
@@ -80,10 +82,43 @@ async fn main() -> Result<()> {
         cli.base_url,
     )?;
 
+    // ── No-LLM (manual) mode ─────────────────────────────────────────────────
+    if matches!(cfg, BackendConfig::None) {
+        let display = "manual".to_string();
+
+        if let Some(file) = &cli.file {
+            // One-shot: just run file_info and exit
+            ui::print_banner(&display);
+            let result = tools::dispatch("file_info", &json!({"path": file.to_string_lossy()}));
+            println!("{}", result.output);
+            return Ok(());
+        }
+
+        if cli.no_tui {
+            ui::print_banner(&display);
+            run_manual_plain_repl().await?;
+            return Ok(());
+        }
+
+        // TUI manual mode
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
+        let (user_tx, mut user_rx) = mpsc::channel::<String>(4);
+
+        tokio::spawn(async move {
+            while let Some(msg) = user_rx.recv().await {
+                dispatch_manual_command(&msg, &event_tx);
+            }
+        });
+
+        tui::run_tui(event_rx, user_tx, &display, None).await?;
+        return Ok(());
+    }
+
+    // ── LLM mode ─────────────────────────────────────────────────────────────
     let backend: Box<dyn LlmBackend> = build_backend(&cfg)?;
     let display = backend.display_name();
 
-    // ── One-shot mode: analyse a single file and exit ─────────────────────────
+    // One-shot mode: analyse a single file and exit
     if let Some(file) = &cli.file {
         ui::print_banner(&display);
         let mut agent = agent::Agent::new(backend);
@@ -92,7 +127,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // ── Plain-text REPL (--no-tui) ────────────────────────────────────────────
+    // Plain-text REPL (--no-tui)
     if cli.no_tui {
         ui::print_banner(&display);
         let mut agent = agent::Agent::new(backend);
@@ -100,13 +135,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // ── Interactive TUI (default) ─────────────────────────────────────────────
+    // Interactive TUI (default)
     let (event_tx, event_rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
     let (user_tx, mut user_rx) = mpsc::channel::<String>(4);
 
     let mut ag = agent::Agent::new(backend).with_events(event_tx);
 
-    // Run the agent loop in a background task; it blocks on incoming messages.
     tokio::spawn(async move {
         while let Some(msg) = user_rx.recv().await {
             if let Err(e) = ag.run(&msg).await {
@@ -120,7 +154,149 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// ─── Plain-text REPL ─────────────────────────────────────────────────────────
+// ─── Manual command dispatcher ───────────────────────────────────────────────
+
+const MANUAL_HELP: &str = "\
+No LLM configured — running in manual tool mode.
+
+Available commands:
+  file_info   <path>                  Binary metadata
+  hexdump     <path> [offset] [len]   Hex dump
+  strings     <path> [min_len]        Extract strings
+  disassemble <path> <vaddr>          Disassemble at virtual address
+  functions   <path> [max]            List functions
+  imports     <path>                  Resolve PLT imports
+  decompile   <path> <vaddr>          Decompile function at virtual address
+  help                                Show this message
+
+Example:  disassemble /bin/ls 0x5880";
+
+/// Parse a user-typed command and fire AgentEvents into the TUI channel.
+fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {
+    let parts: Vec<&str> = input.trim().splitn(4, ' ').collect();
+    let cmd = parts.first().copied().unwrap_or("").to_lowercase();
+
+    let send = |ev| { let _ = tx.send(ev); };
+
+    match cmd.as_str() {
+        "help" | "" => {
+            send(agent::AgentEvent::LlmText(MANUAL_HELP.to_string()));
+            send(agent::AgentEvent::Done);
+        }
+
+        "file_info" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("file_info", json!({"path": path}), tx);
+        }
+
+        "hexdump" => {
+            let path   = parts.get(1).copied().unwrap_or("");
+            let offset = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let len    = parts.get(3).and_then(|s| parse_int(s)).unwrap_or(256);
+            run_tool("hexdump", json!({"path": path, "offset": offset, "length": len}), tx);
+        }
+
+        "strings" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let min_len = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(4);
+            run_tool("strings_extract", json!({"path": path, "min_len": min_len}), tx);
+        }
+
+        "disassemble" | "disasm" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("disassemble", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        "functions" | "funcs" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            let max  = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(50);
+            run_tool("list_functions", json!({"path": path, "max_results": max}), tx);
+        }
+
+        "imports" | "plt" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("resolve_plt", json!({"path": path}), tx);
+        }
+
+        "decompile" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("decompile", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        other => {
+            send(agent::AgentEvent::Error(format!(
+                "Unknown command '{}'. Type 'help' for usage.", other
+            )));
+            send(agent::AgentEvent::Done);
+        }
+    }
+}
+
+fn run_tool(name: &str, args: serde_json::Value, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {
+    let display_args = args.to_string();
+    let _ = tx.send(agent::AgentEvent::ToolCall { name: name.to_string(), display_args });
+    let result = tools::dispatch(name, &args);
+    let _ = tx.send(agent::AgentEvent::ToolResult {
+        name: name.to_string(),
+        output: result.output,
+    });
+    let _ = tx.send(agent::AgentEvent::Done);
+}
+
+/// Parse a number, accepting 0x… hex prefixes.
+fn parse_int(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
+    }
+}
+
+// ─── Manual plain-text REPL ──────────────────────────────────────────────────
+
+async fn run_manual_plain_repl() -> Result<()> {
+    use std::io::{BufRead, Write};
+
+    println!("{}", MANUAL_HELP);
+
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
+    loop {
+        print!("\n> ");
+        stdout.flush()?;
+
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line)? == 0 {
+            break;
+        }
+        let input = line.trim().to_string();
+        if input.is_empty() { continue; }
+        if matches!(input.as_str(), "exit" | "quit" | "q") { break; }
+
+        // Reuse the same parser; collect events and print them
+        let (tx, mut rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
+        dispatch_manual_command(&input, &tx);
+        drop(tx);
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                agent::AgentEvent::ToolResult { output, .. } => println!("{output}"),
+                agent::AgentEvent::LlmText(t) => println!("{t}"),
+                agent::AgentEvent::Error(e) => eprintln!("Error: {e}"),
+                _ => {}
+            }
+        }
+        ui::print_separator();
+    }
+
+    println!("  Bye.");
+    Ok(())
+}
+
+// ─── LLM plain-text REPL ─────────────────────────────────────────────────────
 
 async fn run_plain_repl(agent: &mut agent::Agent) -> Result<()> {
     use std::io::{BufRead, Write};
@@ -157,6 +333,7 @@ async fn run_plain_repl(agent: &mut agent::Agent) -> Result<()> {
 
 fn build_backend(cfg: &BackendConfig) -> Result<Box<dyn LlmBackend>> {
     match cfg {
+        BackendConfig::None => unreachable!("build_backend called with None backend"),
         BackendConfig::Gemini { credentials_path, project_id, location, model_id } => {
             let b = llm::gemini::GeminiBackend::new(
                 credentials_path,

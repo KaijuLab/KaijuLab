@@ -35,6 +35,15 @@ object = "0.36"
 goblin = "0.8"
 iced-x86 = "1"
 
+# Decompiler (ported from Ouroboros, MIT/Apache-2.0)
+sleigh-runtime = { git = "https://github.com/icicle-emu/icicle-emu" }
+sleigh-compile = { git = "https://github.com/icicle-emu/icicle-emu" }
+pcode = { git = "https://github.com/icicle-emu/icicle-emu" }
+nodit = "0.9"
+smallvec = "1"
+petgraph = "0.8"
+enumset = "1"
+
 # Auth
 jsonwebtoken = "9"
 chrono = "0.4"

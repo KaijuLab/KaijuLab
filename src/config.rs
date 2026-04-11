@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackendKind {
+    None,
     Gemini,
     OpenAi,
     Anthropic,
@@ -16,12 +17,13 @@ impl std::str::FromStr for BackendKind {
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
+            "none" | "manual" | "" => Ok(BackendKind::None),
             "gemini" => Ok(BackendKind::Gemini),
             "openai" => Ok(BackendKind::OpenAi),
             "anthropic" => Ok(BackendKind::Anthropic),
             "ollama" => Ok(BackendKind::Ollama),
             other => anyhow::bail!(
-                "Unknown backend '{}'. Valid options: gemini, openai, anthropic, ollama",
+                "Unknown backend '{}'. Valid options: none, gemini, openai, anthropic, ollama",
                 other
             ),
         }
@@ -32,6 +34,7 @@ impl std::str::FromStr for BackendKind {
 
 #[derive(Debug, Clone)]
 pub enum BackendConfig {
+    None,
     Gemini {
         credentials_path: PathBuf,
         project_id: String,
@@ -68,6 +71,7 @@ impl BackendConfig {
         base_url_override: Option<String>,
     ) -> Result<Self> {
         match kind {
+            BackendKind::None => return Ok(BackendConfig::None),
             BackendKind::Gemini => {
                 let credentials_path = credentials_override
                     .or_else(|| {

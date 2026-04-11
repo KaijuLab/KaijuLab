@@ -49,6 +49,10 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "path"),
             args["max_results"].as_u64().unwrap_or(50) as usize,
         ),
+        "decompile" => decompile(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+        ),
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -664,7 +668,48 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                 "required": ["path"]
             }),
         },
+        ToolDefinition {
+            name: "decompile".into(),
+            description: "Decompile a single function to pseudo-C code using symbolic execution and \
+                           structural recovery (if/else, loops, assignments, calls). \
+                           Supports x86/x86-64 ELF and PE binaries. \
+                           Pass `vaddr` as the function's virtual address (e.g. from list_functions or \
+                           the entry point from file_info). Requires the SLEIGH processor definitions \
+                           to be present at ./SLEIGH (included with KaijuLab). \
+                           Note: best-effort — complex or obfuscated functions may yield partial output.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Virtual address of the function entry point" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
     ]
+}
+
+// ─── Tool: decompile ─────────────────────────────────────────────────────────
+
+fn decompile(path: &str, vaddr: u64) -> ToolResult {
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err(
+            "'vaddr' is required — pass the virtual address of the function entry point \
+             (e.g. from list_functions or file_info entry point)"
+        );
+    }
+    let result = crate::decompiler::decompile_function(path, vaddr);
+    if result.starts_with("Decompiler error:") {
+        ToolResult::err(result)
+    } else {
+        ToolResult::ok(format!(
+            "Decompiled function at 0x{:x} in '{}':\n\n{}",
+            vaddr, path, result
+        ))
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
