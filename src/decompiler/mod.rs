@@ -44,6 +44,9 @@ pub fn decompile_function(path: &str, vaddr: u64) -> String {
 fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
 
+    // Load project sidecar (may be empty if no .kaiju.json exists yet)
+    let project = crate::project::Project::load_for(path);
+
     // Detect architecture to pick the right SLEIGH language ID
     let arch = object::File::parse(&*data)
         .ok()
