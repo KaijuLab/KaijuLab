@@ -161,34 +161,49 @@ async fn main() -> Result<()> {
 const MANUAL_HELP: &str = "\
 No LLM configured — running in manual tool mode.
 
-Available commands:
-  ls            [path]                  List files in a directory
-  file_info     <path>                  Binary metadata
-  hexdump       <path> [offset] [len]   Hex dump
-  strings       <path> [min_len]        Extract strings
-  disassemble   <path> [vaddr]          Disassemble at vaddr (default: entry point)
-  functions     <path> [max]            List functions
-  imports       <path>                  Resolve PLT / PE imports
-  decompile     <path> [vaddr]          Decompile function at vaddr (default: entry point)
-  decompile_flat <path> <base> <vaddr> [arch]  Decompile from raw firmware
-  xrefs         <path> <vaddr>          Cross-references (callers) to a function
-  callgraph     <path>                  Static call graph for the binary
-  cfg           <path> <vaddr>          Control flow graph for a function
-  dwarf         <path>                  DWARF function info from debug symbols
-  scan          <path> [max_fns]        Prepare vulnerability scan (top N functions)
-  explain       <path> <vaddr>          Explain a function (decompile + analysis prompt)
-  identify      <path>                  Identify known library functions by signature
-  diff          <path_a> <path_b>       Diff two binaries by function content
-  auto          <path> [top_n]          Full auto-analysis pass
-  report        <path>                  Export HTML analysis report
-  pdb           <binary> <pdb_file>     Load PDB symbols into project
-  rename        <path> <vaddr> <name>   Assign a name to a function
-  comment       <path> <vaddr> <text>   Attach a comment to an address
-  project       <path>                  Show saved renames/comments for a binary
-  types         <path>                  Show all type annotations
-  help                                  Show this message
+Analysis:
+  file_info     <path>                    Binary metadata & segment table
+  hexdump       <path> [offset] [len]     Raw hex dump
+  strings       <path> [min_len]          Extract printable strings
+  disassemble   <path> [vaddr]            Disassemble (default: entry point)
+  functions     <path> [max]              List all functions
+  decompile     <path> [vaddr]            Decompile a function
+  decompile_flat <path> <base> <vaddr>    Decompile raw firmware / shellcode
+  imports       <path>                    Resolve PLT / PE imports
+  xrefs         <path> <vaddr>            Cross-references to an address
+  callgraph     <path>                    Full static call graph
+  cfg           <path> <vaddr>            Control-flow graph for a function
+  dwarf         <path>                    DWARF debug info
 
-Example:  disassemble /bin/ls 0x5880";
+Search & patch:
+  entropy       <path>                    Section entropy — detect packers/crypto
+  search        <path> <hex pattern>      Byte-pattern search (e.g.  E8 ?? ?? ?? ??)
+  patch         <path> <vaddr> <hex>      Patch bytes  →  writes  <file>.patched
+
+Intelligence:
+  scan          <path> [max_fns]          Vulnerability scan (top N functions)
+  explain       <path> <vaddr>            Explain a function
+  identify      <path>                    FLIRT-style library recognition
+  auto          <path> [top_n]            Full auto-analysis pass
+
+Diff & output:
+  diff          <path_a> <path_b>         Diff two binaries by function content
+  report        <path>                    Export HTML analysis report
+  pdb           <binary> <pdb_file>       Load Windows PDB symbols
+
+Project (persistent across sessions):
+  rename        <path> <vaddr> <name>     Name a function
+  comment       <path> <vaddr> <text>     Attach a comment to an address
+  project       <path>                    Show all saved annotations
+  types         <path>                    Show struct / signature definitions
+
+Other:
+  ls            [path]                    List files in a directory
+  help                                    Show this message
+
+Example:  disassemble /bin/ls 0x5880
+          entropy /path/to/suspect.exe
+          search  /path/to/binary  E8 ?? ?? ?? ?? 48 89 C7";
 
 /// Parse a user-typed command and fire AgentEvents into the TUI channel.
 fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {

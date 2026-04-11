@@ -86,6 +86,7 @@ pub struct ContextEntry {
 
 #[derive(Clone)]
 pub enum ChatMsg {
+    Welcome,
     User(String),
     Assistant(String),
     ToolCall { name: String, args: String },
@@ -129,41 +130,6 @@ pub struct App {
     pub search_hit_idx: usize,
 }
 
-const WELCOME: &str = "\
-Welcome to KaijuLab — AI-powered reverse engineering assistant.
-
-Load a binary by mentioning its path in your message, or pass it on the command line.
-  Example: \"Analyse /path/to/binary and tell me what it does\"
-
-──────────────────────────────────────────────
- TUI shortcuts (when the input field is empty)
-──────────────────────────────────────────────
-  1–7          Switch to tab (Functions / Disasm / Decompile / Strings / Imports / Chat / Context)
-  Tab          Cycle to next tab
-  g <addr>     Jump to address in the current panel  (e.g.  g 0x401234)
-  /<pattern>   Search text in the current panel      (e.g.  /malloc)
-  n / N        Next / previous search match
-  ↑ / ↓        Browse your sent-message history
-  PgUp/PgDn    Scroll the active panel
-  Ctrl+C       Clear input (or quit when input is empty)
-
-──────────────────────────────────────────────
- What the agent can do (ask in plain English)
-──────────────────────────────────────────────
-  Disassemble, decompile, and explain functions
-  List functions, strings, imports; resolve PLT / PE imports
-  Build call graphs and control-flow graphs (CFG)
-  Compute section entropy — detect packers, crypto, obfuscation
-  Search for byte patterns  (e.g. \"find all calls to malloc\")
-  Scan for vulnerabilities and assign suspicion scores
-  Identify library routines (FLIRT-style signature matching)
-  Rename functions/variables, add comments, define C structs
-  Diff two binaries; load Windows PDB debug symbols
-  Generate an HTML analysis report for sharing
-  Patch bytes in a function and save a .patched copy
-
-Try: \"What is this binary? Start from the entry point.\"
-";
 
 impl App {
     pub fn new(backend_name: String) -> Self {
@@ -172,7 +138,14 @@ impl App {
             tab_lines: Default::default(),
             tab_dirty: [false; 7],
             chat: Vec::new(),
-            scroll: [0u16; 7],
+            scroll: {
+                // Start the chat panel scrolled all the way to the top so the
+                // welcome logo is the first thing the user sees.  Any incoming
+                // agent event resets this to 0 (scroll-to-bottom) automatically.
+                let mut s = [0u16; 7];
+                s[Tab::Chat as usize] = u16::MAX;
+                s
+            },
             input: String::new(),
             input_cursor: 0,
             status: "Ready — type a task and press Enter".to_string(),
@@ -189,8 +162,7 @@ impl App {
             search_pattern: None,
             search_hit_idx: 0,
         };
-        // Show welcome / help message in the Chat tab on startup
-        app.chat.push(ChatMsg::Assistant(WELCOME.to_string()));
+        app.chat.push(ChatMsg::Welcome);
         app
     }
 
@@ -810,6 +782,129 @@ fn render_content(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+// ─── Welcome screen lines ────────────────────────────────────────────────────
+//
+// Structure (top → bottom):  commands reference  ·  robot art  ·  title/hint
+// The chat panel scrolls to the BOTTOM on load, so the robot + title are
+// visible immediately; users scroll up to see the full command reference.
+
+fn welcome_lines() -> Vec<Line<'static>> {
+    use ratatui::style::Modifier;
+
+    // ── Palette ───────────────────────────────────────────────────────────────
+    let cyb = Style::new().fg(Color::Cyan).bold();
+    let yeb = Style::new().fg(Color::Yellow).bold();
+    let grb = Style::new().fg(Color::Green).bold();
+    let mgb = Style::new().fg(Color::Magenta).bold();
+    let mg  = Style::new().fg(Color::Magenta);
+    let wh  = Style::new().fg(Color::White);
+    let gy  = Style::new().fg(Color::Gray);
+    let dg  = Style::new().fg(Color::DarkGray);
+    let it  = Style::new().fg(Color::Gray).add_modifier(Modifier::ITALIC);
+
+    let blank = || Line::raw("");
+    let div   = || Line::from(Span::styled(
+        "  ────────────────────────────────────────────────────────",
+        dg,
+    ));
+    let sec = |s: &'static str| Line::from(vec![
+        Span::raw("  "),
+        Span::styled(s, yeb),
+    ]);
+    let kb = |key: &'static str, desc: &'static str| Line::from(vec![
+        Span::raw("    "),
+        Span::styled(key,  cyb),
+        Span::raw("  "),
+        Span::styled(desc, wh),
+    ]);
+    let cmd = |name: &'static str, args: &'static str, desc: &'static str| Line::from(vec![
+        Span::raw("    "),
+        Span::styled(name, grb),
+        Span::raw(" "),
+        Span::styled(args, gy),
+        Span::raw("  "),
+        Span::styled(desc, gy),
+    ]);
+
+    // ── Pixel-art logo ────────────────────────────────────────────────────────
+    // Colors:
+    //   ██ blocks   → magenta bold
+    //   ▀  (eyes)   → yellow bold  (upper-half block = "pupils")
+    //   ▄  (mouth)  → yellow bold  (lower-half block = "smile")
+    let lo = |parts: Vec<(&'static str, Style)>| {
+        Line::from(parts.into_iter().map(|(s, st)| Span::styled(s, st)).collect::<Vec<_>>())
+    };
+
+    let mut lines: Vec<Line<'static>> = vec![
+        blank(),
+        lo(vec![("       ██   ██                 ", mgb)]),
+        lo(vec![("    ███████████                ", mgb)]),
+        lo(vec![("████ ", mgb), ("▀", yeb), ("   ", mgb), ("▀", yeb), (" ███████           ", mgb)]),
+        lo(vec![("████   ", mgb), ("▄", yeb), ("   ███████████          ", mgb)]),
+        lo(vec![("██████████████████████         ", mgb)]),
+        lo(vec![("   ███████████████████         ", mgb)]),
+        lo(vec![("       █████████████           ", mgb)]),
+        lo(vec![("           ██████              ", mgb)]),
+        blank(),
+        // Title
+        Line::from(vec![
+            Span::styled("  KaijuLab ", mgb),
+            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), mg),
+            Span::styled("  ·  AI-powered reverse engineering", dg),
+        ]),
+        blank(),
+        // AI prompt hints
+        Line::from(vec![
+            Span::styled("  Ask: ", yeb),
+            Span::styled("\"Analyse /path/to/binary and tell me what it does\"", it),
+        ]),
+        Line::from(vec![
+            Span::raw("       "),
+            Span::styled("\"What does function 0x401234 do? Is it vulnerable?\"", it),
+        ]),
+        blank(),
+        // Scroll-down hint
+        Line::from(vec![
+            Span::styled("  ↓ scroll down for the full command reference  ·  type  ", dg),
+            Span::styled("help", grb),
+            Span::styled("  for all commands", dg),
+        ]),
+        blank(),
+        div(),
+        blank(),
+        // ── Commands reference ────────────────────────────────────────────────
+        sec("Quick Commands  (type in the input box, no AI needed)"),
+        div(),
+        cmd("help",      "",                      "Full command list"),
+        cmd("entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
+        cmd("search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
+        cmd("patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
+        cmd("disasm",    "<path> [vaddr]",         "Disassemble at address"),
+        cmd("functions", "<path>",                "List all functions"),
+        cmd("decompile", "<path> [vaddr]",         "Decompile a function"),
+        cmd("imports",   "<path>",                "Resolve PLT / PE imports"),
+        cmd("scan",      "<path>",                "Vulnerability scan"),
+        cmd("auto",      "<path>",                "Full auto-analysis pass"),
+        cmd("diff",      "<a> <b>",               "Diff two binaries by content"),
+        cmd("report",    "<path>",                "Export HTML analysis report"),
+        cmd("cfg",       "<path> <vaddr>",         "Control-flow graph for a function"),
+        cmd("callgraph", "<path>",                "Full call graph"),
+        blank(),
+        sec("TUI Shortcuts  (when the input field is empty)"),
+        div(),
+        kb("g 0xADDR",   "Jump to address in current panel"),
+        kb("/pattern",   "Search panel  ·  n = next  ·  N = prev  ·  Esc = clear"),
+        kb("1 – 7",      "Switch tab directly"),
+        kb("Tab",        "Cycle to next tab"),
+        kb("↑  ↓",       "Browse sent-message history"),
+        kb("PgUp  PgDn", "Scroll active panel"),
+        kb("Ctrl+C",     "Clear input  ·  quit when input is empty"),
+        blank(),
+    ];
+
+    lines
+}
+
 // ─ Chat panel ─────────────────────────────────────────────────────────────────
 
 fn render_chat(f: &mut Frame, area: Rect, app: &App) {
@@ -826,6 +921,11 @@ fn render_chat(f: &mut Frame, area: Rect, app: &App) {
 
     for msg in &app.chat {
         match msg {
+            ChatMsg::Welcome => {
+                all_lines.extend(welcome_lines());
+                all_lines.push(Line::raw(""));
+            }
+
             ChatMsg::User(text) => {
                 // "╭── You ──"
                 all_lines.push(Line::from(vec![
