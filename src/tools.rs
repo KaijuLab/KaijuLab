@@ -147,6 +147,17 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
             args["vaddr"].as_u64().unwrap_or(0),
             args["arch"].as_str().unwrap_or("x86_64"),
         ),
+        "search_bytes" => search_bytes(
+            &str_arg(args, "path"),
+            &str_arg(args, "pattern"),
+        ),
+        "patch_bytes" => patch_bytes(
+            &str_arg(args, "path"),
+            args["offset"].as_u64().map(|v| v as usize),
+            args["vaddr"].as_u64(),
+            &str_arg(args, "hex_bytes"),
+        ),
+        "section_entropy" => section_entropy(&str_arg(args, "path")),
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -189,6 +200,19 @@ fn vaddr_to_file_offset(data: &[u8], vaddr: u64) -> Option<usize> {
         }
     }
 
+    None
+}
+
+/// Translate a file offset back to a virtual address using the LOAD segment table.
+fn file_offset_to_vaddr(data: &[u8], offset: usize) -> Option<u64> {
+    let obj = object::File::parse(data).ok()?;
+    for seg in obj.segments() {
+        let (file_off, file_sz) = seg.file_range();
+        if (offset as u64) >= file_off && (offset as u64) < file_off + file_sz {
+            let delta = offset as u64 - file_off;
+            return Some(seg.address() + delta);
+        }
+    }
     None
 }
 
@@ -433,7 +457,10 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
     let slice = &data[file_offset..end];
     let ip: u64 = vaddr_hint.unwrap_or(file_offset as u64);
 
-    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic};
+    // Load project annotations (renames, comments) — optional, never fail
+    let project = if !path.is_empty() { Some(Project::load_for(path)) } else { None };
+
+    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic, OpKind};
 
     let mut decoder   = Decoder::with_ip(bitness, slice, ip, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
@@ -456,7 +483,39 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
                 .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
             let mut mnemonic = String::new();
             formatter.format(&instr, &mut mnemonic);
-            out.push_str(&format!("  {:016x}  {:<24}  {}\n", instr.ip(), bytes, mnemonic));
+
+            // ── Inline annotations ────────────────────────────────────────
+            let mut annotation = String::new();
+            if let Some(ref p) = project {
+                // Comment at this address
+                if let Some(cmt) = p.comments.get(&instr.ip()) {
+                    annotation.push_str(&format!("  ; {}", cmt));
+                }
+                // Rename at this address (function entry label)
+                if let Some(name) = p.renames.get(&instr.ip()) {
+                    if annotation.is_empty() {
+                        annotation.push_str(&format!("  ; <{}>", name));
+                    } else {
+                        annotation.push_str(&format!(" <{}>", name));
+                    }
+                }
+                // Resolve branch / call targets to renamed names
+                let op0_kind = if instr.op_count() > 0 { instr.op_kind(0) } else { OpKind::Register };
+                if matches!(op0_kind,
+                    OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 |
+                    OpKind::FarBranch16  | OpKind::FarBranch32
+                ) {
+                    let target = instr.near_branch_target();
+                    if target != 0 {
+                        if let Some(name) = p.renames.get(&target) {
+                            annotation.push_str(&format!("  ; → <{}>", name));
+                        }
+                    }
+                }
+            }
+
+            out.push_str(&format!("  {:016x}  {:<24}  {}{}\n",
+                instr.ip(), bytes, mnemonic, annotation));
         }
         count += 1;
         if is_ret {
@@ -2431,6 +2490,57 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                 "required": ["path", "vaddr"]
             }),
         },
+        ToolDefinition {
+            name: "search_bytes".into(),
+            description: "Search for a byte pattern anywhere in the binary file. \
+                           The pattern is a space-separated hex string where '??' is a wildcard byte \
+                           that matches any value. Returns file offsets and virtual addresses for all \
+                           matches, plus a 16-byte hex context window. \
+                           Example patterns: 'E8 ?? ?? ?? ?? 48 89 C7' (call + mov), \
+                           '55 48 89 E5' (x86-64 function prologue).".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":    { "type": "string", "description": "Path to the binary file" },
+                    "pattern": { "type": "string", "description": "Hex byte pattern with optional '??' wildcards, e.g. 'E8 ?? ?? ?? ?? 48 89'" }
+                },
+                "required": ["path", "pattern"]
+            }),
+        },
+        ToolDefinition {
+            name: "patch_bytes".into(),
+            description: "Patch bytes in the binary at a given address. \
+                           Writes a modified copy to '<path>.patched' — NEVER modifies the original file. \
+                           Use this to NOP out a check (replace conditional jump with 90 90), \
+                           change a constant, or test a fix. \
+                           The original bytes at the patch site are shown for reference.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":      { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr":     { "type": "integer", "description": "Virtual address to patch (preferred)" },
+                    "offset":    { "type": "integer", "description": "Raw file offset to patch (alternative to vaddr)" },
+                    "hex_bytes": { "type": "string",  "description": "Space-separated hex bytes to write, e.g. '90 90 90' for 3 NOPs" }
+                },
+                "required": ["path", "hex_bytes"]
+            }),
+        },
+        ToolDefinition {
+            name: "section_entropy".into(),
+            description: "Compute Shannon entropy for each section of the binary and for the whole \
+                           file. Entropy ≥ 7.5 typically indicates encrypted or compressed data \
+                           (packed executables, encrypted payloads). Entropy 5–7 is normal for \
+                           compiled code. Low entropy (<4) suggests sparse data or plain text. \
+                           Use this as a first-pass indicator of packing, obfuscation, or embedded \
+                           payloads.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
+            }),
+        },
     ]
 }
 
@@ -2448,13 +2558,304 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
     }
     let result = crate::decompiler::decompile_function(path, vaddr);
     if result.starts_with("Decompiler error:") {
-        ToolResult::err(result)
-    } else {
-        ToolResult::ok(format!(
-            "Decompiled function at 0x{:x} in '{}':\n\n{}",
-            vaddr, path, result
-        ))
+        return ToolResult::err(result);
     }
+
+    // ── Apply project annotations ────────────────────────────────────────────
+    let project = Project::load_for(path);
+    let mut output = result;
+
+    // Apply variable renames for this function
+    if let Some(var_map) = project.var_renames.get(&vaddr) {
+        for (old_name, new_name) in var_map {
+            output = replace_whole_word(&output, old_name, new_name);
+        }
+    }
+
+    // Apply known function renames to call sites in the decompiled output.
+    // The decompiler may emit "fun_XXXXXXXX" or "sub_XXXXXXXX" style names.
+    for (fvaddr, fname) in &project.renames {
+        for pattern in &[
+            format!("fun_{:x}", fvaddr),
+            format!("fun_{:08x}", fvaddr),
+            format!("fun_{:016x}", fvaddr),
+            format!("sub_{:x}", fvaddr),
+            format!("sub_{:08x}", fvaddr),
+        ] {
+            if output.contains(pattern.as_str()) {
+                output = replace_whole_word(&output, pattern, fname);
+            }
+        }
+    }
+
+    // Build signature comment header if we have one
+    let mut header = String::new();
+    if let Some(sig) = project.signatures.get(&vaddr) {
+        let ret = sig.return_type.as_deref().unwrap_or("?");
+        let fname = project.renames.get(&vaddr).map(|s| s.as_str()).unwrap_or("fn");
+        let params: Vec<String> = sig.param_types.iter().enumerate()
+            .map(|(i, pt)| {
+                let t = pt.as_deref().unwrap_or("?");
+                let n = sig.param_names.get(i)
+                    .and_then(|x| x.as_deref())
+                    .unwrap_or("_");
+                format!("{} {}", t, n)
+            })
+            .collect();
+        header = format!("/* KaijuLab: {} {}({}) */\n\n", ret, fname, params.join(", "));
+    } else if let Some(fname) = project.renames.get(&vaddr) {
+        header = format!("/* KaijuLab: {} */\n\n", fname);
+    }
+    if let Some(cmt) = project.comments.get(&vaddr) {
+        header.push_str(&format!("/* {} */\n\n", cmt));
+    }
+
+    ToolResult::ok(format!(
+        "Decompiled function at 0x{:x} in '{}':\n\n{}{}",
+        vaddr, path, header, output
+    ))
+}
+
+/// Replace whole-word occurrences of `from` with `to` (word boundaries = not alphanumeric/_).
+fn replace_whole_word(text: &str, from: &str, to: &str) -> String {
+    if from.is_empty() || from == to { return text.to_string(); }
+    let mut result = String::with_capacity(text.len() + 16);
+    let mut start = 0usize;
+    while let Some(rel) = text[start..].find(from) {
+        let pos = start + rel;
+        let prev_ok = pos == 0 || {
+            text[..pos].chars().last().map_or(true, |c| !c.is_alphanumeric() && c != '_')
+        };
+        let next_ok = pos + from.len() >= text.len() || {
+            text[pos + from.len()..].chars().next().map_or(true, |c| !c.is_alphanumeric() && c != '_')
+        };
+        result.push_str(&text[start..pos]);
+        if prev_ok && next_ok { result.push_str(to); } else { result.push_str(from); }
+        start = pos + from.len();
+    }
+    result.push_str(&text[start..]);
+    result
+}
+
+// ─── Tool: search_bytes ──────────────────────────────────────────────────────
+
+/// Search for a hex byte pattern (with `??` wildcards) throughout a binary file.
+fn search_bytes(path: &str, pattern: &str) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if pattern.is_empty() { return ToolResult::err("'pattern' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    // Parse pattern tokens into Option<u8> (None = wildcard)
+    let pat: Vec<Option<u8>> = {
+        let mut v = Vec::new();
+        for tok in pattern.split_whitespace() {
+            if tok == "?" || tok == "??" || tok == ".." {
+                v.push(None);
+            } else {
+                match u8::from_str_radix(tok, 16) {
+                    Ok(b) => v.push(Some(b)),
+                    Err(_) => return ToolResult::err(format!(
+                        "Invalid token '{}' — use hex bytes (e.g. 'E8') or '??' for wildcards", tok
+                    )),
+                }
+            }
+        }
+        v
+    };
+    if pat.is_empty() { return ToolResult::err("Empty pattern"); }
+
+    let plen = pat.len();
+    let mut matches: Vec<(usize, u64)> = Vec::new();
+
+    'outer: for i in 0..data.len().saturating_sub(plen - 1) {
+        for (j, p) in pat.iter().enumerate() {
+            if let Some(b) = p {
+                if data[i + j] != *b { continue 'outer; }
+            }
+        }
+        let vaddr = file_offset_to_vaddr(&data, i).unwrap_or(i as u64);
+        matches.push((i, vaddr));
+        if matches.len() >= 1000 { break; } // cap at 1 K results
+    }
+
+    let total = matches.len();
+    let show  = 50.min(total);
+    let mut out = format!(
+        "Byte-pattern search: '{}'\nFile: '{}'\nMatches: {}{}\n\n",
+        pattern, path, total,
+        if total > show { format!(" (showing first {})", show) } else { String::new() }
+    );
+
+    for (file_off, vaddr) in matches.iter().take(show) {
+        let end = (file_off + 16).min(data.len());
+        let ctx: String = data[*file_off..end]
+            .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        out.push_str(&format!(
+            "  file=0x{:08x}  vaddr=0x{:016x}  bytes: {}\n",
+            file_off, vaddr, ctx
+        ));
+    }
+    if total == 0 {
+        out.push_str("  (no matches found)\n");
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: patch_bytes ───────────────────────────────────────────────────────
+
+/// Patch bytes in a binary, writing the result to `<path>.patched`.
+/// Never modifies the original file.
+fn patch_bytes(
+    path: &str,
+    file_offset: Option<usize>,
+    vaddr_hint: Option<u64>,
+    hex_bytes: &str,
+) -> ToolResult {
+    if path.is_empty()      { return ToolResult::err("'path' is required"); }
+    if hex_bytes.is_empty() { return ToolResult::err("'hex_bytes' is required"); }
+    if file_offset.is_none() && vaddr_hint.is_none() {
+        return ToolResult::err("Either 'offset' or 'vaddr' is required");
+    }
+
+    let mut data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    // Parse hex bytes
+    let new_bytes: Vec<u8> = {
+        let mut v = Vec::new();
+        for tok in hex_bytes.split_whitespace() {
+            match u8::from_str_radix(tok, 16) {
+                Ok(b) => v.push(b),
+                Err(_) => return ToolResult::err(format!("Invalid hex byte: '{}'", tok)),
+            }
+        }
+        v
+    };
+
+    let off = match (file_offset, vaddr_hint) {
+        (Some(o), _) => o,
+        (None, Some(va)) => match vaddr_to_file_offset(&data, va) {
+            Some(o) => o,
+            None => return ToolResult::err(format!(
+                "vaddr 0x{:x} not mapped in segment table — use file_info to check", va
+            )),
+        },
+        _ => unreachable!(),
+    };
+
+    if off + new_bytes.len() > data.len() {
+        return ToolResult::err(format!(
+            "Patch at 0x{:x} + {} bytes would exceed file size {} — aborting",
+            off, new_bytes.len(), data.len()
+        ));
+    }
+
+    let orig: String = data[off..off + new_bytes.len()]
+        .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+
+    data[off..off + new_bytes.len()].copy_from_slice(&new_bytes);
+
+    let out_path = format!("{}.patched", path);
+    if let Err(e) = std::fs::write(&out_path, &data) {
+        return ToolResult::err(format!("Cannot write '{}': {}", out_path, e));
+    }
+
+    ToolResult::ok(format!(
+        "Patch applied.\n\
+         Source:   {}\n\
+         Offset:   0x{:x}{}\n\
+         Original: {}\n\
+         Patched:  {}\n\
+         Output:   {}\n\n\
+         The original file is untouched. Analyse '{}' to verify the patch.",
+        path,
+        off,
+        vaddr_hint.map(|v| format!(" (vaddr 0x{:x})", v)).unwrap_or_default(),
+        orig,
+        hex_bytes.trim(),
+        out_path,
+        out_path,
+    ))
+}
+
+// ─── Tool: section_entropy ───────────────────────────────────────────────────
+
+/// Compute Shannon entropy for each section and the whole file.
+fn section_entropy(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    fn shannon(bytes: &[u8]) -> f64 {
+        if bytes.is_empty() { return 0.0; }
+        let mut freq = [0u32; 256];
+        for &b in bytes { freq[b as usize] += 1; }
+        let n = bytes.len() as f64;
+        freq.iter().filter(|&&c| c > 0)
+            .map(|&c| { let p = c as f64 / n; -p * p.log2() })
+            .sum()
+    }
+
+    fn bar(e: f64) -> String {
+        let filled = ((e / 8.0) * 24.0).round() as usize;
+        format!("{}{}",
+            "█".repeat(filled.min(24)),
+            "░".repeat(24usize.saturating_sub(filled))
+        )
+    }
+
+    fn label(e: f64) -> &'static str {
+        if e >= 7.5 { "⚠  encrypted/packed" }
+        else if e >= 7.0 { "▲  high (crypto/compress?)" }
+        else if e >= 5.0 { "~  normal code/data" }
+        else { "▼  low (text/sparse)" }
+    }
+
+    let file_e = shannon(&data);
+    let mut out = format!(
+        "Entropy analysis: '{}'\nFile size: {} bytes\n\n\
+         Whole file   {:.4}  [{}]  {}\n\n\
+         Sections:\n\n",
+        path, data.len(), file_e, bar(file_e), label(file_e)
+    );
+
+    match object::File::parse(&*data) {
+        Ok(obj) => {
+            let mut rows: Vec<(String, u64, usize, f64)> = obj.sections()
+                .filter_map(|s| {
+                    let name = s.name().ok()?.to_string();
+                    if name.is_empty() { return None; }
+                    let sec_data = s.data().ok()?;
+                    if sec_data.is_empty() { return None; }
+                    Some((name, s.address(), sec_data.len(), shannon(sec_data)))
+                })
+                .collect();
+            rows.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+            for (name, addr, size, e) in &rows {
+                out.push_str(&format!(
+                    "  {:<16}  0x{:016x}  {:>8} B   {:.4}  [{}]  {}\n",
+                    name, addr, size, e, bar(*e), label(*e)
+                ));
+            }
+            if rows.is_empty() {
+                out.push_str("  (no named sections found)\n");
+            }
+        }
+        Err(_) => {
+            out.push_str("  (could not parse section table — raw file mode)\n");
+        }
+    }
+
+    ToolResult::ok(out)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

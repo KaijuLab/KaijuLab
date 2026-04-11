@@ -123,11 +123,51 @@ pub struct App {
     pub input_saved: String,
     /// fn_vaddr → vulnerability score (0–10), drives [!] / [!!] badges.
     pub fn_vuln_scores: std::collections::HashMap<u64, u8>,
+    /// Active search pattern (set by `/pattern` command).
+    pub search_pattern: Option<String>,
+    /// Which match we are currently sitting on (0-based index into matches list).
+    pub search_hit_idx: usize,
 }
+
+const WELCOME: &str = "\
+Welcome to KaijuLab — AI-powered reverse engineering assistant.
+
+Load a binary by mentioning its path in your message, or pass it on the command line.
+  Example: \"Analyse /path/to/binary and tell me what it does\"
+
+──────────────────────────────────────────────
+ TUI shortcuts (when the input field is empty)
+──────────────────────────────────────────────
+  1–7          Switch to tab (Functions / Disasm / Decompile / Strings / Imports / Chat / Context)
+  Tab          Cycle to next tab
+  g <addr>     Jump to address in the current panel  (e.g.  g 0x401234)
+  /<pattern>   Search text in the current panel      (e.g.  /malloc)
+  n / N        Next / previous search match
+  ↑ / ↓        Browse your sent-message history
+  PgUp/PgDn    Scroll the active panel
+  Ctrl+C       Clear input (or quit when input is empty)
+
+──────────────────────────────────────────────
+ What the agent can do (ask in plain English)
+──────────────────────────────────────────────
+  Disassemble, decompile, and explain functions
+  List functions, strings, imports; resolve PLT / PE imports
+  Build call graphs and control-flow graphs (CFG)
+  Compute section entropy — detect packers, crypto, obfuscation
+  Search for byte patterns  (e.g. \"find all calls to malloc\")
+  Scan for vulnerabilities and assign suspicion scores
+  Identify library routines (FLIRT-style signature matching)
+  Rename functions/variables, add comments, define C structs
+  Diff two binaries; load Windows PDB debug symbols
+  Generate an HTML analysis report for sharing
+  Patch bytes in a function and save a .patched copy
+
+Try: \"What is this binary? Start from the entry point.\"
+";
 
 impl App {
     pub fn new(backend_name: String) -> Self {
-        App {
+        let mut app = App {
             active_tab: Tab::Chat,
             tab_lines: Default::default(),
             tab_dirty: [false; 7],
@@ -146,7 +186,12 @@ impl App {
             history_cursor: None,
             input_saved: String::new(),
             fn_vuln_scores: std::collections::HashMap::new(),
-        }
+            search_pattern: None,
+            search_hit_idx: 0,
+        };
+        // Show welcome / help message in the Chat tab on startup
+        app.chat.push(ChatMsg::Assistant(WELCOME.to_string()));
+        app
     }
 
     pub fn apply_event(&mut self, ev: AgentEvent) {
@@ -244,6 +289,96 @@ impl App {
             .position(|line| line.contains(&target))
     }
 
+    /// Scroll the active (or best-fit) panel to the given virtual address.
+    pub fn goto_address(&mut self, addr: u64) {
+        let hex16 = format!("{:016x}", addr);
+        let hex_short = format!("{:x}", addr);
+
+        // Prefer current tab if it's a panel, else try Disasm first
+        let panel_order: &[Tab] = &[
+            self.active_tab,
+            Tab::Disasm, Tab::Decompile, Tab::Functions, Tab::Strings, Tab::Imports,
+        ];
+        for &tab in panel_order {
+            if matches!(tab, Tab::Chat | Tab::Context) { continue; }
+            let found = self.tab_lines[tab as usize]
+                .iter()
+                .position(|l| l.contains(&hex16) || l.to_lowercase().contains(&hex_short));
+            if let Some(idx) = found {
+                self.active_tab = tab;
+                self.tab_dirty[tab as usize] = false;
+                let total = self.tab_lines[tab as usize].len() as u16;
+                self.scroll[tab as usize] = total.saturating_sub(idx as u16 + 3);
+                self.status = format!("Jumped to 0x{:x}", addr);
+                return;
+            }
+        }
+        self.status = format!("0x{:x} not found in any panel — ask the agent to disassemble it first", addr);
+    }
+
+    /// Collect matching line indices in the active panel for the current search pattern.
+    fn search_matches(&self) -> Vec<usize> {
+        let pattern = match &self.search_pattern {
+            Some(p) if !p.is_empty() => p.to_lowercase(),
+            _ => return Vec::new(),
+        };
+        let tab = self.active_tab;
+        if matches!(tab, Tab::Chat | Tab::Context) { return Vec::new(); }
+        self.tab_lines[tab as usize]
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.to_lowercase().contains(&pattern))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Start a search and scroll to the first match.
+    pub fn search_panel(&mut self, pattern: &str) {
+        self.search_pattern = if pattern.is_empty() { None } else { Some(pattern.to_string()) };
+        self.search_hit_idx = 0;
+        self.scroll_to_search_hit();
+    }
+
+    /// Advance to the next (or previous) search match and scroll to it.
+    pub fn search_next(&mut self, forward: bool) {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            self.status = format!(
+                "'{}' not found",
+                self.search_pattern.as_deref().unwrap_or("")
+            );
+            return;
+        }
+        let n = matches.len();
+        self.search_hit_idx = if forward {
+            (self.search_hit_idx + 1) % n
+        } else {
+            self.search_hit_idx.checked_sub(1).unwrap_or(n - 1)
+        };
+        self.scroll_to_search_hit();
+    }
+
+    fn scroll_to_search_hit(&mut self) {
+        let matches = self.search_matches();
+        if matches.is_empty() {
+            self.status = format!(
+                "'{}' not found in this panel",
+                self.search_pattern.as_deref().unwrap_or("")
+            );
+            return;
+        }
+        let idx = self.search_hit_idx % matches.len();
+        let line_idx = matches[idx];
+        let tab = self.active_tab;
+        let total = self.tab_lines[tab as usize].len() as u16;
+        self.scroll[tab as usize] = total.saturating_sub(line_idx as u16 + 3);
+        self.status = format!(
+            "Search '{}': match {} / {}",
+            self.search_pattern.as_deref().unwrap_or(""),
+            idx + 1, matches.len()
+        );
+    }
+
     /// Returns a user message to send to the agent, or None.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
         match key.code {
@@ -281,6 +416,40 @@ impl App {
                     self.active_tab = t;
                     self.tab_dirty[t as usize] = false;
                 }
+                None
+            }
+
+            // g — prefill goto prompt when input is empty
+            KeyCode::Char('g') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.input = "g ".to_string();
+                self.input_cursor = 2;
+                None
+            }
+
+            // / — prefill search prompt when input is empty
+            KeyCode::Char('/') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.input = "/".to_string();
+                self.input_cursor = 1;
+                None
+            }
+
+            // n / N — search next / previous when search is active and input is empty
+            KeyCode::Char('n') if self.input.is_empty() && key.modifiers.is_empty()
+                && self.search_pattern.is_some() => {
+                self.search_next(true);
+                None
+            }
+            KeyCode::Char('N') if self.input.is_empty()
+                && key.modifiers.contains(KeyModifiers::SHIFT)
+                && self.search_pattern.is_some() => {
+                self.search_next(false);
+                None
+            }
+
+            // Esc — clear active search
+            KeyCode::Esc if self.search_pattern.is_some() => {
+                self.search_pattern = None;
+                self.status = "Search cleared".to_string();
                 None
             }
 
@@ -334,9 +503,38 @@ impl App {
             // Submit
             KeyCode::Enter => {
                 let msg = self.input.trim().to_string();
-                if msg.is_empty() || self.is_loading {
+                if msg.is_empty() {
                     return None;
                 }
+
+                // ── Local TUI commands (never sent to LLM) ──────────────────
+                // goto: "g 0x401234" or "goto 0x401234"
+                let goto_arg = msg.strip_prefix("g ")
+                    .or_else(|| msg.strip_prefix("goto "));
+                if let Some(addr_str) = goto_arg {
+                    if let Some(addr) = parse_addr(addr_str.trim()) {
+                        self.goto_address(addr);
+                    } else {
+                        self.status = format!("Cannot parse address: '{}'", addr_str.trim());
+                    }
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.history_cursor = None;
+                    return None;
+                }
+                // search: "/pattern"
+                if let Some(pattern) = msg.strip_prefix('/') {
+                    self.search_panel(pattern.trim());
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.history_cursor = None;
+                    return None;
+                }
+
+                if self.is_loading {
+                    return None;
+                }
+
                 // Record in history (skip consecutive duplicates)
                 if self.input_history.last().map_or(true, |last| last != &msg) {
                     self.input_history.push(msg.clone());
@@ -410,6 +608,21 @@ impl App {
             }
             _ => {}
         }
+    }
+}
+
+// ─── Address parser ──────────────────────────────────────────────────────────
+
+/// Parse a user-supplied address string. Accepts "0x…" hex, plain hex, or decimal.
+fn parse_addr(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).ok()
+    } else if s.chars().all(|c| c.is_ascii_hexdigit()) && s.len() > 4 {
+        // looks like a bare hex address (e.g. 401234)
+        u64::from_str_radix(s, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
     }
 }
 
@@ -769,13 +982,23 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         None
     };
 
+    // Search-match set for this tab
+    let search_lower = app.search_pattern.as_deref()
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_lowercase());
+
     let lines: Vec<Line> = match tab {
         Tab::Disasm => raw
             .iter()
             .map(|l| {
                 let line = highlight_disasm(l);
-                if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
+                let line = if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
                     apply_focus_highlight(line)
+                } else {
+                    line
+                };
+                if search_lower.as_deref().map_or(false, |p| l.to_lowercase().contains(p)) {
+                    apply_search_highlight(line)
                 } else {
                     line
                 }
@@ -783,13 +1006,35 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
             .collect(),
         Tab::Functions => raw
             .iter()
-            .map(|l| highlight_fn_line(l, &app.fn_vuln_scores))
+            .map(|l| {
+                let line = highlight_fn_line(l, &app.fn_vuln_scores);
+                if search_lower.as_deref().map_or(false, |p| l.to_lowercase().contains(p)) {
+                    apply_search_highlight(line)
+                } else {
+                    line
+                }
+            })
             .collect(),
-        Tab::Imports   => raw.iter().map(|l| highlight_addr_table(l)).collect(),
-        Tab::Strings   => raw.iter().map(|l| highlight_strings(l)).collect(),
-        Tab::Decompile => raw.iter().map(|l| highlight_decompile(l)).collect(),
-        Tab::Chat      => unreachable!(),
-        Tab::Context   => unreachable!(),
+        Tab::Imports => raw.iter().map(|l| {
+            let line = highlight_addr_table(l);
+            if search_lower.as_deref().map_or(false, |p| l.to_lowercase().contains(p)) {
+                apply_search_highlight(line)
+            } else { line }
+        }).collect(),
+        Tab::Strings => raw.iter().map(|l| {
+            let line = highlight_strings(l);
+            if search_lower.as_deref().map_or(false, |p| l.to_lowercase().contains(p)) {
+                apply_search_highlight(line)
+            } else { line }
+        }).collect(),
+        Tab::Decompile => raw.iter().map(|l| {
+            let line = highlight_decompile(l);
+            if search_lower.as_deref().map_or(false, |p| l.to_lowercase().contains(p)) {
+                apply_search_highlight(line)
+            } else { line }
+        }).collect(),
+        Tab::Chat    => unreachable!(),
+        Tab::Context => unreachable!(),
     };
 
     let scroll = app.scroll[tab as usize];
@@ -810,7 +1055,11 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         ("●", Color::Green)
     };
 
-    let keybinds = "Tab:next  1-7:tab  ↑↓:history  PgUp/Dn:scroll  Ctrl+C:quit";
+    let keybinds = if app.search_pattern.is_some() {
+        "n:next  N:prev  Esc:clear-search  Tab:tab  ↑↓:history  PgUp/Dn:scroll"
+    } else {
+        "Tab:next  1-7:tab  g:goto  /:search  ↑↓:history  PgUp/Dn:scroll  Ctrl+C:quit"
+    };
     let status = format!(" {} {}", icon, app.status);
 
     // Right-align the keybind hint
@@ -976,13 +1225,22 @@ fn render_context(f: &mut Frame, area: Rect, app: &App) {
 
 // ─── Active-highlight helper ──────────────────────────────────────────────────
 
-/// Apply a dark-gray background to every span in a line, making it stand out
-/// as the currently-focused instruction in the Disasm panel.
+/// Apply a dark-gray background to every span in a line (active-address focus).
 fn apply_focus_highlight(line: Line<'static>) -> Line<'static> {
     let spans: Vec<Span<'static>> = line
         .spans
         .into_iter()
         .map(|s| Span::styled(s.content, s.style.bg(Color::DarkGray)))
+        .collect();
+    Line::from(spans)
+}
+
+/// Apply a dark-blue background to every span in a line (search match).
+fn apply_search_highlight(line: Line<'static>) -> Line<'static> {
+    let spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .map(|s| Span::styled(s.content, s.style.bg(Color::Blue)))
         .collect();
     Line::from(spans)
 }

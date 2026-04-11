@@ -366,6 +366,25 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
                 json!({"path": path, "base_addr": base_addr, "vaddr": vaddr, "arch": arch}), tx);
         }
 
+        "search" | "find" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let pattern = parts[2..].join(" "); // rest is the pattern
+            run_tool("search_bytes", json!({"path": path, "pattern": pattern}), tx);
+        }
+
+        "patch" => {
+            let path      = parts.get(1).copied().unwrap_or("");
+            let vaddr     = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let hex_bytes = parts[3..].join(" ");
+            run_tool("patch_bytes",
+                json!({"path": path, "vaddr": vaddr, "hex_bytes": hex_bytes}), tx);
+        }
+
+        "entropy" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("section_entropy", json!({"path": path}), tx);
+        }
+
         other => {
             send(agent::AgentEvent::Error(format!(
                 "Unknown command '{}'. Type 'help' for usage.", other
