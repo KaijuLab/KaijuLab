@@ -36,5 +36,8 @@ iced-x86 = "1"
 jsonwebtoken = "9"
 chrono = "0.4"
 
+# Async trait objects
+async-trait = "0.1"
+
 # Error handling
 anyhow = "1"

@@ -68,8 +68,7 @@ The LLM backend is **Gemini via Vertex AI** with native function-calling. The OA
 ## Prerequisites
 
 - Rust toolchain (stable, 1.75+)
-- A Google Cloud project with the **Vertex AI API** enabled
-- A **service account** with the `Vertex AI User` role and a JSON key file
+- Credentials for at least one supported LLM backend (see below)
 
 ## Setup
 
@@ -80,26 +79,34 @@ git clone https://github.com/Koukyosyumei/KaijuLab
 cd KaijuLab
 ```
 
-### 2. Credentials
+### 2. Choose a backend and set credentials
 
-Store the service-account key file somewhere outside the repo (it must not be committed):
-
-```
-../CRED/my-project-key.json   ← recommended location
-```
-
-Export the path and your project ID:
-
+**Gemini** (default) — Vertex AI service account:
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json   # never commit this
 export GOOGLE_PROJECT_ID=my-gcp-project
+# optional: GOOGLE_LOCATION (default: us-central1)
+# optional: KAIJULAB_MODEL  (default: gemini-2.5-flash)
 ```
 
-Optionally override region or model:
-
+**OpenAI**:
 ```bash
-export GOOGLE_LOCATION=us-central1        # default
-export KAIJULAB_MODEL=gemini-2.5-flash    # default
+export OPENAI_API_KEY=sk-...
+# optional: OPENAI_BASE_URL (default: https://api.openai.com/v1)
+# optional: KAIJULAB_MODEL  (default: gpt-4o)
+```
+
+**Anthropic**:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+# optional: KAIJULAB_MODEL (default: claude-opus-4-5)
+```
+
+**Ollama** (local, no key needed):
+```bash
+# optional: OLLAMA_BASE_URL (default: http://localhost:11434/v1)
+# optional: KAIJULAB_MODEL  (default: llama3.2)
+ollama serve   # in another terminal
 ```
 
 ### 3. Build
@@ -115,7 +122,10 @@ The compiled binary is `target/release/kaijulab`. Always use `--release`; `iced-
 ### Interactive REPL
 
 ```bash
-cargo run --release
+cargo run --release                                      # Gemini (default)
+cargo run --release -- --backend openai                 # OpenAI
+cargo run --release -- --backend anthropic              # Anthropic Claude
+cargo run --release -- --backend ollama --model llama3.2  # local Ollama
 ```
 
 Type a task in plain English. Conversation history is preserved across turns within the same session.
@@ -133,17 +143,21 @@ Pass a binary as a positional argument; KaijuLab analyses it and exits:
 
 ```bash
 cargo run --release -- /path/to/binary
+cargo run --release -- --backend openai /path/to/binary
 ```
 
 ### CLI flags
 
-All configuration can also be provided as flags (they override env vars):
+All env vars can be overridden with flags:
 
 ```
---credentials <FILE>   Service-account JSON key path
---project     <ID>     GCP project ID
---location    <REGION> Vertex AI region  (default: us-central1)
---model       <ID>     Gemini model ID   (default: gemini-2.5-flash)
+--backend     <NAME>   gemini (default) | openai | anthropic | ollama
+--model       <ID>     Model ID (backend-specific default)
+--credentials <FILE>   [Gemini] Service-account JSON key path
+--project     <ID>     [Gemini] GCP project ID
+--location    <REGION> [Gemini] Vertex AI region
+--api-key     <KEY>    [OpenAI/Anthropic] API key
+--base-url    <URL>    [OpenAI/Ollama] API base URL
 ```
 
 ## Available tools
@@ -160,12 +174,16 @@ All configuration can also be provided as flags (they override env vars):
 
 ```
 src/
-├── main.rs      CLI entry point (clap) and REPL loop (rustyline)
-├── config.rs    Configuration: env vars → CLI flags → defaults
-├── llm.rs       Gemini/Vertex AI client, JWT auth, API types
-├── agent.rs     Agentic loop: orchestrates LLM ↔ tools
-├── tools.rs     RE tool implementations + Gemini function declarations
-└── ui.rs        Terminal rendering: banner, spinner, tool output, response
+├── main.rs          CLI entry point (clap), REPL loop (rustyline), backend factory
+├── config.rs        BackendKind / BackendConfig — env vars → CLI flags → defaults
+├── agent.rs         Agentic loop — backend-agnostic, drives any LlmBackend
+├── tools.rs         RE tool implementations + ToolDefinition list
+├── ui.rs            Terminal rendering: banner, spinner, tool output, response
+└── llm/
+    ├── mod.rs       LlmBackend trait + universal types
+    ├── gemini.rs    Gemini / Vertex AI backend
+    ├── openai.rs    OpenAI + Ollama backend
+    └── anthropic.rs Anthropic Claude backend
 ```
 
 ## Key dependencies
@@ -182,9 +200,10 @@ src/
 
 ## Security notes
 
-- The service-account key file path is never stored in source code or config files tracked by git. It is read exclusively from `GOOGLE_APPLICATION_CREDENTIALS` or `--credentials`.
-- `CRED/` and `*.json` are in `.gitignore`.
-- Access tokens are cached in-process only and never written to disk.
+- No credentials of any kind are stored in source code or tracked config files.
+- All secrets are read from environment variables or CLI flags at runtime only.
+- Gemini OAuth2 access tokens are cached in-process and never written to disk.
+- `CRED/` and `*.json` are in `.gitignore` to prevent accidental commits of key files.
 
 ## License
 

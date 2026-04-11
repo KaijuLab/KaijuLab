@@ -1,116 +1,86 @@
 use anyhow::Result;
 
-use crate::llm::{Content, FunctionCallPart, FunctionResponsePart, GeminiClient, Part};
+use crate::llm::{LlmBackend, LlmMessage, ToolResult};
 use crate::tools;
 use crate::ui;
+
+const SYSTEM_PROMPT: &str = "\
+You are KaijuLab, an expert reverse-engineering assistant. \
+You analyse binary files using the tools available to you. \
+Start with file_info to understand the file format, then use other tools \
+to dig deeper as needed. Be precise, technical, and explain your reasoning \
+step by step. When you encounter addresses or offsets, prefer the \
+disassemble tool to verify what the code actually does.";
 
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 pub struct Agent {
-    client: GeminiClient,
-    tools: Vec<tools::FunctionDeclaration>,
-    /// Conversation history sent to the API on every turn
-    history: Vec<Content>,
+    backend: Box<dyn LlmBackend>,
+    tools: Vec<crate::llm::ToolDefinition>,
+    history: Vec<LlmMessage>,
 }
 
 impl Agent {
-    pub fn new(client: GeminiClient) -> Self {
+    pub fn new(backend: Box<dyn LlmBackend>) -> Self {
         Agent {
-            tools: tools::all_declarations(),
-            client,
+            tools: tools::all_definitions(),
+            backend,
             history: Vec::new(),
         }
     }
 
     /// Run one user turn through the agentic loop.
     pub async fn run(&mut self, user_input: &str) -> Result<()> {
-        // Append the user message
-        self.history.push(Content {
-            role: "user".to_string(),
-            parts: vec![Part::Text {
-                text: user_input.to_string(),
-            }],
-        });
+        self.history.push(LlmMessage::user_text(user_input));
 
-        // Agentic loop: keep calling Gemini until it returns a plain text response
         loop {
-            let spinner = ui::new_spinner("Gemini is thinking…");
-            let candidate = self
-                .client
-                .generate(&self.history, &self.tools)
-                .await;
+            let spinner = ui::new_spinner("Thinking…");
+            let result = self.backend.generate(SYSTEM_PROMPT, &self.history, &self.tools).await;
             spinner.finish_and_clear();
 
-            let candidate = match candidate {
-                Ok(c) => c,
+            let response = match result {
+                Ok(r) => r,
                 Err(e) => {
                     ui::print_error(&format!("API error: {}", e));
-                    // Remove the user message we just added so the user can retry
-                    self.history.pop();
+                    self.history.pop(); // let the user retry
                     return Ok(());
                 }
             };
 
-            // Surface any stop-reason warnings (SAFETY, etc.)
-            if let Some(reason) = &candidate.finish_reason {
-                if reason != "STOP" && reason != "MAX_TOKENS" && reason != "TOOL_CODE_EXECUTION" {
-                    ui::print_error(&format!("Gemini finish_reason: {}", reason));
-                }
-            }
-
-            // Collect function calls and text parts from this response
-            let mut function_calls: Vec<FunctionCallPart> = Vec::new();
-            let mut text_parts: Vec<String> = Vec::new();
-
-            for part in &candidate.content.parts {
-                match part {
-                    Part::FunctionCall { function_call } => {
-                        function_calls.push(function_call.clone());
-                    }
-                    Part::Text { text } => {
-                        text_parts.push(text.clone());
-                    }
-                    Part::FunctionResponse { .. } | Part::Unknown(_) => {}
-                }
-            }
-
-            // Print any inline text (can accompany function calls in some models)
-            for text in &text_parts {
+            // Print any inline text the model may have emitted alongside tool calls
+            for text in response.texts() {
                 if !text.trim().is_empty() {
                     ui::print_agent_response(text);
                 }
             }
 
-            // Add the model turn to history
-            self.history.push(candidate.content.clone());
+            let tool_calls = response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
-            // If no function calls → final response, we're done
-            if function_calls.is_empty() {
-                break;
+            // Append the assistant turn to history before executing tools
+            self.history.push(response);
+
+            if tool_calls.is_empty() {
+                break; // final text response — we're done
             }
 
-            // Execute each function call, collect results
-            let mut result_parts: Vec<Part> = Vec::new();
-            for fc in function_calls {
-                let display = args_display(&fc.args);
-                ui::print_tool_call(&fc.name, &display);
+            // Execute each tool call and collect results
+            let mut results: Vec<ToolResult> = Vec::new();
+            for tc in &tool_calls {
+                let display = args_display(&tc.args);
+                ui::print_tool_call(&tc.name, &display);
 
-                let result = tools::dispatch(&fc.name, &fc.args);
-                ui::print_tool_output(&result.display);
+                let tool_out = tools::dispatch(&tc.name, &tc.args);
+                ui::print_tool_output(&tool_out.output);
 
-                result_parts.push(Part::FunctionResponse {
-                    function_response: FunctionResponsePart {
-                        name: fc.name.clone(),
-                        response: result.json,
-                    },
+                results.push(ToolResult {
+                    call_id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    content: tool_out.output,
                 });
             }
 
-            // Feed results back as a "user" turn (Gemini's function-response protocol)
-            self.history.push(Content {
-                role: "user".to_string(),
-                parts: result_parts,
-            });
+            // Feed results back as the next user message
+            self.history.push(LlmMessage::tool_results(results));
         }
 
         Ok(())
@@ -119,7 +89,6 @@ impl Agent {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Format JSON args compactly for display, e.g.: path="/bin/ls", offset=0
 fn args_display(args: &serde_json::Value) -> String {
     match args.as_object() {
         None => args.to_string(),
@@ -127,11 +96,7 @@ fn args_display(args: &serde_json::Value) -> String {
             .iter()
             .map(|(k, v)| match v {
                 serde_json::Value::String(s) => {
-                    let s = if s.len() > 50 {
-                        format!("{}…", &s[..50])
-                    } else {
-                        s.clone()
-                    };
+                    let s = if s.len() > 50 { format!("{}…", &s[..50]) } else { s.clone() };
                     format!("{}=\"{}\"", k, s)
                 }
                 _ => format!("{}={}", k, v),

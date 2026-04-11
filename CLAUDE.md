@@ -8,13 +8,16 @@ laggier without optimisation. Never suggest or run a plain `cargo build` /
 `cargo run` without `--release`.
 
 ```bash
-cargo build --release                          # build
-cargo run --release                            # interactive REPL
-cargo run --release -- /path/to/binary        # one-shot analysis
-cargo run --release -- --help                  # flag reference
+cargo build --release                                     # build
+cargo run --release                                       # Gemini REPL (default)
+cargo run --release -- --backend openai                  # OpenAI REPL
+cargo run --release -- --backend anthropic               # Anthropic REPL
+cargo run --release -- --backend ollama --model llama3.2 # local Ollama REPL
+cargo run --release -- /path/to/binary                   # one-shot analysis
+cargo run --release -- --help                            # flag reference
 ```
 
-Run tests (there are none yet, but for future work):
+Run tests (none yet, but for future work):
 
 ```bash
 cargo test --release
@@ -24,129 +27,130 @@ cargo test --release
 
 ```
 src/
-├── main.rs      CLI (clap) + interactive REPL (rustyline)
-├── config.rs    Load credentials / project / location / model
-│                Priority: CLI flag > env var > default
-├── llm.rs       Gemini / Vertex AI client
-│                  - ServiceAccount JSON parsing
-│                  - RS256 JWT → OAuth2 token exchange, cached
-│                  - generateContent request / response types
-│                  - SYSTEM_PROMPT constant
-├── agent.rs     Agentic loop
-│                  - Maintains conversation history (Vec<Content>)
-│                  - Calls llm::GeminiClient::generate()
-│                  - Dispatches tool calls, feeds results back
-│                  - Loops until no more functionCall parts
-├── tools.rs     RE tool implementations + Gemini function declarations
-│                  - dispatch(name, args) → ToolResult
-│                  - all_declarations() → Vec<FunctionDeclaration>
-└── ui.rs        Terminal rendering
-                   - print_banner, new_spinner
-                   - print_tool_call, print_tool_output
-                   - print_agent_response, print_separator
-                   - readline (rustyline wrapper)
+├── main.rs         CLI (clap) + REPL (rustyline) + backend factory
+├── config.rs       BackendKind / BackendConfig — load from env vars or CLI flags
+├── agent.rs        Agentic loop — drives any LlmBackend, no backend knowledge
+├── tools.rs        RE tool implementations + ToolDefinition list
+├── ui.rs           Terminal rendering (banner, spinner, tool output, response)
+└── llm/
+    ├── mod.rs      LlmBackend trait + universal types
+    │               (LlmMessage, MessageContent, ToolCall, ToolResult, ToolDefinition)
+    ├── gemini.rs   Gemini / Vertex AI  — JWT auth, uppercase schema conversion
+    ├── openai.rs   OpenAI + Ollama     — OpenAI-compatible /chat/completions
+    └── anthropic.rs  Anthropic Claude  — x-api-key, input_schema, tool_use blocks
 ```
 
 ## Credentials — never hardcode
 
-Credentials are loaded strictly from:
+| Backend   | Required env var                    | Optional env var        |
+|-----------|-------------------------------------|-------------------------|
+| Gemini    | `GOOGLE_APPLICATION_CREDENTIALS`    | `GOOGLE_PROJECT_ID`, `GOOGLE_LOCATION` |
+| OpenAI    | `OPENAI_API_KEY`                    | `OPENAI_BASE_URL`       |
+| Anthropic | `ANTHROPIC_API_KEY`                 | —                       |
+| Ollama    | —                                   | `OLLAMA_BASE_URL`       |
 
-1. `--credentials <path>` CLI flag
-2. `GOOGLE_APPLICATION_CREDENTIALS` env var
-
-Project ID from:
-
-1. `--project <id>` CLI flag
-2. `GOOGLE_PROJECT_ID` env var
-
-Do not write project IDs, key file paths, or any GCP identifiers into source
-files. The actual key file lives outside the repo (e.g. `../CRED/`).
+All of the above can also be set with CLI flags (see `--help`).  Never write
+API keys, project IDs, or key file paths into source files.
 
 ## Adding a new RE tool
 
 1. Implement the function in `src/tools.rs` — return `ToolResult::ok(string)`
    or `ToolResult::err(string)`.
 
-2. Add a branch to `dispatch()` mapping the tool name to your function.
+2. Add a branch to `dispatch()`.
 
-3. Add a `FunctionDeclaration` to `all_declarations()` using the Gemini JSON
-   Schema format (`"type": "OBJECT"`, `"type": "STRING"`, `"type": "INTEGER"`,
-   `"required": [...]`). The `name` field must exactly match the branch in
-   `dispatch()`.
+3. Add a `ToolDefinition` to `all_definitions()`.  Use lowercase JSON Schema
+   types (`"object"`, `"string"`, `"integer"`, `"boolean"`).  The name in the
+   definition must exactly match the branch in `dispatch()`.
 
-No changes to `agent.rs`, `llm.rs`, or `main.rs` are required — the tool list
-is passed to the API at runtime.
+No changes to any other file are required.
 
 ## Adding a new LLM backend
 
-The only LLM-facing surface is `llm::GeminiClient::generate()`:
+1. Create `src/llm/<name>.rs`.
+
+2. Implement `LlmBackend` from `src/llm/mod.rs`:
 
 ```rust
-pub async fn generate(
-    &self,
-    history: &[Content],
-    tools: &[FunctionDeclaration],
-) -> Result<Candidate>
-```
+#[async_trait]
+impl LlmBackend for MyBackend {
+    async fn generate(
+        &self,
+        system: &str,
+        history: &[LlmMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmMessage> { … }
 
-`Content` / `Part` / `FunctionDeclaration` are defined in `llm.rs`.
-To add a second backend (e.g. Claude API), introduce a trait:
-
-```rust
-pub trait LlmBackend {
-    async fn generate(&self, history: &[Content], tools: &[FunctionDeclaration])
-        -> Result<Candidate>;
+    fn display_name(&self) -> String { … }
 }
 ```
 
-then make `Agent` generic over it.
+3. Declare the module in `src/llm/mod.rs`:  `pub mod <name>;`
+
+4. Add a variant to `BackendKind` and `BackendConfig` in `src/config.rs`.
+
+5. Add a match arm in `build_backend()` in `src/main.rs`.
 
 ## Key design decisions
 
-### `#[serde(untagged)]` on `Part`
+### Universal message format (`src/llm/mod.rs`)
+
+All backends translate to/from `Vec<LlmMessage>`.  Tool call IDs are
+preserved in `ToolCall.id` and echoed in `ToolResult.call_id`; this is
+required by OpenAI and Anthropic.  Gemini doesn't use IDs so it encodes them
+as `"<name>-<index>"` and ignores them on the response side.
+
+### `#[serde(untagged)]` on Gemini `GPart`
 
 Gemini returns parts as plain JSON objects distinguished only by field
-presence (`text`, `functionCall`, `functionResponse`). `#[serde(untagged)]`
+presence (`text`, `functionCall`, `functionResponse`).  `#[serde(untagged)]`
 tries each variant in declaration order; the `Unknown(Value)` catch-all
-absorbs future part types (e.g. `thought`, `executableCode`) without
-breaking deserialisation.
+absorbs future part types (e.g. `thought`, `executableCode`).  Most-specific
+variants must come first.
 
-Variant order matters — put more-specific variants (those with rarer field
-names) before less-specific ones.
+### Anthropic `#[serde(tag = "type")]` on content blocks
 
-### Function-response protocol
+Anthropic content blocks carry an explicit `"type"` field.  Using an
+internally-tagged enum keeps the deserialisation clean.  The `#[serde(other)]`
+`Unknown` variant absorbs any unknown block types.
 
-Gemini expects function results back as `role: "user"` messages containing
-`functionResponse` parts (not a dedicated `role: "tool"`). One user message
-may contain multiple `functionResponse` parts when the model called several
-tools in parallel.
+### Token caching (Gemini only)
 
-### Token caching
+`GeminiBackend` caches the OAuth2 access token in `Mutex<Option<CachedToken>>`
+and refreshes when fewer than 60 s remain.  The token is never written to disk.
 
-`GeminiClient` caches the OAuth2 access token in a `Mutex<Option<CachedToken>>`
-and refreshes it when fewer than 60 seconds remain. This avoids one JWT
-signing + HTTP round-trip per LLM call. The token is never written to disk.
+### Tool output is a plain string
 
-### Tool output truncation
+`tools::ToolResult.output` is just a `String`.  Each backend wraps it
+appropriately:
+- Gemini wraps it as `{"output": "..."}` inside a `functionResponse`.
+- OpenAI passes it as the `content` of a `role: "tool"` message.
+- Anthropic passes it as the `content` of a `tool_result` block.
 
-`ui::print_tool_output` shows at most 30 lines to keep the terminal readable.
-The full string is still sent to the LLM inside the `functionResponse`, so the
-model sees everything even when the terminal display is truncated.
+### Schema normalisation
+
+`tools::all_definitions()` uses standard lowercase JSON Schema types
+(`"object"`, `"string"`, `"integer"`).  The Gemini backend uppercases them
+via `uppercase_types()` before sending; OpenAI and Anthropic accept lowercase
+directly.
 
 ## Gemini API endpoint
 
 ```
 POST https://{location}-aiplatform.googleapis.com/v1/projects/{project}/
      locations/{location}/publishers/google/models/{model}:generateContent
+Authorization: Bearer <oauth2_access_token>
 ```
-
-Authentication: `Authorization: Bearer <oauth2_access_token>`.
 
 ## Environment variables reference
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service-account JSON key | — (required) |
-| `GOOGLE_PROJECT_ID` | GCP project ID | — (required) |
-| `GOOGLE_LOCATION` | Vertex AI region | `us-central1` |
-| `KAIJULAB_MODEL` | Gemini model ID | `gemini-2.5-flash` |
+| Variable | Backend | Purpose | Default |
+|---|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Gemini | Path to service-account JSON key | — (required) |
+| `GOOGLE_PROJECT_ID` | Gemini | GCP project ID | — (required) |
+| `GOOGLE_LOCATION` | Gemini | Vertex AI region | `us-central1` |
+| `OPENAI_API_KEY` | OpenAI | API key | — (required) |
+| `OPENAI_BASE_URL` | OpenAI | API base URL | `https://api.openai.com/v1` |
+| `ANTHROPIC_API_KEY` | Anthropic | API key | — (required) |
+| `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
+| `KAIJULAB_MODEL` | All | Model ID override | backend-specific |

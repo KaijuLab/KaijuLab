@@ -1,29 +1,23 @@
 use object::{Architecture, Object, ObjectSection};
 use serde_json::{json, Value};
 
+use crate::llm::ToolDefinition;
+
 // ─── Tool result ─────────────────────────────────────────────────────────────
 
+/// Result of executing one RE tool locally.
+/// The single `output` string is both shown in the UI and sent to the LLM.
 pub struct ToolResult {
-    pub display: String,
-    /// JSON payload sent back to the LLM as a functionResponse
-    pub json: Value,
+    pub output: String,
 }
 
 impl ToolResult {
     fn ok(output: impl Into<String>) -> Self {
-        let s = output.into();
-        ToolResult {
-            json: json!({ "output": s }),
-            display: s,
-        }
+        ToolResult { output: output.into() }
     }
 
     fn err(msg: impl Into<String>) -> Self {
-        let s = msg.into();
-        ToolResult {
-            json: json!({ "error": s }),
-            display: format!("Error: {}", s),
-        }
+        ToolResult { output: format!("Error: {}", msg.into()) }
     }
 }
 
@@ -31,34 +25,24 @@ impl ToolResult {
 
 pub fn dispatch(name: &str, args: &Value) -> ToolResult {
     match name {
-        "file_info" => {
-            let path = str_arg(args, "path");
-            file_info(&path)
-        }
-        "hexdump" => {
-            let path = str_arg(args, "path");
-            let offset = args["offset"].as_u64().unwrap_or(0) as usize;
-            let length = args["length"].as_u64().unwrap_or(256) as usize;
-            hexdump(&path, offset, length)
-        }
-        "strings_extract" => {
-            let path = str_arg(args, "path");
-            let min_len = args["min_len"].as_u64().unwrap_or(4) as usize;
-            let max_results = args["max_results"].as_u64().unwrap_or(60) as usize;
-            strings_extract(&path, min_len, max_results)
-        }
-        "disassemble" => {
-            let path = str_arg(args, "path");
-            let offset = args["offset"].as_u64().unwrap_or(0) as usize;
-            let length = args["length"].as_u64().unwrap_or(128) as usize;
-            let vaddr = args["vaddr"].as_u64();
-            disassemble(&path, offset, length, vaddr)
-        }
-        "read_section" => {
-            let path = str_arg(args, "path");
-            let section = str_arg(args, "section");
-            read_section(&path, &section)
-        }
+        "file_info" => file_info(&str_arg(args, "path")),
+        "hexdump" => hexdump(
+            &str_arg(args, "path"),
+            args["offset"].as_u64().unwrap_or(0) as usize,
+            args["length"].as_u64().unwrap_or(256) as usize,
+        ),
+        "strings_extract" => strings_extract(
+            &str_arg(args, "path"),
+            args["min_len"].as_u64().unwrap_or(4) as usize,
+            args["max_results"].as_u64().unwrap_or(60) as usize,
+        ),
+        "disassemble" => disassemble(
+            &str_arg(args, "path"),
+            args["offset"].as_u64().unwrap_or(0) as usize,
+            args["length"].as_u64().unwrap_or(128) as usize,
+            args["vaddr"].as_u64(),
+        ),
+        "read_section" => read_section(&str_arg(args, "path"), &str_arg(args, "section")),
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -86,10 +70,7 @@ fn file_info(path: &str) -> ToolResult {
                 .join(" ");
             return ToolResult::ok(format!(
                 "File   : {}\nSize   : {} bytes\nNote   : Not a recognised binary format ({})\nMagic  : {}",
-                path,
-                data.len(),
-                e,
-                magic
+                path, data.len(), e, magic
             ));
         }
     };
@@ -103,15 +84,8 @@ fn file_info(path: &str) -> ToolResult {
         .sections()
         .filter_map(|s| {
             let name = s.name().ok()?;
-            if name.is_empty() {
-                return None;
-            }
-            Some(format!(
-                "    {:<18} addr=0x{:016x}  size={}",
-                name,
-                s.address(),
-                s.size()
-            ))
+            if name.is_empty() { return None; }
+            Some(format!("    {:<18} addr=0x{:016x}  size={}", name, s.address(), s.size()))
         })
         .collect();
 
@@ -119,19 +93,10 @@ fn file_info(path: &str) -> ToolResult {
 
     let mut out = format!(
         "File         : {}\nSize         : {} bytes\nFormat       : {}\nArchitecture : {} {} {}\nEntry point  : 0x{:016x}\nSections ({}):\n{}\nSymbols      : {}",
-        path,
-        data.len(),
-        fmt,
-        arch,
-        bits,
-        endian,
-        obj.entry(),
-        sections.len(),
-        sections.join("\n"),
-        sym_count,
+        path, data.len(), fmt, arch, bits, endian,
+        obj.entry(), sections.len(), sections.join("\n"), sym_count,
     );
 
-    // Show the first few imported symbols if available
     let imports: Vec<String> = obj
         .imports()
         .unwrap_or_default()
@@ -158,11 +123,7 @@ fn hexdump(path: &str, offset: usize, length: usize) -> ToolResult {
     };
 
     if offset >= data.len() {
-        return ToolResult::err(format!(
-            "Offset 0x{:x} is beyond file size {} bytes",
-            offset,
-            data.len()
-        ));
+        return ToolResult::err(format!("Offset 0x{:x} is beyond file size {} bytes", offset, data.len()));
     }
 
     let end = (offset + length).min(data.len());
@@ -171,30 +132,14 @@ fn hexdump(path: &str, offset: usize, length: usize) -> ToolResult {
 
     for (row, chunk) in bytes.chunks(16).enumerate() {
         let addr = offset + row * 16;
-
         let first8 = &chunk[..chunk.len().min(8)];
         let rest = if chunk.len() > 8 { &chunk[8..] } else { &[] };
-
-        let hex_a: String = first8
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let hex_b: String = rest
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        let ascii: String = chunk
-            .iter()
+        let hex_a: String = first8.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        let hex_b: String = rest.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        let ascii: String = chunk.iter()
             .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
             .collect();
-
-        out.push_str(&format!(
-            "{:08x}  {:<23}  {:<23}  |{}|\n",
-            addr, hex_a, hex_b, ascii
-        ));
+        out.push_str(&format!("{:08x}  {:<23}  {:<23}  |{}|\n", addr, hex_a, hex_b, ascii));
     }
 
     if end < data.len() {
@@ -218,9 +163,7 @@ fn strings_extract(path: &str, min_len: usize, max_results: usize) -> ToolResult
 
     for (i, &b) in data.iter().enumerate() {
         if b.is_ascii_graphic() || b == b' ' {
-            if run.is_empty() {
-                run_start = i;
-            }
+            if run.is_empty() { run_start = i; }
             run.push(b);
         } else {
             if run.len() >= min_len {
@@ -257,10 +200,7 @@ fn disassemble(path: &str, offset: usize, length: usize, vaddr_hint: Option<u64>
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
     };
 
-    // Determine architecture from the binary
-    let arch = object::File::parse(&*data)
-        .ok()
-        .map(|f| f.architecture());
+    let arch = object::File::parse(&*data).ok().map(|f| f.architecture());
 
     let bitness: u32 = match arch {
         Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) => 64,
@@ -271,21 +211,15 @@ fn disassemble(path: &str, offset: usize, length: usize, vaddr_hint: Option<u64>
                 other
             ))
         }
-        None => 64, // assume x86-64 if unrecognised
+        None => 64,
     };
 
     if offset >= data.len() {
-        return ToolResult::err(format!(
-            "Offset 0x{:x} is beyond file size {} bytes",
-            offset,
-            data.len()
-        ));
+        return ToolResult::err(format!("Offset 0x{:x} is beyond file size {} bytes", offset, data.len()));
     }
 
     let end = (offset + length).min(data.len());
     let slice = &data[offset..end];
-
-    // Use provided vaddr or fall back to the file offset
     let ip: u64 = vaddr_hint.unwrap_or(offset as u64);
 
     use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
@@ -294,34 +228,20 @@ fn disassemble(path: &str, offset: usize, length: usize, vaddr_hint: Option<u64>
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_first_operand_char_index(10);
 
-    let mut out = format!(
-        "Disassembly ({}-bit, offset=0x{:x}, ip=0x{:x}):\n\n",
-        bitness, offset, ip
-    );
+    let mut out = format!("Disassembly ({}-bit, offset=0x{:x}, ip=0x{:x}):\n\n", bitness, offset, ip);
     let mut count = 0usize;
 
     for instr in &mut decoder {
         if instr.is_invalid() {
             out.push_str(&format!("  {:016x}  ?? (invalid)\n", instr.ip()));
         } else {
-            // Collect byte representation
             let byte_start = (instr.ip() - ip) as usize;
             let byte_end = (byte_start + instr.len()).min(slice.len());
             let bytes: String = slice[byte_start..byte_end]
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join(" ");
-
+                .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
             let mut mnemonic = String::new();
             formatter.format(&instr, &mut mnemonic);
-
-            out.push_str(&format!(
-                "  {:016x}  {:<24}  {}\n",
-                instr.ip(),
-                bytes,
-                mnemonic
-            ));
+            out.push_str(&format!("  {:016x}  {:<24}  {}\n", instr.ip(), bytes, mnemonic));
         }
         count += 1;
         if count >= 60 {
@@ -356,127 +276,99 @@ fn read_section(path: &str, section_name: &str) -> ToolResult {
             let preview = sec_data.len().min(512);
             let mut out = format!(
                 "Section  : {}\nAddress  : 0x{:016x}\nSize     : {} bytes\n\nHex dump (first {} bytes):\n\n",
-                section_name,
-                section.address(),
-                sec_data.len(),
-                preview
+                section_name, section.address(), sec_data.len(), preview
             );
-
             for (row, chunk) in sec_data[..preview].chunks(16).enumerate() {
                 let addr = section.address() as usize + row * 16;
-                let hex: String = chunk
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let ascii: String = chunk
-                    .iter()
+                let hex: String = chunk.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+                let ascii: String = chunk.iter()
                     .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
                     .collect();
                 out.push_str(&format!("{:08x}  {:<47}  |{}|\n", addr, hex, ascii));
             }
-
             if sec_data.len() > preview {
                 out.push_str(&format!("… ({} bytes total)", sec_data.len()));
             }
-
             return ToolResult::ok(out);
         }
     }
 
-    // List available sections to help the caller
     let available: Vec<String> = obj
         .sections()
         .filter_map(|s| s.name().ok().map(|n| n.to_string()))
         .filter(|n| !n.is_empty())
         .collect();
-    ToolResult::err(format!(
-        "Section '{}' not found. Available: {}",
-        section_name,
-        available.join(", ")
-    ))
+    ToolResult::err(format!("Section '{}' not found. Available: {}", section_name, available.join(", ")))
 }
 
-// ─── Function declarations for Gemini ────────────────────────────────────────
+// ─── Tool definitions for the LLM ────────────────────────────────────────────
 
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct FunctionDeclaration {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-pub fn all_declarations() -> Vec<FunctionDeclaration> {
+/// All tool definitions in standard JSON Schema (lowercase types).
+/// Each backend converts to its own wire format.
+pub fn all_definitions() -> Vec<ToolDefinition> {
     vec![
-        FunctionDeclaration {
+        ToolDefinition {
             name: "file_info".into(),
             description: "Parse a binary file and return its format, architecture, entry point, \
                            section table, symbol count, and imports. Use this first when analysing \
-                           an unknown binary."
-                .into(),
+                           an unknown binary.".into(),
             parameters: json!({
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "STRING",
-                        "description": "Absolute or relative path to the binary file"
-                    }
+                    "path": { "type": "string", "description": "Absolute or relative path to the binary file" }
                 },
                 "required": ["path"]
             }),
         },
-        FunctionDeclaration {
+        ToolDefinition {
             name: "hexdump".into(),
             description: "Display a hex+ASCII dump of raw bytes from a file.".into(),
             parameters: json!({
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "path": { "type": "STRING", "description": "Path to the binary file" },
-                    "offset": { "type": "INTEGER", "description": "File offset to start from (default 0)" },
-                    "length": { "type": "INTEGER", "description": "Number of bytes to show (default 256)" }
+                    "path":   { "type": "string",  "description": "Path to the binary file" },
+                    "offset": { "type": "integer", "description": "File offset to start from (default 0)" },
+                    "length": { "type": "integer", "description": "Number of bytes to show (default 256)" }
                 },
                 "required": ["path"]
             }),
         },
-        FunctionDeclaration {
+        ToolDefinition {
             name: "strings_extract".into(),
             description: "Extract printable ASCII strings from a binary file.".into(),
             parameters: json!({
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "path": { "type": "STRING", "description": "Path to the binary file" },
-                    "min_len": { "type": "INTEGER", "description": "Minimum string length (default 4)" },
-                    "max_results": { "type": "INTEGER", "description": "Maximum strings to return (default 60)" }
+                    "path":        { "type": "string",  "description": "Path to the binary file" },
+                    "min_len":     { "type": "integer", "description": "Minimum string length (default 4)" },
+                    "max_results": { "type": "integer", "description": "Maximum strings to return (default 60)" }
                 },
                 "required": ["path"]
             }),
         },
-        FunctionDeclaration {
+        ToolDefinition {
             name: "disassemble".into(),
             description: "Disassemble x86/x86-64 machine code from a file at a given file offset. \
-                           Returns Intel-syntax assembly with byte encodings."
-                .into(),
+                           Returns Intel-syntax assembly with byte encodings.".into(),
             parameters: json!({
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "path":   { "type": "STRING",  "description": "Path to the binary file" },
-                    "offset": { "type": "INTEGER", "description": "File byte offset to start disassembling (default 0)" },
-                    "length": { "type": "INTEGER", "description": "Number of bytes to disassemble (default 128)" },
-                    "vaddr":  { "type": "INTEGER", "description": "Virtual address to use for the first instruction (optional; defaults to offset)" }
+                    "path":   { "type": "string",  "description": "Path to the binary file" },
+                    "offset": { "type": "integer", "description": "File byte offset to start disassembling (default 0)" },
+                    "length": { "type": "integer", "description": "Number of bytes to disassemble (default 128)" },
+                    "vaddr":  { "type": "integer", "description": "Virtual address for the first instruction (optional, defaults to offset)" }
                 },
                 "required": ["path"]
             }),
         },
-        FunctionDeclaration {
+        ToolDefinition {
             name: "read_section".into(),
-            description: "Read the raw contents of a named section (e.g. .text, .rodata) and \
-                           display a hex dump."
-                .into(),
+            description: "Read the raw contents of a named section (e.g. .text, .rodata) and display a hex dump.".into(),
             parameters: json!({
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "path":    { "type": "STRING", "description": "Path to the binary file" },
-                    "section": { "type": "STRING", "description": "Section name, e.g. '.text'" }
+                    "path":    { "type": "string", "description": "Path to the binary file" },
+                    "section": { "type": "string", "description": "Section name, e.g. '.text'" }
                 },
                 "required": ["path", "section"]
             }),

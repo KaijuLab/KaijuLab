@@ -6,7 +6,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ─── Banner ──────────────────────────────────────────────────────────────────
 
-pub fn print_banner(model_id: &str, project_id: &str) {
+pub fn print_banner(backend_display: &str) {
     let width = 54usize;
     let top    = format!("╭{}╮", "─".repeat(width));
     let bot    = format!("╰{}╯", "─".repeat(width));
@@ -17,14 +17,7 @@ pub fn print_banner(model_id: &str, project_id: &str) {
     println!("  {}", mid(&format!("KaijuLab  v{}", VERSION)).magenta().bold());
     println!("  {}", mid("LLM-native Reverse Engineering Lab").magenta());
     println!("  {}", mid("").magenta());
-    println!(
-        "  {}",
-        mid(&format!("Model   : {}", model_id)).magenta()
-    );
-    println!(
-        "  {}",
-        mid(&format!("Project : {}", project_id)).magenta()
-    );
+    println!("  {}", mid(backend_display).magenta());
     println!("  {}", bot.magenta().bold());
     println!();
     println!(
