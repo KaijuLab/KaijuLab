@@ -100,6 +100,12 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
 
     let mut memory = Memory::new(lang);
 
+    // Pre-populate symbol table from project renames so call-site names
+    // propagate into the decompiled output (e.g. FUN_0x401234 → parse_header).
+    for (addr, name) in &project.renames {
+        memory.symbols.add(*addr, 8, name.clone());
+    }
+
     // Load binary sections
     load_binary(&data, &mut memory)
         .map_err(|e| anyhow::anyhow!("Binary load failed: {e}"))?;
@@ -121,7 +127,9 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     let ast = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hf.build_ast(&memory)))
         .map_err(|e| anyhow::anyhow!("AST build panicked: {:?}", panic_msg(e)))?;
 
-    Ok(render_ast(&ast, &hf, &memory))
+    let mut output = render_ast(&ast, &hf, &memory);
+    apply_project_annotations(&mut output, &project, vaddr);
+    Ok(output)
 }
 
 fn panic_msg(e: Box<dyn std::any::Any + Send>) -> String {
@@ -546,31 +554,98 @@ fn render_stmt(
 fn render_ast(ast: &AbstractSyntaxTree, hf: &HighFunction, mem: &Memory) -> String {
     let mut out = String::new();
     render_stmt(&mut out, ast.entry(), ast, hf, mem, 0);
-    simplify_output(&mut out);
     out
 }
 
-/// Post-process decompiler output to improve readability:
+/// Apply all post-processing passes to decompiler output:
 ///
-/// - Strip trivial 64-bit width masks (`& 0xffffffffffffffff`)
-/// - Rename SysV AMD64 argument registers to `arg_N` in function signatures
-fn simplify_output(out: &mut String) {
+/// 1. Strip trivial 64-bit masks (`& 0xffffffffffffffff`)
+/// 2. Rename SysV64 argument registers (RDI→arg_1, …)
+/// 3. Apply function-level variable renames from the project sidecar
+/// 4. Apply parameter type / name annotations from the project sidecar
+/// 5. Replace the default `void` return type with the user-specified one
+fn apply_project_annotations(
+    out: &mut String,
+    project: &crate::project::Project,
+    fn_vaddr: u64,
+) {
     // 1. Remove `& 0xffffffffffffffff` — meaningless 64-bit mask.
     *out = out.replace(" & 0xffffffffffffffff", "");
 
-    // 2. Rename SysV64 argument registers to readable names.
-    //    The decompiler emits the raw SLEIGH varnode names like RDI, RSI, etc.
+    // 2. Rename SysV64 argument registers → canonical arg names.
     const SYSV64_ARGS: &[(&str, &str)] = &[
         ("RDI", "arg_1"),
         ("RSI", "arg_2"),
         ("RDX", "arg_3"),
         ("RCX", "arg_4"),
-        ("R8", "arg_5"),
-        ("R9", "arg_6"),
+        ("R8",  "arg_5"),
+        ("R9",  "arg_6"),
     ];
     for (reg, name) in SYSV64_ARGS {
-        // Only rename as standalone identifiers (bounded by non-alphanumeric chars)
         *out = replace_identifier(out, reg, name);
+    }
+
+    // 3. Apply project variable renames (e.g. arg_1 → buf, var_3 → count).
+    if let Some(renames) = project.var_renames.get(&fn_vaddr) {
+        // Sort longest first so "arg_10" is replaced before "arg_1".
+        let mut pairs: Vec<(&String, &String)> = renames.iter().collect();
+        pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (old, new) in pairs {
+            *out = replace_identifier(out, old, new);
+        }
+    }
+
+    // 4. Apply signature overrides (param names → replaces arg_N, param types,
+    //    return type).
+    if let Some(sig) = project.get_signature(fn_vaddr) {
+        // 4a. Rename positional args: arg_1 → user_name (if set).
+        for (i, maybe_name) in sig.param_names.iter().enumerate() {
+            if let Some(name) = maybe_name {
+                if !name.is_empty() {
+                    let default_name = format!("arg_{}", i + 1);
+                    *out = replace_identifier(out, &default_name, name);
+                }
+            }
+        }
+
+        // 4b. Add parameter type prefixes in the function signature line.
+        //     The renderer emits `int32_t arg_N` for each parameter.
+        for (i, maybe_type) in sig.param_types.iter().enumerate() {
+            if let Some(type_str) = maybe_type {
+                // The actual arg name after step 4a (may have been renamed).
+                let arg_name = sig
+                    .param_names
+                    .get(i)
+                    .and_then(|n| n.as_deref())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| {
+                        // static storage trick — we build the default below
+                        ""
+                    });
+                let effective_name = if arg_name.is_empty() {
+                    format!("arg_{}", i + 1)
+                } else {
+                    arg_name.to_string()
+                };
+                let old_decl = format!("int32_t {}", effective_name);
+                let new_decl = format!("{} {}", type_str, effective_name);
+                *out = out.replace(&old_decl, &new_decl);
+            }
+        }
+
+        // 4c. Replace return type (`void ` at the function declaration start).
+        if let Some(ret) = &sig.return_type {
+            // The renderer always emits `void func_name(...)`.
+            // Replace only the leading `void ` on the first non-comment line.
+            if let Some(line_start) = out.find("void ") {
+                let prefix = &out[..line_start];
+                // Make sure it's not inside a comment
+                if !prefix.contains("//") && !prefix.ends_with("* ") {
+                    let suffix = &out[line_start + 5..];
+                    *out = format!("{}{} {}", prefix, ret, suffix);
+                }
+            }
+        }
     }
 }
 

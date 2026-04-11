@@ -71,6 +71,36 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "comment"),
         ),
         "load_project" => load_project(&str_arg(args, "path")),
+        "rename_variable" => rename_variable(
+            &str_arg(args, "path"),
+            args["fn_vaddr"].as_u64().unwrap_or(0),
+            &str_arg(args, "old_name"),
+            &str_arg(args, "new_name"),
+        ),
+        "set_return_type" => set_return_type(
+            &str_arg(args, "path"),
+            args["fn_vaddr"].as_u64().unwrap_or(0),
+            &str_arg(args, "type_str"),
+        ),
+        "set_param_type" => set_param_type(
+            &str_arg(args, "path"),
+            args["fn_vaddr"].as_u64().unwrap_or(0),
+            args["param_n"].as_u64().unwrap_or(1) as usize,
+            &str_arg(args, "type_str"),
+        ),
+        "set_param_name" => set_param_name(
+            &str_arg(args, "path"),
+            args["fn_vaddr"].as_u64().unwrap_or(0),
+            args["param_n"].as_u64().unwrap_or(1) as usize,
+            &str_arg(args, "name"),
+        ),
+        "define_struct" => define_struct(
+            &str_arg(args, "path"),
+            &str_arg(args, "struct_name"),
+            args["total_size"].as_u64().unwrap_or(0) as usize,
+            args.get("fields").cloned().unwrap_or(serde_json::Value::Null),
+        ),
+        "list_types" => list_types(&str_arg(args, "path")),
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -762,6 +792,205 @@ fn add_comment(path: &str, vaddr: u64, comment: &str) -> ToolResult {
     }
 }
 
+// ─── Tool: rename_variable ───────────────────────────────────────────────────
+
+fn rename_variable(path: &str, fn_vaddr: u64, old_name: &str, new_name: &str) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
+    if old_name.is_empty(){ return ToolResult::err("'old_name' is required"); }
+    if new_name.is_empty(){ return ToolResult::err("'new_name' is required"); }
+    let mut p = Project::load_for(path);
+    p.rename_var(fn_vaddr, old_name.to_string(), new_name.to_string());
+    match p.save() {
+        Ok(_)  => ToolResult::ok(format!(
+            "In function 0x{:x}: '{}' → '{}' (will apply on next decompile)",
+            fn_vaddr, old_name, new_name
+        )),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+// ─── Tool: set_return_type ───────────────────────────────────────────────────
+
+fn set_return_type(path: &str, fn_vaddr: u64, type_str: &str) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
+    if type_str.is_empty(){ return ToolResult::err("'type_str' is required"); }
+    let mut p = Project::load_for(path);
+    p.set_return_type(fn_vaddr, type_str.to_string());
+    match p.save() {
+        Ok(_)  => ToolResult::ok(format!(
+            "Return type of 0x{:x} set to '{}' (will apply on next decompile)",
+            fn_vaddr, type_str
+        )),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+// ─── Tool: set_param_type ────────────────────────────────────────────────────
+
+fn set_param_type(path: &str, fn_vaddr: u64, param_n: usize, type_str: &str) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
+    if param_n == 0       { return ToolResult::err("'param_n' must be ≥ 1"); }
+    if type_str.is_empty(){ return ToolResult::err("'type_str' is required"); }
+    let mut p = Project::load_for(path);
+    p.set_param_type(fn_vaddr, param_n, type_str.to_string());
+    match p.save() {
+        Ok(_)  => ToolResult::ok(format!(
+            "Parameter {} of 0x{:x} type set to '{}' (will apply on next decompile)",
+            param_n, fn_vaddr, type_str
+        )),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+// ─── Tool: set_param_name ────────────────────────────────────────────────────
+
+fn set_param_name(path: &str, fn_vaddr: u64, param_n: usize, name: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if fn_vaddr == 0   { return ToolResult::err("'fn_vaddr' is required"); }
+    if param_n == 0    { return ToolResult::err("'param_n' must be ≥ 1"); }
+    if name.is_empty() { return ToolResult::err("'name' is required"); }
+    let mut p = Project::load_for(path);
+    p.set_param_name(fn_vaddr, param_n, name.to_string());
+    match p.save() {
+        Ok(_)  => ToolResult::ok(format!(
+            "Parameter {} of 0x{:x} renamed to '{}' (will apply on next decompile)",
+            param_n, fn_vaddr, name
+        )),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+// ─── Tool: define_struct ────────────────────────────────────────────────────
+
+fn define_struct(
+    path: &str,
+    struct_name: &str,
+    total_size: usize,
+    fields_val: serde_json::Value,
+) -> ToolResult {
+    if path.is_empty()        { return ToolResult::err("'path' is required"); }
+    if struct_name.is_empty() { return ToolResult::err("'struct_name' is required"); }
+
+    // Parse fields array: [{offset, size, name, type_str}, ...]
+    let fields: Vec<crate::project::StructField> = match fields_val.as_array() {
+        None => Vec::new(),
+        Some(arr) => arr
+            .iter()
+            .filter_map(|f| {
+                let offset   = f["offset"].as_u64()? as usize;
+                let size     = f["size"].as_u64().unwrap_or(4) as usize;
+                let name     = f["name"].as_str().unwrap_or("field").to_string();
+                let type_str = f["type_str"].as_str().unwrap_or("int").to_string();
+                Some(crate::project::StructField { offset, size, name, type_str })
+            })
+            .collect(),
+    };
+
+    let def = crate::project::StructDef {
+        name: struct_name.to_string(),
+        total_size,
+        fields,
+    };
+
+    let c_repr = def.to_c();
+    let mut p = Project::load_for(path);
+    p.define_struct(def);
+    match p.save() {
+        Ok(_)  => ToolResult::ok(format!("Struct '{}' saved:\n\n{}", struct_name, c_repr)),
+        Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
+    }
+}
+
+// ─── Tool: list_types ────────────────────────────────────────────────────────
+
+fn list_types(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let p = Project::load_for(path);
+
+    if p.signatures.is_empty() && p.var_renames.is_empty() && p.structs.is_empty() {
+        return ToolResult::ok(
+            "No type annotations saved yet.\n\
+             Use set_return_type, set_param_type, set_param_name, rename_variable, \
+             or define_struct to annotate this binary."
+        );
+    }
+
+    let mut out = String::new();
+
+    // Struct definitions
+    if !p.structs.is_empty() {
+        out.push_str(&format!("─── Struct definitions ({}) ───\n\n", p.structs.len()));
+        let mut names: Vec<&String> = p.structs.keys().collect();
+        names.sort();
+        for name in names {
+            out.push_str(&p.structs[name].to_c());
+            out.push_str("\n\n");
+        }
+    }
+
+    // Function signatures
+    if !p.signatures.is_empty() {
+        out.push_str(&format!("─── Function signatures ({}) ───\n\n", p.signatures.len()));
+        let mut addrs: Vec<u64> = p.signatures.keys().cloned().collect();
+        addrs.sort();
+        for addr in addrs {
+            let sig = &p.signatures[&addr];
+            let fn_name = p.renames.get(&addr)
+                .map(|s| s.as_str())
+                .unwrap_or("<unnamed>");
+            let ret = sig.return_type.as_deref().unwrap_or("void");
+            let params: Vec<String> = (0..sig.param_types.len().max(sig.param_names.len()))
+                .map(|i| {
+                    let t = sig.param_types.get(i).and_then(|x| x.as_deref()).unwrap_or("int32_t");
+                    let n = sig.param_names.get(i).and_then(|x| x.as_deref())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| {
+                            // borrow trick: use a static-lifetime placeholder
+                            "arg"
+                        });
+                    // Build the actual name
+                    let actual_name = sig.param_names.get(i)
+                        .and_then(|x| x.as_deref())
+                        .filter(|n| !n.is_empty())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("arg_{}", i + 1));
+                    let _ = n; // suppress unused warning
+                    format!("{} {}", t, actual_name)
+                })
+                .collect();
+            out.push_str(&format!(
+                "  0x{:016x}  {} {}({})\n",
+                addr, ret, fn_name, params.join(", ")
+            ));
+        }
+        out.push('\n');
+    }
+
+    // Variable renames per function
+    if !p.var_renames.is_empty() {
+        out.push_str(&format!("─── Variable renames ({} functions) ───\n\n", p.var_renames.len()));
+        let mut addrs: Vec<u64> = p.var_renames.keys().cloned().collect();
+        addrs.sort();
+        for addr in addrs {
+            let fn_name = p.renames.get(&addr)
+                .map(|s| s.as_str())
+                .unwrap_or("<unnamed>");
+            out.push_str(&format!("  0x{:016x}  {}:\n", addr, fn_name));
+            let renames = &p.var_renames[&addr];
+            let mut pairs: Vec<(&String, &String)> = renames.iter().collect();
+            pairs.sort_by_key(|(k, _)| k.as_str());
+            for (old, new) in pairs {
+                out.push_str(&format!("    {} → {}\n", old, new));
+            }
+        }
+    }
+
+    ToolResult::ok(out)
+}
+
 fn load_project(path: &str) -> ToolResult {
     if path.is_empty() { return ToolResult::err("'path' is required"); }
     let p = Project::load_for(path);
@@ -979,8 +1208,117 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "load_project".into(),
             description: "Load and display the KaijuLab project sidecar for a binary. \
-                           Shows all renames and comments previously saved for that binary. \
-                           Returns the path where the project file would be stored even if it doesn't exist yet.".into(),
+                           Shows all renames, comments, type annotations, and struct definitions \
+                           previously saved for that binary.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "rename_variable".into(),
+            description: "Rename a local variable or parameter inside a specific function. \
+                           The old_name is the name as it currently appears in decompile output \
+                           (e.g. 'arg_1', 'RAX', 'var_3'). The new name will be substituted on \
+                           all subsequent decompile calls for that function. \
+                           Call decompile again after renaming to see the updated output.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":     { "type": "string",  "description": "Path to the binary file" },
+                    "fn_vaddr": { "type": "integer", "description": "Virtual address of the function" },
+                    "old_name": { "type": "string",  "description": "Variable name as it appears in current decompile output" },
+                    "new_name": { "type": "string",  "description": "Replacement name" }
+                },
+                "required": ["path", "fn_vaddr", "old_name", "new_name"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_return_type".into(),
+            description: "Set the return type of a function. The decompiler always emits 'void' \
+                           by default; this overrides it. Use C type strings: 'int', 'char*', \
+                           'uint64_t', 'struct Node*', etc. \
+                           Call decompile again to see the updated signature.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":     { "type": "string",  "description": "Path to the binary file" },
+                    "fn_vaddr": { "type": "integer", "description": "Virtual address of the function" },
+                    "type_str": { "type": "string",  "description": "C return type, e.g. 'int', 'char*', 'void'" }
+                },
+                "required": ["path", "fn_vaddr", "type_str"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_param_type".into(),
+            description: "Set the type of the N-th parameter of a function (1-indexed). \
+                           This replaces the default 'int32_t' prefix in the decompiler output. \
+                           Example: set_param_type(path, fn_vaddr, param_n=1, type_str='const char*') \
+                           changes 'int32_t arg_1' to 'const char* arg_1'.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":     { "type": "string",  "description": "Path to the binary file" },
+                    "fn_vaddr": { "type": "integer", "description": "Virtual address of the function" },
+                    "param_n":  { "type": "integer", "description": "Parameter number, 1-indexed (1 = first param)" },
+                    "type_str": { "type": "string",  "description": "C type string, e.g. 'const char*', 'size_t'" }
+                },
+                "required": ["path", "fn_vaddr", "param_n", "type_str"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_param_name".into(),
+            description: "Set the name of the N-th parameter of a function (1-indexed). \
+                           This renames 'arg_1', 'arg_2', etc. in the decompiled output. \
+                           Combine with set_param_type for full parameter annotations.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":     { "type": "string",  "description": "Path to the binary file" },
+                    "fn_vaddr": { "type": "integer", "description": "Virtual address of the function" },
+                    "param_n":  { "type": "integer", "description": "Parameter number, 1-indexed" },
+                    "name":     { "type": "string",  "description": "Parameter name, e.g. 'buf', 'count', 'flags'" }
+                },
+                "required": ["path", "fn_vaddr", "param_n", "name"]
+            }),
+        },
+        ToolDefinition {
+            name: "define_struct".into(),
+            description: "Define a C struct layout and save it to the project. \
+                           Structs are used to annotate pointer dereferences in decompiler output. \
+                           Each field specifies its byte offset, size, name, and type. \
+                           Use list_types to review saved structs.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":        { "type": "string",  "description": "Path to the binary file" },
+                    "struct_name": { "type": "string",  "description": "C struct name, e.g. 'sockaddr_in'" },
+                    "total_size":  { "type": "integer", "description": "Total struct size in bytes" },
+                    "fields": {
+                        "type": "array",
+                        "description": "Array of field definitions",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "offset":   { "type": "integer", "description": "Byte offset from struct base" },
+                                "size":     { "type": "integer", "description": "Field size in bytes" },
+                                "name":     { "type": "string",  "description": "Field name" },
+                                "type_str": { "type": "string",  "description": "C type, e.g. 'uint32_t'" }
+                            }
+                        }
+                    }
+                },
+                "required": ["path", "struct_name"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_types".into(),
+            description: "Show all type annotations, variable renames, function signatures, and \
+                           struct definitions saved in the project sidecar for a binary. \
+                           Use this to review current annotations before decompiling.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
