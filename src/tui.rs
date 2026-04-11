@@ -1,10 +1,7 @@
 use std::io;
 
 use crossterm::{
-    event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers,
-        MouseEventKind,
-    },
+    event::{Event, EventStream, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -330,6 +327,41 @@ impl App {
         self.scroll_to_search_hit();
     }
 
+    /// Copy `text` to the system clipboard; update status with result.
+    fn copy_to_clipboard(&mut self, text: String) {
+        if text.is_empty() {
+            self.status = "Nothing to copy — panel is empty".to_string();
+            return;
+        }
+        let line_count = text.lines().count();
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(_)  => self.status = format!("Copied {} lines to clipboard", line_count),
+            Err(e) => self.status = format!("Clipboard error: {}", e),
+        }
+    }
+
+    /// Build a plain-text copy of the active tab's content.
+    fn copyable_content(&self) -> String {
+        match self.active_tab {
+            Tab::Chat => {
+                // Copy the last assistant text response
+                self.chat.iter().rev().find_map(|m| {
+                    if let ChatMsg::Assistant(t) = m { Some(t.clone()) } else { None }
+                }).unwrap_or_default()
+            }
+            Tab::Context => {
+                // Render context entries as plain text
+                self.context_entries.iter().map(|e| {
+                    format!("{:<9}  {:<10}  {:>6}c  {}{}",
+                        e.role, e.kind, e.char_count,
+                        e.tool_name.as_deref().map(|n| format!("[{}] ", n)).unwrap_or_default(),
+                        e.preview)
+                }).collect::<Vec<_>>().join("\n")
+            }
+            tab => self.tab_lines[tab as usize].join("\n"),
+        }
+    }
+
     fn scroll_to_search_hit(&mut self) {
         let matches = self.search_matches();
         if matches.is_empty() {
@@ -425,7 +457,14 @@ impl App {
                 None
             }
 
-            // ↑↓ — command history navigation (touchpad scrolls via mouse events)
+            // y — copy active panel content to system clipboard
+            KeyCode::Char('y') if self.input.is_empty() && key.modifiers.is_empty() => {
+                let text = self.copyable_content();
+                self.copy_to_clipboard(text);
+                None
+            }
+
+            // ↑↓ — command history navigation
             KeyCode::Up => {
                 if self.input_history.is_empty() {
                     return None;
@@ -567,20 +606,6 @@ impl App {
         }
     }
 
-    /// Handle a mouse event (scroll wheel / touchpad).
-    pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) {
-        match event.kind {
-            MouseEventKind::ScrollUp => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_add(3);
-            }
-            MouseEventKind::ScrollDown => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_sub(3);
-            }
-            _ => {}
-        }
-    }
 }
 
 // ─── Address parser ──────────────────────────────────────────────────────────
@@ -606,10 +631,9 @@ pub async fn run_tui(
     backend_name: &str,
     initial_file: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    // Enter alternate screen and enable mouse for scroll events
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -629,7 +653,7 @@ pub async fn run_tui(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(info);
     }));
 
@@ -653,9 +677,6 @@ pub async fn run_tui(
                             user_tx.send(msg).await?;
                         }
                     }
-                    Some(Ok(Event::Mouse(mouse))) => {
-                        app.handle_mouse(mouse);
-                    }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.autoresize()?;
                     }
@@ -676,7 +697,7 @@ pub async fn run_tui(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -894,6 +915,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
         div(),
         kb("g 0xADDR",   "Jump to address in current panel"),
         kb("/pattern",   "Search panel  ·  n = next  ·  N = prev  ·  Esc = clear"),
+        kb("y",          "Copy panel content to system clipboard"),
         kb("1 – 7",      "Switch tab directly"),
         kb("Tab",        "Cycle to next tab"),
         kb("↑  ↓",       "Browse sent-message history"),
@@ -1159,9 +1181,9 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let keybinds = if app.search_pattern.is_some() {
-        "n:next  N:prev  Esc:clear-search  Tab:tab  ↑↓:history  PgUp/Dn:scroll"
+        "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  PgUp/Dn:scroll"
     } else {
-        "Tab:next  1-7:tab  g:goto  /:search  ↑↓:history  PgUp/Dn:scroll  Ctrl+C:quit"
+        "Tab:next  1-7:tab  g:goto  /:search  y:copy  ↑↓:history  PgUp/Dn:scroll  Ctrl+C:quit"
     };
     let status = format!(" {} {}", icon, app.status);
 
