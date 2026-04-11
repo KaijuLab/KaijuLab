@@ -634,7 +634,7 @@ pub async fn run_tui(
     }));
 
     let mut event_stream = EventStream::new();
-    terminal.draw(|f| render(f, &app))?;
+    terminal.draw(|f| render(f, &mut app))?;
 
     loop {
         tokio::select! {
@@ -667,7 +667,7 @@ pub async fn run_tui(
             }
         }
 
-        terminal.draw(|f| render(f, &app))?;
+        terminal.draw(|f| render(f, &mut app))?;
 
         if app.should_quit {
             break;
@@ -684,7 +684,7 @@ pub async fn run_tui(
 
 // ─── Top-level render ────────────────────────────────────────────────────────
 
-fn render(f: &mut Frame, app: &App) {
+fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
 
     if area.width < 40 || area.height < 8 {
@@ -774,7 +774,7 @@ fn render_tabbar(f: &mut Frame, area: Rect, app: &App) {
 
 // ─── Content area ────────────────────────────────────────────────────────────
 
-fn render_content(f: &mut Frame, area: Rect, app: &App) {
+fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
     match app.active_tab {
         Tab::Chat    => render_chat(f, area, app),
         Tab::Context => render_context(f, area, app),
@@ -907,7 +907,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
 
 // ─ Chat panel ─────────────────────────────────────────────────────────────────
 
-fn render_chat(f: &mut Frame, area: Rect, app: &App) {
+fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(" Chat ", Style::new().fg(Color::Cyan).bold()))
@@ -1026,6 +1026,9 @@ fn render_chat(f: &mut Frame, area: Rect, app: &App) {
     let total = all_lines.len() as u16;
     let visible = inner.height;
     let at_bottom = total.saturating_sub(visible);
+    // Clamp stored scroll to the real maximum so PgDn/mouse-scroll work
+    // immediately even when the initial value was set to u16::MAX.
+    app.scroll[Tab::Chat as usize] = app.scroll[Tab::Chat as usize].min(at_bottom);
     let scroll_up = app.scroll[Tab::Chat as usize];
     let from_top = at_bottom.saturating_sub(scroll_up);
 
