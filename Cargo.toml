@@ -1,0 +1,40 @@
+[package]
+name = "kaijulab"
+version = "0.1.0"
+edition = "2021"
+description = "KaijuLab — LLM-native Reverse Engineering Lab"
+
+[[bin]]
+name = "kaijulab"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client (rustls so no OpenSSL dep)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Terminal UI
+colored = "2"
+indicatif = "0.17"
+console = "0.15"
+rustyline = "14"
+
+# Binary analysis
+object = "0.36"
+iced-x86 = "1"
+
+# Auth
+jsonwebtoken = "9"
+chrono = "0.4"
+
+# Error handling
+anyhow = "1"

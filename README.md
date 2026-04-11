@@ -1,0 +1,191 @@
+# KaijuLab
+
+**LLM-native Reverse Engineering Lab**
+
+KaijuLab is a command-line RE tool where the LLM is the analyst, not the assistant. Instead of bolting an AI chatbot onto an existing disassembler, KaijuLab gives Gemini a set of binary-analysis primitives and lets it drive the investigation autonomously — forming hypotheses, calling tools, interpreting results, and reporting findings in plain language.
+
+```
+  ╭──────────────────────────────────────────────────────╮
+  │  KaijuLab  v0.1.0                                    │
+  │  LLM-native Reverse Engineering Lab                  │
+  │                                                      │
+  │  Model   : gemini-2.5-flash                          │
+  │  Project : my-gcp-project                            │
+  ╰──────────────────────────────────────────────────────╯
+
+> Analyse /bin/ls
+
+  ⏺ file_info(path="/bin/ls")
+  ┌──────────────────────────────────────────────────────────
+  │ File         : /bin/ls
+  │ Format       : Elf
+  │ Architecture : X86_64 64-bit LE
+  │ Entry point  : 0x0000000000004650
+  │ Sections (27): .text, .rodata, .data, …
+  └──────────────────────────────────────────────────────────
+
+  ⏺ disassemble(path="/bin/ls", offset=18000, length=128)
+  ┌──────────────────────────────────────────────────────────
+  │   0x0000000000004650  f3 0f 1e fa              endbr64
+  │   0x0000000000004654  31 ed                    xor       ebp, ebp
+  │   …
+  └──────────────────────────────────────────────────────────
+
+  This is the GNU `ls` utility. The entry point follows the standard
+  glibc startup sequence: clear the frame pointer, pop argc from the
+  stack, then call __libc_start_main …
+```
+
+## How it works
+
+```
+User prompt
+    │
+    ▼
+┌──────────────────────────────────────────────┐
+│  Agent loop (src/agent.rs)                   │
+│                                              │
+│  1. Append user message to history           │
+│  2. POST history + tool schemas → Gemini     │
+│  3. If response contains functionCall(s):    │
+│       execute each tool locally              │
+│       append functionResponse to history     │
+│       goto 2                                 │
+│  4. Print final text response                │
+└──────────────────────────────────────────────┘
+         │                    ▲
+         │  tool call         │  result JSON
+         ▼                    │
+┌──────────────────────────────────────────────┐
+│  Tool dispatcher (src/tools.rs)              │
+│  file_info · hexdump · strings_extract       │
+│  disassemble · read_section                  │
+└──────────────────────────────────────────────┘
+```
+
+The LLM backend is **Gemini via Vertex AI** with native function-calling. The OAuth2 token is obtained by signing a short-lived JWT with the service-account private key — no `gcloud` binary required at runtime.
+
+## Prerequisites
+
+- Rust toolchain (stable, 1.75+)
+- A Google Cloud project with the **Vertex AI API** enabled
+- A **service account** with the `Vertex AI User` role and a JSON key file
+
+## Setup
+
+### 1. Clone
+
+```bash
+git clone https://github.com/Koukyosyumei/KaijuLab
+cd KaijuLab
+```
+
+### 2. Credentials
+
+Store the service-account key file somewhere outside the repo (it must not be committed):
+
+```
+../CRED/my-project-key.json   ← recommended location
+```
+
+Export the path and your project ID:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+export GOOGLE_PROJECT_ID=my-gcp-project
+```
+
+Optionally override region or model:
+
+```bash
+export GOOGLE_LOCATION=us-central1        # default
+export KAIJULAB_MODEL=gemini-2.5-flash    # default
+```
+
+### 3. Build
+
+```bash
+cargo build --release
+```
+
+The compiled binary is `target/release/kaijulab`. Always use `--release`; `iced-x86` in debug mode is noticeably slower.
+
+## Usage
+
+### Interactive REPL
+
+```bash
+cargo run --release
+```
+
+Type a task in plain English. Conversation history is preserved across turns within the same session.
+
+```
+> What is this binary and what does it do?
+> Show me the strings that look like file paths
+> Disassemble the function starting at 0x401200
+> exit
+```
+
+### One-shot analysis
+
+Pass a binary as a positional argument; KaijuLab analyses it and exits:
+
+```bash
+cargo run --release -- /path/to/binary
+```
+
+### CLI flags
+
+All configuration can also be provided as flags (they override env vars):
+
+```
+--credentials <FILE>   Service-account JSON key path
+--project     <ID>     GCP project ID
+--location    <REGION> Vertex AI region  (default: us-central1)
+--model       <ID>     Gemini model ID   (default: gemini-2.5-flash)
+```
+
+## Available tools
+
+| Tool | Description |
+|---|---|
+| `file_info` | Parse ELF / PE / Mach-O headers: format, arch, entry point, section table, imports |
+| `hexdump` | Hex + ASCII dump at an arbitrary file offset |
+| `strings_extract` | Extract printable ASCII strings with file offsets |
+| `disassemble` | Disassemble x86 / x86-64 bytes in Intel syntax (up to 60 instructions) |
+| `read_section` | Hex dump of a named section (`.text`, `.rodata`, etc.) |
+
+## Project layout
+
+```
+src/
+├── main.rs      CLI entry point (clap) and REPL loop (rustyline)
+├── config.rs    Configuration: env vars → CLI flags → defaults
+├── llm.rs       Gemini/Vertex AI client, JWT auth, API types
+├── agent.rs     Agentic loop: orchestrates LLM ↔ tools
+├── tools.rs     RE tool implementations + Gemini function declarations
+└── ui.rs        Terminal rendering: banner, spinner, tool output, response
+```
+
+## Key dependencies
+
+| Crate | Purpose |
+|---|---|
+| `reqwest` | Async HTTP (rustls, no OpenSSL) |
+| `jsonwebtoken` | RS256 JWT signing for service-account auth |
+| `object` | Pure-Rust ELF / PE / Mach-O parser |
+| `iced-x86` | Pure-Rust x86 / x86-64 disassembler |
+| `indicatif` | Spinner while waiting for Gemini |
+| `rustyline` | Readline-style REPL with history |
+| `colored` | ANSI colour output |
+
+## Security notes
+
+- The service-account key file path is never stored in source code or config files tracked by git. It is read exclusively from `GOOGLE_APPLICATION_CREDENTIALS` or `--credentials`.
+- `CRED/` and `*.json` are in `.gitignore`.
+- Access tokens are cached in-process only and never written to disk.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
