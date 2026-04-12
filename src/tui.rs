@@ -568,6 +568,16 @@ impl App {
                 self.tab_dirty[Tab::Notes as usize] = true;
                 self.status = format!("Notes updated ({} total)", self.notes.len());
             }
+            AgentEvent::PluginOutput { name, output } => {
+                // Display plugin output in the Chat tab as an assistant-style message.
+                self.chat.push(ChatMsg::Assistant(
+                    format!("Plugin: {}\n\n{}", name, output)
+                ));
+                self.active_tab = Tab::Chat;
+                self.scroll[Tab::Chat as usize] = 0;
+                self.is_loading = false;
+                self.status = format!("Plugin '{}' finished", name);
+            }
         }
     }
 
@@ -1288,6 +1298,25 @@ impl App {
                     self.scroll[Tab::Chat as usize] = 0;
                     return Some(prompt);
                 }
+
+                // `run <name>` — plugin command: auto-inject current binary path
+                // when none is specified so scripts can use the `binary` global.
+                let msg = if let Some(rest) = msg.strip_prefix("run ") {
+                    let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                    let plugin_name = parts[0].trim();
+                    let has_binary  = parts.get(1).map_or(false, |s| !s.trim().is_empty());
+                    if !has_binary {
+                        if let Some(ref bp) = self.binary_path.clone() {
+                            format!("run {} {}", plugin_name, bp)
+                        } else {
+                            msg
+                        }
+                    } else {
+                        msg
+                    }
+                } else {
+                    msg
+                };
 
                 if self.is_loading {
                     return None;

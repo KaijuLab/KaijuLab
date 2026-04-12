@@ -56,6 +56,9 @@ pub enum AgentEvent {
     /// Updated notes list after an add_note / delete_note tool call.
     /// The TUI uses this to refresh the Notes tab immediately.
     NotesUpdate(Vec<crate::project::Note>),
+    /// A plugin script finished running.
+    /// `name` is the plugin identifier; `output` is its captured print output.
+    PluginOutput { name: String, output: String },
 }
 
 /// Estimated character budget before we start trimming old tool-result messages.

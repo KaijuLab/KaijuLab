@@ -5,6 +5,7 @@ pub mod decompiler;
 pub mod dwarf;
 pub mod hashdb;
 mod llm;
+pub mod plugin;
 pub mod project;
 mod tools;
 mod tui;
@@ -89,6 +90,12 @@ struct Cli {
     /// Do not load or save a session file for this run.
     #[arg(long)]
     no_session: bool,
+
+    /// Run a Rhai plugin script and exit.
+    /// Pass an absolute path to a .rhai file, or just the name of a plugin
+    /// found in ~/.kaiju/plugins/ (without the .rhai extension).
+    #[arg(long, value_name = "PLUGIN")]
+    plugin: Option<String>,
 }
 
 #[tokio::main]
@@ -109,6 +116,21 @@ async fn main() -> Result<()> {
         cli.api_key,
         cli.base_url,
     )?;
+
+    // ── Plugin / scripting mode ──────────────────────────────────────────────
+    if let Some(plugin_arg) = &cli.plugin {
+        let binary_path = cli.file.as_ref()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let out = run_plugin_arg(plugin_arg, &binary_path);
+        if let Some(err) = &out.error {
+            eprintln!("Plugin error: {}", err);
+        }
+        if !out.text.is_empty() {
+            print!("{}", out.text);
+        }
+        return Ok(());
+    }
 
     // ── No-LLM (manual) mode ─────────────────────────────────────────────────
     if matches!(cfg, BackendConfig::None) {
@@ -199,6 +221,9 @@ async fn main() -> Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
     let (user_tx, mut user_rx) = mpsc::channel::<String>(4);
 
+    // Keep a clone of event_tx for the plugin dispatcher (before it's moved into ag).
+    let plugin_event_tx = event_tx.clone();
+
     // Shared cancellation token: TUI sets it true, agent loop checks it.
     let cancel_token = Arc::new(AtomicBool::new(false));
     let cancel_for_agent = cancel_token.clone();
@@ -228,6 +253,29 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async move {
         while let Some(msg) = user_rx.recv().await {
+            // Intercept plugin commands before sending to the LLM agent.
+            if msg.trim() == "plugins" {
+                let listing = plugin::format_plugin_list();
+                let _ = plugin_event_tx.send(agent::AgentEvent::LlmText(listing));
+                let _ = plugin_event_tx.send(agent::AgentEvent::Done);
+                continue;
+            }
+            if let Some(rest) = msg.trim().strip_prefix("run ") {
+                let mut parts = rest.splitn(2, ' ');
+                let name    = parts.next().unwrap_or("").trim().to_string();
+                let binary  = parts.next().unwrap_or("").trim().to_string();
+                let tx = plugin_event_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let out = plugin::run_named(&name, &binary);
+                    let output = format_plugin_output(&name, &out);
+                    let _ = tx.send(agent::AgentEvent::PluginOutput {
+                        name: name.clone(),
+                        output,
+                    });
+                    let _ = tx.send(agent::AgentEvent::Done);
+                });
+                continue;
+            }
             if let Err(e) = ag.run(&msg).await {
                 eprintln!("agent error: {}", e);
             }
@@ -290,13 +338,18 @@ Project (persistent across sessions):
   project       <path>                    Show all saved annotations
   types         <path>                    Show struct / signature definitions
 
+Plugins / scripting:
+  plugins                                 List available plugins (~/.kaiju/plugins/)
+  run <name> [binary]                     Run a Rhai plugin by name (or path)
+
 Other:
   ls            [path]                    List files in a directory
   help                                    Show this message
 
 Example:  disassemble /bin/ls 0x5880
           entropy /path/to/suspect.exe
-          search  /path/to/binary  E8 ?? ?? ?? ?? 48 89 C7";
+          search  /path/to/binary  E8 ?? ?? ?? ?? 48 89 C7
+          run my_script /bin/ls";
 
 /// Parse a user-typed command and fire AgentEvents into the TUI channel.
 fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {
@@ -509,6 +562,28 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             run_tool("generate_yara_rule", args, tx);
         }
 
+        "plugins" | "plugin" => {
+            let listing = plugin::format_plugin_list();
+            send(agent::AgentEvent::LlmText(listing));
+            send(agent::AgentEvent::Done);
+        }
+
+        "run" => {
+            let name   = parts.get(1).copied().unwrap_or("").to_string();
+            let binary = parts.get(2).copied().unwrap_or("").to_string();
+            if name.is_empty() {
+                send(agent::AgentEvent::Error(
+                    "Usage: run <plugin_name> [binary_path]".to_string()
+                ));
+                send(agent::AgentEvent::Done);
+                return;
+            }
+            let out = run_plugin_arg(&name, &binary);
+            let output = format_plugin_output(&name, &out);
+            send(agent::AgentEvent::PluginOutput { name, output: output.clone() });
+            send(agent::AgentEvent::Done);
+        }
+
         other => {
             send(agent::AgentEvent::Error(format!(
                 "Unknown command '{}'. Type 'help' for usage.", other
@@ -692,6 +767,36 @@ async fn run_plain_repl(agent: &mut agent::Agent) -> Result<()> {
 
     println!("  Bye.");
     Ok(())
+}
+
+// ─── Plugin helpers ──────────────────────────────────────────────────────────
+
+/// Run a plugin given either a name (looked up in `~/.kaiju/plugins/`) or an
+/// absolute / relative path to a `.rhai` file.  Used by `--plugin` CLI flag.
+fn run_plugin_arg(arg: &str, binary_path: &str) -> plugin::PluginOutput {
+    let p = std::path::Path::new(arg);
+    if p.exists() {
+        plugin::run_file(p, binary_path)
+    } else if arg.ends_with(".rhai") {
+        plugin::PluginOutput::error(format!("File not found: {}", arg))
+    } else {
+        plugin::run_named(arg, binary_path)
+    }
+}
+
+/// Format a `PluginOutput` into a human-readable string for TUI display.
+fn format_plugin_output(name: &str, out: &plugin::PluginOutput) -> String {
+    let mut s = format!("── Plugin: {} ──\n", name);
+    if !out.text.is_empty() {
+        s.push_str(&out.text);
+        if !out.text.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    if let Some(err) = &out.error {
+        s.push_str(&format!("\nError: {}\n", err));
+    }
+    s
 }
 
 // ─── Recent files ────────────────────────────────────────────────────────────

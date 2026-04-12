@@ -71,3 +71,6 @@ capstone = "0.12"
 
 # Configuration file (~/.kaiju/config.toml)
 toml = "0.8"
+
+# Scripting / plugin engine (Rhai — pure Rust, embeds cleanly)
+rhai = { version = "1", features = ["sync"] }

@@ -17,6 +17,9 @@ cargo run --release -- /path/to/binary                   # one-shot analysis
 cargo run --release -- --headless /path/to/binary        # headless JSON output
 cargo run --release -- --script cmds.txt                 # batch/script mode
 cargo run --release -- --no-session                      # skip session save/load
+cargo run --release -- --plugin vuln_triage              # run a plugin by name
+cargo run --release -- --plugin /path/to/script.rhai     # run a plugin by path
+cargo run --release -- --plugin hello /bin/ls            # run plugin with binary
 cargo run --release -- --help                            # flag reference
 ```
 
@@ -34,7 +37,9 @@ src/
 ├── config.rs       BackendKind / BackendConfig — load from env vars or CLI flags
 ├── agent.rs        Agentic loop — drives any LlmBackend; emits AgentEvent for TUI
 ├── tools.rs        RE tool implementations + ToolDefinition list + LRU cache
-├── tui.rs          Full ratatui TUI — 7-tab layout, disasm syntax highlighting
+├── plugin.rs       Rhai scripting engine — all RE tools callable from .rhai scripts
+├── arch.rs         Architecture abstraction (ArchClass, Capstone builder, prologue patterns)
+├── tui.rs          Full ratatui TUI — 8-tab layout, disasm syntax highlighting
 ├── ui.rs           Plain-text fallback helpers (one-shot / --no-tui mode)
 ├── project.rs      Per-binary annotations (renames, comments, signatures, structs)
 │                   Persisted to <binary>.kaiju.db (SQLite); legacy JSON migrated on first load
@@ -272,6 +277,110 @@ ELF virtual addresses ≠ file offsets.  The `disassemble` tool internally
 resolves vaddr → file offset using the LOAD segment table, so passing
 `vaddr=entry_point` just works.  Always call `file_info` first so the LLM
 knows the segment layout before calling `disassemble`.
+
+## Plugin / Scripting API
+
+KaijuLab embeds [Rhai](https://rhai.rs/) as a Rust-native scripting engine.
+Scripts are `.rhai` files stored in `~/.kaiju/plugins/`.
+
+### Invoking plugins
+
+```bash
+# CLI: run a plugin by name (looked up in ~/.kaiju/plugins/)
+kaijulab --plugin vuln_triage --backend none /path/to/binary
+
+# CLI: run a plugin by file path
+kaijulab --plugin /path/to/script.rhai --backend none /bin/ls
+
+# TUI: type in the input box and press Enter
+run vuln_triage           # uses current loaded binary automatically
+run hello /bin/ls         # explicit binary path
+plugins                   # list all installed plugins
+```
+
+### Script API
+
+Every Rhai script receives a pre-set `binary` global (the currently loaded
+binary path).  All RE tools are callable as top-level functions that return
+`String`.
+
+**Analysis (read-only)**
+```rhai
+file_info(path)               // binary metadata
+disassemble(path, vaddr)      // default 128-byte window
+disassemble_at(path, vaddr, length)
+list_functions(path)
+strings_extract(path)
+decompile(path, vaddr)
+scan_vulnerabilities(path)
+xrefs_to(path, vaddr)
+cfg_view(path, vaddr)
+call_graph(path)
+hexdump(path, offset, length)
+section_entropy(path)
+load_project(path)            // all saved annotations
+list_notes(path)
+get_vuln_scores(path)
+dwarf_info(path)
+search_bytes(path, pattern)   // e.g. "E8 ?? ?? ?? ??"
+generate_yara(path, vaddr)
+identify_library_functions(path)
+diff_binary(path_a, path_b)
+```
+
+**Annotation (write — persisted to SQLite)**
+```rhai
+rename_function(path, vaddr, name)
+add_comment(path, vaddr, text)
+add_note(path, text)
+add_note_at(path, text, vaddr)
+set_vuln_score(path, vaddr, score)  // 0–10
+rename_variable(path, fn_vaddr, old_name, new_name)
+set_return_type(path, vaddr, type_str)
+set_param_type(path, vaddr, param_index, type_str)
+set_param_name(path, vaddr, param_index, name)
+delete_note(path, id)
+```
+
+**Utility**
+```rhai
+hex(n)            // 0x401000i64 → "0x401000"
+parse_addr(s)     // "0x401000" → 4198400i64
+plugins_dir()     // path to ~/.kaiju/plugins/
+```
+
+### Writing a plugin
+
+```rhai
+// ~/.kaiju/plugins/my_plugin.rhai
+// First comment line becomes the description shown in `plugins` listing.
+
+print("Analysing: " + binary);
+
+let info = file_info(binary);
+print(info);
+
+let fns = list_functions(binary);
+print(fns);
+
+// Rename a function at a known address
+rename_function(binary, 0x401000, "entry_point");
+add_note_at(binary, "Analysis started by my_plugin", 0x401000);
+```
+
+### Key design decisions for plugins (`src/plugin.rs`)
+
+- **`build_engine(print_buf)`** constructs a fresh `rhai::Engine` per run
+  with all tool functions registered.  `on_print` / `on_debug` are wired to
+  an `Arc<Mutex<String>>` so output is captured rather than written to stdout.
+- Plugins run in **`tokio::task::spawn_blocking`** in TUI mode so they never
+  stall the async event loop.
+- The `binary` variable is injected into the `Scope` before `eval_with_scope`.
+  When the user types `run <name>` in the TUI without a path, the current
+  `app.binary_path` is appended automatically.
+- Write tools inside a plugin invalidate the LRU cache exactly as they do
+  when called by the LLM.
+- Example plugins live in `examples/plugins/`.
 
 ## Key design decisions
 
