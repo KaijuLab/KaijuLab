@@ -58,11 +58,12 @@ impl Tab {
     /// Which tool populates this tab's dedicated view.
     fn from_tool(name: &str) -> Option<Self> {
         match name {
-            "list_functions"  => Some(Tab::Functions),
-            "disassemble"     => Some(Tab::Disasm),
-            "decompile"       => Some(Tab::Decompile),
-            "strings_extract" => Some(Tab::Strings),
-            "resolve_plt"     => Some(Tab::Imports),
+            "list_functions"    => Some(Tab::Functions),
+            "disassemble"       => Some(Tab::Disasm),
+            "decompile"         => Some(Tab::Decompile),
+            "strings_extract"   => Some(Tab::Strings),
+            "resolve_plt"
+            | "resolve_pe_imports" => Some(Tab::Imports),
             _ => None,
         }
     }
@@ -339,7 +340,8 @@ impl App {
     fn show_xref_popup(&mut self) {
         let vaddr = self.addr_at_cursor().or(self.focused_addr);
         if let Some(addr) = vaddr {
-            let args = serde_json::json!({ "vaddr": addr });
+            let path = self.binary_path.as_deref().unwrap_or("");
+            let args = serde_json::json!({ "path": path, "vaddr": addr });
             let result = crate::tools::dispatch("xrefs_to", &args);
             let lines: Vec<String> = result.output.lines().map(|l| l.to_string()).collect();
             self.popup = Some(Popup::Xref {
@@ -900,26 +902,22 @@ impl App {
                     return None;
                 }
 
-                // `:cmd args` — command palette shortcut: strip `:` and normalise
+                // `:cmd args` — command palette shortcut: strip `:` and pre-fill input.
+                // The user sees the expanded command in the input box and presses Enter to send.
                 if let Some(cmd_rest) = msg.strip_prefix(':') {
                     let cmd_rest = cmd_rest.trim();
-                    // Expand known shortcuts
-                    let expanded = match cmd_rest.split_whitespace().next().unwrap_or("") {
-                        "auto"   => Some(cmd_rest.to_string()),
-                        "report" => Some(cmd_rest.to_string()),
-                        "scan"   => Some(cmd_rest.to_string()),
-                        _        => Some(cmd_rest.to_string()),
-                    };
-                    if let Some(expanded_msg) = expanded {
-                        if !expanded_msg.is_empty() {
-                            self.input = expanded_msg;
-                            self.input_cursor = self.input.len();
-                            // Don't send yet — let the user confirm or edit
-                        }
+                    if cmd_rest.is_empty() {
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.history_cursor = None;
+                        return None;
                     }
-                    self.input.clear();
-                    self.input_cursor = 0;
+                    // Pre-fill with the raw command (minus the `:` prefix) and let the user
+                    // review / edit before pressing Enter to send.
+                    self.input = cmd_rest.to_string();
+                    self.input_cursor = self.input.len();
                     self.history_cursor = None;
+                    self.status = "Press Enter to send, or edit first".to_string();
                     return None;
                 }
 
@@ -1406,6 +1404,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
         cmd("entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
         cmd("search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
         cmd("patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
+        cmd("yara",      "<path> <vaddr> [name]", "YARA rule for a function"),
         cmd("disasm",    "<path> [vaddr]",         "Disassemble at address"),
         cmd("functions", "<path>",                "List all functions"),
         cmd("decompile", "<path> [vaddr]",         "Decompile a function"),

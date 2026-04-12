@@ -232,35 +232,36 @@ const MANUAL_HELP: &str = "\
 No LLM configured — running in manual tool mode.
 
 Analysis:
-  file_info     <path>                    Binary metadata & segment table
-  hexdump       <path> [offset] [len]     Raw hex dump
-  strings       <path> [min_len]          Extract printable strings
-  disassemble   <path> [vaddr]            Disassemble (default: entry point)
-  functions     <path> [max]              List all functions
-  decompile     <path> [vaddr]            Decompile a function
-  decompile_flat <path> <base> <vaddr>    Decompile raw firmware / shellcode
-  imports       <path>                    Resolve PLT / PE imports
-  xrefs         <path> <vaddr>            Cross-references to an address
-  callgraph     <path>                    Full static call graph
-  cfg           <path> <vaddr>            Control-flow graph for a function
-  dwarf         <path>                    DWARF debug info
+  file_info       <path>                  Binary metadata & segment table
+  hexdump         <path> [offset] [len]   Raw hex dump
+  strings         <path> [min_len]        Extract printable strings
+  disassemble     <path> [vaddr]          Disassemble (default: entry point)
+  functions       <path> [max]            List all functions
+  decompile       <path> [vaddr]          Decompile a function
+  decompile_flat  <path> <base> <vaddr>   Decompile raw firmware / shellcode
+  imports         <path>                  Resolve PLT / PE imports
+  xrefs           <path> <vaddr>          Cross-references to an address
+  callgraph       <path>                  Full static call graph
+  cfg             <path> <vaddr>          Control-flow graph for a function
+  dwarf           <path>                  DWARF debug info
 
 Search & patch:
-  entropy       <path>                    Section entropy — detect packers/crypto
-  search        <path> <hex pattern>      Byte-pattern search (e.g.  E8 ?? ?? ?? ??)
-  patch         <path> <vaddr> <hex>      Patch bytes  →  writes  <file>.patched
+  entropy         <path>                  Section entropy — detect packers/crypto
+  search          <path> <hex pattern>    Byte-pattern search (e.g.  E8 ?? ?? ?? ??)
+  patch           <path> <vaddr> <hex>    Patch bytes  →  writes  <file>.patched
+  yara            <path> <vaddr> [name]   Generate a YARA rule for a function
 
 Intelligence:
-  scan          <path> [max_fns]          Vulnerability scan (top N functions)
-  explain       <path> <vaddr>            Explain a function
-  identify      <path>                    FLIRT-style library recognition
-  auto          <path> [top_n]            Full auto-analysis pass
+  scan            <path> [max_fns]        Vulnerability scan (top N functions)
+  explain         <path> <vaddr>          Explain a function
+  identify        <path>                  FLIRT-style library recognition
+  auto            <path> [top_n]          Full auto-analysis pass
 
 Diff & output:
-  diff          <path_a> <path_b>         Diff two binaries by function content
-  report        <path>                    Export HTML analysis report
-  vt            <path>                    VirusTotal hash lookup (needs VIRUSTOTAL_API_KEY)
-  pdb           <binary> <pdb_file>       Load Windows PDB symbols
+  diff            <path_a> <path_b>       Diff two binaries by function content
+  report          <path>                  Export HTML analysis report
+  vt              <path>                  VirusTotal hash lookup (needs VIRUSTOTAL_API_KEY)
+  pdb             <binary> <pdb_file>     Load Windows PDB symbols
 
 Project (persistent across sessions):
   rename        <path> <vaddr> <name>     Name a function
@@ -474,6 +475,17 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         "entropy" => {
             let path = parts.get(1).copied().unwrap_or("");
             run_tool("section_entropy", json!({"path": path}), tx);
+        }
+
+        "yara" | "yara_rule" | "generate_yara" => {
+            let path      = parts.get(1).copied().unwrap_or("");
+            let vaddr     = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let rule_name = parts.get(3).copied();
+            let args = match rule_name {
+                Some(name) => json!({"path": path, "vaddr": vaddr, "rule_name": name}),
+                None       => json!({"path": path, "vaddr": vaddr}),
+            };
+            run_tool("generate_yara_rule", args, tx);
         }
 
         other => {
