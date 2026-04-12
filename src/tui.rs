@@ -659,16 +659,51 @@ impl App {
     }
 
     /// Copy `text` to the system clipboard; update status with result.
+    /// Tries arboard first, then falls back to CLI tools (xclip, wl-copy, xsel, clip.exe).
     fn copy_to_clipboard(&mut self, text: String) {
         if text.is_empty() {
             self.status = "Nothing to copy — panel is empty".to_string();
             return;
         }
         let line_count = text.lines().count();
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-            Ok(_)  => self.status = format!("Copied {} lines to clipboard", line_count),
-            Err(e) => self.status = format!("Clipboard error: {}", e),
+
+        // Primary: arboard (works on native Linux/macOS/Windows)
+        if arboard::Clipboard::new()
+            .and_then(|mut cb| cb.set_text(text.clone()))
+            .is_ok()
+        {
+            self.status = format!("Copied {} lines to clipboard", line_count);
+            return;
         }
+
+        // Fallback: CLI clipboard tools (WSL, headless X, Wayland, etc.)
+        let tools: &[(&str, &[&str])] = &[
+            ("xclip",    &["-selection", "clipboard"]),
+            ("wl-copy",  &[]),
+            ("xsel",     &["--clipboard", "--input"]),
+            ("clip.exe", &[]),
+        ];
+        for (cmd, args) in tools {
+            use std::io::Write;
+            let ok = std::process::Command::new(cmd)
+                .args(*args)
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes());
+                    }
+                    child.wait()
+                })
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ok {
+                self.status = format!("Copied {} lines to clipboard ({})", line_count, cmd);
+                return;
+            }
+        }
+
+        self.status = "Clipboard error: no clipboard tool available (arboard, xclip, wl-copy, xsel, clip.exe)".to_string();
     }
 
     /// Build a plain-text copy of the active tab's content.
@@ -946,7 +981,12 @@ impl App {
             }
 
             // a — add analyst note (optionally anchored to cursor address)
-            KeyCode::Char('a') if self.input.is_empty() && key.modifiers.is_empty() => {
+            // Excluded from Chat tab so users can start a message with 'a'.
+            KeyCode::Char('a')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && !matches!(self.active_tab, Tab::Chat) =>
+            {
                 let addr = self.addr_at_cursor().or(self.focused_addr);
                 self.popup = Some(Popup::NoteEdit { addr });
                 self.popup_input.clear();

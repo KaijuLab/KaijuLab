@@ -127,7 +127,7 @@ impl KaijuConfig {
             let default_toml = r#"# KaijuLab configuration — ~/.kaiju/config.toml
 # All fields are optional; comment out any you don't need.
 
-# default_backend = "gemini"   # none | gemini | openai | anthropic | ollama
+# backend = "gemini"   # none | gemini | openai | anthropic | ollama
 # model           = "gemini-2.5-flash"
 
 [ui]

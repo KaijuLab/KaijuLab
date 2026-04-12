@@ -32,9 +32,11 @@ use llm::LlmBackend;
 struct Cli {
     // ── Backend selection ──────────────────────────────────────────────────────
 
-    /// LLM backend to use: none (default), gemini, openai, anthropic, ollama
-    #[arg(long, default_value = "none", value_name = "BACKEND")]
-    backend: String,
+    /// LLM backend to use: gemini, openai, anthropic, ollama, none
+    /// Defaults to the value in ~/.kaiju/config.toml, then auto-detects from env vars,
+    /// and falls back to "none" (manual mode) if nothing is configured.
+    #[arg(long, value_name = "BACKEND")]
+    backend: Option<String>,
 
     /// Model ID override (each backend has its own default)
     #[arg(long, value_name = "MODEL")]
@@ -104,9 +106,30 @@ async fn main() -> Result<()> {
 
     // Load (or create) ~/.kaiju/config.toml
     KaijuConfig::write_default_if_missing();
-    let _kaiju_cfg = KaijuConfig::load();
+    let kaiju_cfg = KaijuConfig::load();
 
-    let kind: BackendKind = cli.backend.parse()?;
+    // Backend resolution order:
+    //   1. --backend CLI flag
+    //   2. `backend` field in ~/.kaiju/config.toml
+    //   3. env-var auto-detect (GOOGLE_APPLICATION_CREDENTIALS → gemini,
+    //      ANTHROPIC_API_KEY → anthropic, OPENAI_API_KEY → openai)
+    //   4. "none" (manual mode)
+    let backend_str = cli.backend
+        .or_else(|| kaiju_cfg.backend.clone())
+        .unwrap_or_else(|| {
+            if std::env::var("GOOGLE_APPLICATION_CREDENTIALS").is_ok()
+                && std::env::var("GOOGLE_PROJECT_ID").is_ok()
+            {
+                "gemini".to_string()
+            } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+                "anthropic".to_string()
+            } else if std::env::var("OPENAI_API_KEY").is_ok() {
+                "openai".to_string()
+            } else {
+                "none".to_string()
+            }
+        });
+    let kind: BackendKind = backend_str.parse()?;
     let cfg = BackendConfig::load(
         kind,
         cli.model,
