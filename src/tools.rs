@@ -2614,6 +2614,28 @@ fn run_python(
         _ => std::env::var("KAIJU_BINARY").unwrap_or_default(),
     };
 
+    // ── Persist script next to the binary ────────────────────────────────────
+    // Saved as  <binary>.kaiju_scripts/script_NNN.py  (consistent with
+    // the .kaiju.db sidecar naming convention).  Failures are non-fatal.
+    let saved_script_path: Option<std::path::PathBuf> = (|| {
+        if effective_binary.is_empty() {
+            return None;
+        }
+        let bin = std::path::Path::new(&effective_binary);
+        let stem = bin.file_name()?;
+        let scripts_dir = bin.parent().unwrap_or(std::path::Path::new("."))
+            .join(format!("{}.kaiju_scripts", stem.to_string_lossy()));
+        std::fs::create_dir_all(&scripts_dir).ok()?;
+        // Auto-increment: count existing .py files in the dir
+        let n = std::fs::read_dir(&scripts_dir).ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("py"))
+            .count();
+        let dest = scripts_dir.join(format!("script_{:03}.py", n + 1));
+        std::fs::write(&dest, script.as_bytes()).ok()?;
+        Some(dest)
+    })();
+
     // ── Build child command ───────────────────────────────────────────────────
     let mut cmd = Command::new("python3");
     cmd.arg(&script_path)
@@ -2748,9 +2770,13 @@ fn run_python(
     } else {
         String::new()
     };
+    let saved_hint = match &saved_script_path {
+        Some(p) => format!("  saved={}", p.display()),
+        None => String::new(),
+    };
     let header = format!(
-        "run_python — {}{}  timeout: {}s\n{}\n",
-        exit_label, binary_hint, timeout_secs, sep,
+        "run_python — {}{}{}  timeout: {}s\n{}\n",
+        exit_label, binary_hint, saved_hint, timeout_secs, sep,
     );
 
     let mut body = String::new();
