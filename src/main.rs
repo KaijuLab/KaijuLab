@@ -1,4 +1,5 @@
 mod agent;
+pub mod arch;
 mod config;
 pub mod decompiler;
 pub mod dwarf;

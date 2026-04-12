@@ -1687,9 +1687,10 @@ fn render_panel_split(f: &mut Frame, area: Rect, app: &App, tab: Tab, focused: b
         None
     };
 
+    let arch_str = app.binary_arch.as_deref();
     let lines: Vec<Line> = match tab {
         Tab::Disasm => raw.iter().map(|l| {
-            let line = highlight_disasm(l);
+            let line = highlight_disasm_arch(l, arch_str);
             if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
                 apply_focus_highlight(line)
             } else { line }
@@ -2044,11 +2045,12 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         .filter(|p| !p.is_empty())
         .map(|p| p.to_lowercase());
 
+    let arch_str = app.binary_arch.as_deref();
     let lines: Vec<Line> = match tab {
         Tab::Disasm => raw
             .iter()
             .map(|l| {
-                let line = highlight_disasm(l);
+                let line = highlight_disasm_arch(l, arch_str);
                 let line = if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
                     apply_focus_highlight(line)
                 } else {
@@ -2758,7 +2760,7 @@ fn apply_search_highlight(line: Line<'static>) -> Line<'static> {
 /// Expected format from our tool:
 ///   `  AAAAAAAAAAAAAAAA  BB BB BB…             MNEMONIC  OPERANDS`
 /// where A = 16 hex address digits, B = instruction bytes (≤24 chars wide).
-fn highlight_disasm(line: &str) -> Line<'static> {
+fn highlight_disasm_arch(line: &str, arch: Option<&str>) -> Line<'static> {
     // Header / empty / error lines
     if line.trim().is_empty() {
         return Line::raw("");
@@ -2831,7 +2833,7 @@ fn highlight_disasm(line: &str) -> Line<'static> {
 
     if !operands_part.is_empty() {
         spans.push(Span::raw("  "));
-        spans.extend(highlight_operands(operands_part));
+        spans.extend(highlight_operands_arch(operands_part, arch));
     }
 
     // Inline comment — dark gray, slightly dimmed
@@ -3009,8 +3011,16 @@ const SIZE_KEYWORDS: &[&str] = &[
     "byte", "word", "dword", "qword", "xmmword", "ymmword", "ptr", "short", "near", "far",
 ];
 
-fn is_register(s: &str) -> bool {
-    X86_REGS.contains(&s.to_ascii_lowercase().as_str())
+fn is_register_for_arch(s: &str, arch: Option<&str>) -> bool {
+    let lower = s.to_ascii_lowercase();
+    let sl = lower.as_str();
+    if X86_REGS.contains(&sl) { return true; }
+    if let Some(a) = arch {
+        if let Some(extra) = crate::arch::regs_for_arch(a) {
+            return extra.contains(&sl);
+        }
+    }
+    false
 }
 
 fn is_immediate(s: &str) -> bool {
@@ -3022,7 +3032,7 @@ fn is_immediate(s: &str) -> bool {
 }
 
 /// Color each operand token in a comma-separated operand list.
-fn highlight_operands(operands: &str) -> Vec<Span<'static>> {
+fn highlight_operands_arch(operands: &str, arch: Option<&str>) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let parts: Vec<&str> = operands.split(", ").collect();
 
@@ -3034,13 +3044,13 @@ fn highlight_operands(operands: &str) -> Vec<Span<'static>> {
         let p = part.trim();
         let lower = p.to_ascii_lowercase();
 
-        if is_register(p) {
+        if is_register_for_arch(p, arch) {
             spans.push(Span::styled(p.to_string(), Style::new().fg(Color::Green)));
         } else if is_immediate(p) {
             spans.push(Span::styled(p.to_string(), Style::new().fg(Color::Magenta)));
         } else if p.contains('[') {
             // Memory reference, e.g. "qword ptr [rsp+10h]"
-            spans.extend(highlight_mem_ref(p));
+            spans.extend(highlight_mem_ref_arch(p, arch));
         } else if SIZE_KEYWORDS.contains(&lower.as_str()) {
             spans.push(Span::styled(p.to_string(), Style::new().fg(Color::DarkGray)));
         } else {
@@ -3052,7 +3062,7 @@ fn highlight_operands(operands: &str) -> Vec<Span<'static>> {
 }
 
 /// Color a memory reference like `qword ptr [rbp-8]`.
-fn highlight_mem_ref(s: &str) -> Vec<Span<'static>> {
+fn highlight_mem_ref_arch(s: &str, arch: Option<&str>) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if let (Some(open), Some(close)) = (s.find('['), s.rfind(']')) {
         let prefix = s[..open].trim();
@@ -3065,7 +3075,7 @@ fn highlight_mem_ref(s: &str) -> Vec<Span<'static>> {
         spans.push(Span::styled("[", Style::new().fg(Color::White)));
 
         // Tokenise inner expression: register+immediate, e.g. "rbp-8" or "rip+0x12345"
-        spans.extend(highlight_mem_inner(inner));
+        spans.extend(highlight_mem_inner_arch(inner, arch));
 
         spans.push(Span::styled("]", Style::new().fg(Color::White)));
         if !suffix.is_empty() {
@@ -3077,7 +3087,7 @@ fn highlight_mem_ref(s: &str) -> Vec<Span<'static>> {
     spans
 }
 
-fn highlight_mem_inner(s: &str) -> Vec<Span<'static>> {
+fn highlight_mem_inner_arch(s: &str, arch: Option<&str>) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     // Split on + and -, keeping the delimiter
     let mut cur = String::new();
@@ -3089,7 +3099,7 @@ fn highlight_mem_inner(s: &str) -> Vec<Span<'static>> {
                 spans.push(Span::styled(delim.clone(), Style::new().fg(Color::DarkGray)));
                 delim.clear();
             }
-            if is_register(&token) {
+            if is_register_for_arch(&token, arch) {
                 spans.push(Span::styled(token, Style::new().fg(Color::Green)));
             } else {
                 spans.push(Span::styled(token, Style::new().fg(Color::Magenta)));
@@ -3105,7 +3115,7 @@ fn highlight_mem_inner(s: &str) -> Vec<Span<'static>> {
     }
     if !cur.is_empty() {
         let token = cur.trim().to_string();
-        if is_register(&token) {
+        if is_register_for_arch(&token, arch) {
             spans.push(Span::styled(token, Style::new().fg(Color::Green)));
         } else {
             spans.push(Span::styled(token, Style::new().fg(Color::Magenta)));

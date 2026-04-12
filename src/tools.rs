@@ -541,12 +541,13 @@ fn strings_extract(path: &str, min_len: usize, max_results: usize, section: Opti
 
 // ─── Capstone disassembler (non-x86 architectures) ───────────────────────────
 
-fn disassemble_capstone(
+fn disassemble_capstone_with_project(
     data: &[u8],
     arch: Architecture,
     offset: Option<usize>,
     length: usize,
     vaddr_hint: Option<u64>,
+    project: Option<&Project>,
 ) -> ToolResult {
     use capstone::prelude::*;
     use capstone::{arch, Endian};
@@ -616,6 +617,10 @@ fn disassemble_capstone(
         Err(e) => return ToolResult::err(format!("Disassembly failed: {}", e)),
     };
 
+    let arch_class = crate::arch::ArchClass::from_object(
+        object::File::parse(data).map(|f| f.architecture()).unwrap_or(arch)
+    );
+
     let mut out = format!(
         "Disassembly ({:?}, file_offset=0x{:x}, ip=0x{:x}):\n\n",
         arch, file_offset, ip
@@ -626,12 +631,39 @@ fn disassemble_capstone(
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
+
+        let mnemonic = insn.mnemonic().unwrap_or("");
+        let op_str   = insn.op_str().unwrap_or("");
+
+        // Resolve branch target name from project
+        let target_name: Option<String> = project.and_then(|p| {
+            if crate::arch::is_direct_call(arch_class, mnemonic, op_str)
+                || crate::arch::is_direct_branch(arch_class, mnemonic, op_str)
+            {
+                crate::arch::parse_branch_target(op_str)
+                    .and_then(|tgt| p.get_name(tgt))
+            } else {
+                None
+            }
+        });
+
+        // Inline address comment from project
+        let addr_comment = project.and_then(|p| p.get_comment(insn.address()));
+
+        let annotation = match (&target_name, &addr_comment) {
+            (Some(name), Some(cmt)) => format!("  ; {} | {}", name, cmt),
+            (Some(name), None)       => format!("  ; {}", name),
+            (None, Some(cmt))        => format!("  ; {}", cmt),
+            (None, None)             => String::new(),
+        };
+
         out.push_str(&format!(
-            "  {:016x}  {:<24}  {} {}\n",
+            "  {:016x}  {:<24}  {} {}{}\n",
             insn.address(),
             bytes,
-            insn.mnemonic().unwrap_or(""),
-            insn.op_str().unwrap_or(""),
+            mnemonic,
+            op_str,
+            annotation,
         ));
     }
 
@@ -659,7 +691,8 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
     );
 
     if !is_x86 {
-        return disassemble_capstone(&data, obj_arch.unwrap(), offset, length, vaddr_hint);
+        let proj = Project::load_for(path);
+        return disassemble_capstone_with_project(&data, obj_arch.unwrap(), offset, length, vaddr_hint, Some(&proj));
     }
 
     let bitness: u32 = match obj_arch {
@@ -1086,35 +1119,63 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
 
-    // Only x86/x86-64 supported (iced-x86 is x86-only)
-    let bitness: u32 = match obj.architecture() {
-        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
-        Architecture::I386 => 32,
-        other => return ToolResult::err(format!(
-            "xrefs_to only supports x86/x86-64 (got {:?})", other
-        )),
-    };
-
-    let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
-        Some(s) => s,
-        None => return ToolResult::err("No .text section found"),
-    };
-    let text_vaddr = text_sec.address();
-    let text_bytes = match text_sec.data() {
-        Ok(d) => d,
-        Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
-    };
-
-    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
-    let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
+    let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
     let mut callers: Vec<u64> = Vec::new();
 
-    for instr in &mut decoder {
-        if matches!(instr.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) {
-            // Direct near calls have a concrete target in near_branch64()
-            let tgt = instr.near_branch64();
-            if tgt == target_vaddr {
-                callers.push(instr.ip());
+    if arch_class.is_x86() {
+        // Fast path: use iced-x86 for x86/x86-64
+        let bitness: u32 = match obj.architecture() {
+            Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+            _ => 32,
+        };
+        let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
+            Some(s) => s,
+            None => return ToolResult::err("No .text section found"),
+        };
+        let text_vaddr = text_sec.address();
+        let text_bytes = match text_sec.data() {
+            Ok(d) => d,
+            Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
+        };
+        use iced_x86::{Decoder, DecoderOptions, Mnemonic};
+        let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
+        for instr in &mut decoder {
+            if matches!(instr.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) {
+                let tgt = instr.near_branch64();
+                if tgt == target_vaddr {
+                    callers.push(instr.ip());
+                }
+            }
+        }
+    } else {
+        // Generic path: use capstone for all other architectures
+        let cs = match crate::arch::build_capstone(arch_class) {
+            Ok(c) => c,
+            Err(e) => return ToolResult::err(format!("Capstone init failed: {}", e)),
+        };
+        // Scan all executable sections
+        for sec in obj.sections() {
+            let sec_name = sec.name().unwrap_or("");
+            if !crate::arch::is_code_section(sec_name) { continue; }
+            let sec_vaddr = sec.address();
+            let sec_bytes = match sec.data() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
+                for insn in insns.as_ref() {
+                    let mnemonic = insn.mnemonic().unwrap_or("");
+                    let op_str   = insn.op_str().unwrap_or("");
+                    if crate::arch::is_direct_call(arch_class, mnemonic, op_str)
+                        || crate::arch::is_direct_branch(arch_class, mnemonic, op_str)
+                    {
+                        if let Some(tgt) = crate::arch::parse_branch_target(op_str) {
+                            if tgt == target_vaddr {
+                                callers.push(insn.address());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1580,13 +1641,8 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
         Ok(f) => f,
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
-    let bitness: u32 = match obj.architecture() {
-        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
-        Architecture::I386 => 32,
-        other => return ToolResult::err(format!(
-            "call_graph only supports x86/x86-64 (got {:?})", other
-        )),
-    };
+
+    let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
 
     // Build name map: vaddr → name (project renames take precedence)
     let project = Project::load_for(path);
@@ -1604,22 +1660,6 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
             .unwrap_or_else(|| format!("0x{:x}", addr))
     };
 
-    let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
-        Some(s) => s,
-        None    => return ToolResult::err("No .text section found"),
-    };
-    let text_vaddr = text_sec.address();
-    let text_bytes = match text_sec.data() {
-        Ok(d) => d,
-        Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
-    };
-
-    use iced_x86::{Decoder, DecoderOptions, FlowControl};
-    let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
-
-    // caller_fn → set of callee targets
-    let mut edges: HashMap<u64, HashSet<u64>> = HashMap::new();
-
     // Symbol address → (addr, size) sorted list for caller lookup
     let mut sym_ranges: Vec<(u64, u64)> = obj
         .symbols()
@@ -1629,21 +1669,67 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
     sym_ranges.sort_by_key(|(a, _)| *a);
 
     let find_fn = |addr: u64| -> u64 {
-        // Binary search for the function containing addr
         for &(fn_addr, fn_size) in sym_ranges.iter().rev() {
             if addr >= fn_addr && addr < fn_addr + fn_size {
                 return fn_addr;
             }
         }
-        addr // treat as its own function if not found
+        addr
     };
 
-    for instr in &mut decoder {
-        if matches!(instr.flow_control(), FlowControl::Call) {
-            let tgt = instr.near_branch64();
-            if tgt != 0 {
-                let caller = find_fn(instr.ip());
-                edges.entry(caller).or_default().insert(tgt);
+    // caller_fn → set of callee targets
+    let mut edges: HashMap<u64, HashSet<u64>> = HashMap::new();
+
+    if arch_class.is_x86() {
+        let bitness: u32 = match obj.architecture() {
+            Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+            _ => 32,
+        };
+        let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
+            Some(s) => s,
+            None    => return ToolResult::err("No .text section found"),
+        };
+        let text_vaddr = text_sec.address();
+        let text_bytes = match text_sec.data() {
+            Ok(d) => d,
+            Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
+        };
+        use iced_x86::{Decoder, DecoderOptions, FlowControl};
+        let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
+        for instr in &mut decoder {
+            if matches!(instr.flow_control(), FlowControl::Call) {
+                let tgt = instr.near_branch64();
+                if tgt != 0 {
+                    let caller = find_fn(instr.ip());
+                    edges.entry(caller).or_default().insert(tgt);
+                }
+            }
+        }
+    } else {
+        // Generic capstone path for non-x86 architectures
+        let cs = match crate::arch::build_capstone(arch_class) {
+            Ok(c) => c,
+            Err(e) => return ToolResult::err(format!("Capstone init failed: {}", e)),
+        };
+        for sec in obj.sections() {
+            let sec_name = sec.name().unwrap_or("");
+            if !crate::arch::is_code_section(sec_name) { continue; }
+            let sec_vaddr = sec.address();
+            let sec_bytes = match sec.data() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
+                for insn in insns.as_ref() {
+                    let mnemonic = insn.mnemonic().unwrap_or("");
+                    let op_str   = insn.op_str().unwrap_or("");
+                    if crate::arch::is_direct_call(arch_class, mnemonic, op_str) {
+                        if let Some(tgt) = crate::arch::parse_branch_target(op_str) {
+                            let caller = find_fn(insn.address());
+                            edges.entry(caller).or_default().insert(tgt);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1680,13 +1766,8 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
         Ok(f) => f,
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
-    let bitness: u32 = match obj.architecture() {
-        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
-        Architecture::I386 => 32,
-        other => return ToolResult::err(format!("cfg_view requires x86/x86-64 (got {:?})", other)),
-    };
 
-    use iced_x86::{Decoder, DecoderOptions, FlowControl};
+    let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
 
     struct Block { start: u64, end: u64, instr_count: usize, succs: Vec<u64> }
 
@@ -1694,52 +1775,113 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
     let mut visited:  HashSet<u64> = HashSet::new();
     let mut blocks:   Vec<Block> = Vec::new();
 
-    while let Some(addr) = to_visit.pop() {
-        if !visited.insert(addr) { continue; }
-
-        let file_off = match vaddr_to_file_offset(&data, addr) {
-            Some(o) => o,
-            None    => continue,
+    if arch_class.is_x86() {
+        use iced_x86::{Decoder, DecoderOptions, FlowControl};
+        let bitness: u32 = match obj.architecture() {
+            Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+            _ => 32,
         };
-        if file_off >= data.len() { continue; }
 
-        let slice = &data[file_off..data.len().min(file_off + 1024)];
-        let mut dec = Decoder::with_ip(bitness, slice, addr, DecoderOptions::NONE);
-        let mut count = 0usize;
-        let mut last_ip = addr;
-        let mut succs: Vec<u64> = Vec::new();
+        while let Some(addr) = to_visit.pop() {
+            if !visited.insert(addr) { continue; }
 
-        for instr in &mut dec {
-            if instr.is_invalid() { break; }
-            last_ip = instr.ip();
-            count  += 1;
-            match instr.flow_control() {
-                FlowControl::Next | FlowControl::Call | FlowControl::IndirectCall => {
-                    // continue block
-                }
-                FlowControl::UnconditionalBranch => {
-                    let tgt = instr.near_branch64();
-                    if tgt != 0 && visited.get(&tgt).is_none() {
-                        to_visit.push(tgt);
-                        succs.push(tgt);
+            let file_off = match vaddr_to_file_offset(&data, addr) {
+                Some(o) => o,
+                None    => continue,
+            };
+            if file_off >= data.len() { continue; }
+
+            let slice = &data[file_off..data.len().min(file_off + 1024)];
+            let mut dec = Decoder::with_ip(bitness, slice, addr, DecoderOptions::NONE);
+            let mut count = 0usize;
+            let mut last_ip = addr;
+            let mut succs: Vec<u64> = Vec::new();
+
+            for instr in &mut dec {
+                if instr.is_invalid() { break; }
+                last_ip = instr.ip();
+                count  += 1;
+                match instr.flow_control() {
+                    FlowControl::Next | FlowControl::Call | FlowControl::IndirectCall => {}
+                    FlowControl::UnconditionalBranch => {
+                        let tgt = instr.near_branch64();
+                        if tgt != 0 && !visited.contains(&tgt) {
+                            to_visit.push(tgt);
+                            succs.push(tgt);
+                        }
+                        break;
                     }
-                    break;
+                    FlowControl::ConditionalBranch => {
+                        let tgt  = instr.near_branch64();
+                        let fall = instr.next_ip();
+                        if tgt  != 0 { to_visit.push(tgt);  succs.push(tgt);  }
+                        if fall != 0 { to_visit.push(fall); succs.push(fall); }
+                        break;
+                    }
+                    _ => { break; }
                 }
-                FlowControl::ConditionalBranch => {
-                    let tgt  = instr.near_branch64();
-                    let fall = instr.next_ip();
-                    if tgt  != 0 { to_visit.push(tgt);  succs.push(tgt);  }
-                    if fall != 0 { to_visit.push(fall); succs.push(fall); }
-                    break;
-                }
-                FlowControl::Return | FlowControl::Exception
-                | FlowControl::XbeginXabortXend | FlowControl::IndirectBranch => { break; }
-                _ => { break; }
+                if count >= 200 { break; }
             }
-            if count >= 200 { break; } // guard against infinite loops
-        }
 
-        blocks.push(Block { start: addr, end: last_ip, instr_count: count, succs });
+            blocks.push(Block { start: addr, end: last_ip, instr_count: count, succs });
+        }
+    } else {
+        // Capstone path for non-x86
+        let cs = match crate::arch::build_capstone(arch_class) {
+            Ok(c) => c,
+            Err(e) => return ToolResult::err(format!("Capstone init failed: {}", e)),
+        };
+        let align = arch_class.insn_align().max(1) as u64;
+
+        while let Some(addr) = to_visit.pop() {
+            if !visited.insert(addr) { continue; }
+
+            let file_off = match vaddr_to_file_offset(&data, addr) {
+                Some(o) => o,
+                None    => continue,
+            };
+            if file_off >= data.len() { continue; }
+
+            let slice = &data[file_off..data.len().min(file_off + 1024)];
+            let mut count = 0usize;
+            let mut last_ip = addr;
+            let mut succs: Vec<u64> = Vec::new();
+
+            if let Ok(insns) = cs.disasm_all(slice, addr) {
+                for insn in insns.as_ref() {
+                    let mnemonic = insn.mnemonic().unwrap_or("");
+                    let op_str   = insn.op_str().unwrap_or("");
+                    last_ip = insn.address();
+                    count  += 1;
+
+                    if crate::arch::is_return(arch_class, mnemonic, op_str) {
+                        break;
+                    } else if crate::arch::is_direct_branch(arch_class, mnemonic, op_str) {
+                        if let Some(tgt) = crate::arch::parse_branch_target(op_str) {
+                            if !visited.contains(&tgt) {
+                                to_visit.push(tgt);
+                                succs.push(tgt);
+                            }
+                        }
+                        // For conditional branches also follow fall-through
+                        if !crate::arch::is_direct_call(arch_class, mnemonic, op_str) {
+                            let fall = insn.address() + insn.bytes().len() as u64;
+                            let fall = (fall + align - 1) & !(align - 1);
+                            if !visited.contains(&fall) {
+                                to_visit.push(fall);
+                                succs.push(fall);
+                            }
+                        }
+                        break;
+                    } else if crate::arch::is_direct_call(arch_class, mnemonic, op_str) {
+                        // calls don't end a block
+                    }
+                    if count >= 200 { break; }
+                }
+            }
+
+            blocks.push(Block { start: addr, end: last_ip, instr_count: count, succs });
+        }
     }
 
     if blocks.is_empty() {
@@ -1949,6 +2091,14 @@ fn identify_library_functions(path: &str) -> ToolResult {
         None => return ToolResult::err("No .text section found"),
     };
 
+    let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
+
+    // Pick the right signature table for the target architecture
+    let sigs: &[(&str, &[u8], usize)] = match arch_class {
+        crate::arch::ArchClass::Arm64 => crate::arch::AARCH64_LIB_SIGS,
+        _ => LIB_SIGS,
+    };
+
     let mut project = Project::load_for(path);
     let mut matches: Vec<(u64, &str)> = Vec::new();
 
@@ -1961,23 +2111,41 @@ fn identify_library_functions(path: &str) -> ToolResult {
 
     // Also scan for function prologues if stripped
     if candidates.is_empty() {
+        let step = arch_class.insn_align().max(1);
         let len = text_bytes.len();
         let mut i = 0;
-        while i + 4 <= len {
-            let b = &text_bytes[i..];
-            if (b[0]==0xf3&&b[1]==0x0f&&b[2]==0x1e&&b[3]==0xfa)
-               || (b[0]==0x55&&b[1]==0x48&&b[2]==0x89&&b[3]==0xe5)
-            {
-                candidates.push(text_vaddr + i as u64);
+        if arch_class.is_x86() {
+            while i + 4 <= len {
+                let b = &text_bytes[i..];
+                if (b[0]==0xf3&&b[1]==0x0f&&b[2]==0x1e&&b[3]==0xfa)
+                   || (b[0]==0x55&&b[1]==0x48&&b[2]==0x89&&b[3]==0xe5)
+                {
+                    candidates.push(text_vaddr + i as u64);
+                }
+                i += 1;
             }
-            i += 1;
+        } else {
+            // Use arch-specific prologue patterns from arch module
+            let prologue_patterns: &[([u8; 4], [u8; 4])] = match arch_class {
+                crate::arch::ArchClass::Arm64   => crate::arch::AARCH64_PROLOGUES,
+                crate::arch::ArchClass::Arm     => crate::arch::ARM32_PROLOGUES,
+                crate::arch::ArchClass::Mips { .. } => crate::arch::MIPS_PROLOGUES,
+                crate::arch::ArchClass::RiscV { .. } => crate::arch::RISCV_PROLOGUES,
+                _ => &[],
+            };
+            while i + 4 <= len {
+                if crate::arch::matches_prologue(&text_bytes[i..], prologue_patterns) {
+                    candidates.push(text_vaddr + i as u64);
+                }
+                i += step;
+            }
         }
     }
 
     for &fn_vaddr in &candidates {
         if let Some(file_off) = vaddr_to_file_offset(&data, fn_vaddr) {
             let fn_slice = &data[file_off..data.len().min(file_off + 32)];
-            for &(name, pattern, len) in LIB_SIGS {
+            for &(name, pattern, len) in sigs {
                 if matches_sig(fn_slice, pattern, len) {
                     matches.push((fn_vaddr, name));
                     project.rename(fn_vaddr, name.to_string());
@@ -4142,7 +4310,7 @@ mod tests {
         let bin = temp_bin();
         let r = dispatch("load_project", &json!({"path": bin}));
         assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains(".kaiju.json"), "should mention sidecar path:\n{}", r.output);
+        assert!(r.output.contains(".kaiju.db"), "should mention sidecar path:\n{}", r.output);
     }
 
     // ── hexdump ──────────────────────────────────────────────────────────────
