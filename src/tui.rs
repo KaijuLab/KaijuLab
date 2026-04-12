@@ -68,6 +68,33 @@ impl Tab {
     }
 }
 
+// ─── Navigation history ───────────────────────────────────────────────────────
+
+/// A saved position in the TUI (tab + scroll offset).
+#[derive(Clone, Debug)]
+pub struct NavState {
+    pub tab:    Tab,
+    pub scroll: u16,
+}
+
+// ─── Bookmarks ────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct Bookmark {
+    pub vaddr: u64,
+    pub label: String,
+}
+
+// ─── Popup overlay ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub enum Popup {
+    /// Session bookmarks list.
+    Bookmarks,
+    /// Cross-references to an address (lines from xrefs_to).
+    Xref { title: String, lines: Vec<String> },
+}
+
 // ─── Context entries (mirrors agent::ContextEntry) ────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -125,6 +152,18 @@ pub struct App {
     pub search_pattern: Option<String>,
     /// Which match we are currently sitting on (0-based index into matches list).
     pub search_hit_idx: usize,
+    /// Back-navigation stack (positions we can return to with `[`).
+    pub nav_back: Vec<NavState>,
+    /// Forward-navigation stack (positions we can revisit with `]`).
+    pub nav_forward: Vec<NavState>,
+    /// Line cursor position in each panel (0-based line index).
+    pub panel_cursor: [usize; 7],
+    /// Session bookmarks (vaddr + user label).
+    pub bookmarks: Vec<Bookmark>,
+    /// Active popup overlay, if any.
+    pub popup: Option<Popup>,
+    /// Detected binary architecture string (e.g. "x86_64", "aarch64").
+    pub binary_arch: Option<String>,
 }
 
 
@@ -158,9 +197,147 @@ impl App {
             fn_vuln_scores: std::collections::HashMap::new(),
             search_pattern: None,
             search_hit_idx: 0,
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
+            panel_cursor: [0usize; 7],
+            bookmarks: Vec::new(),
+            popup: None,
+            binary_arch: None,
         };
         app.chat.push(ChatMsg::Welcome);
         app
+    }
+
+    // ─── Navigation helpers ──────────────────────────────────────────────────
+
+    /// Save the current position onto the back-stack before jumping elsewhere.
+    fn nav_push(&mut self) {
+        let state = NavState {
+            tab:    self.active_tab,
+            scroll: self.scroll[self.active_tab as usize],
+        };
+        self.nav_back.push(state);
+        self.nav_forward.clear(); // branching clears forward history
+    }
+
+    /// Jump back one step in navigation history.
+    fn nav_go_back(&mut self) {
+        if let Some(prev) = self.nav_back.pop() {
+            let current = NavState {
+                tab:    self.active_tab,
+                scroll: self.scroll[self.active_tab as usize],
+            };
+            self.nav_forward.push(current);
+            self.active_tab = prev.tab;
+            self.scroll[prev.tab as usize] = prev.scroll;
+            self.tab_dirty[prev.tab as usize] = false;
+            self.status = format!("← back to {:?}", prev.tab);
+        } else {
+            self.status = "Already at earliest position".to_string();
+        }
+    }
+
+    /// Jump forward one step in navigation history.
+    fn nav_go_forward(&mut self) {
+        if let Some(next) = self.nav_forward.pop() {
+            let current = NavState {
+                tab:    self.active_tab,
+                scroll: self.scroll[self.active_tab as usize],
+            };
+            self.nav_back.push(current);
+            self.active_tab = next.tab;
+            self.scroll[next.tab as usize] = next.scroll;
+            self.tab_dirty[next.tab as usize] = false;
+            self.status = format!("→ forward to {:?}", next.tab);
+        } else {
+            self.status = "Already at latest position".to_string();
+        }
+    }
+
+    // ─── Panel cursor helpers ────────────────────────────────────────────────
+
+    /// Move the line cursor in the active panel by `delta` (clamped to bounds).
+    fn move_panel_cursor(&mut self, delta: i32) {
+        let tab = self.active_tab;
+        if matches!(tab, Tab::Chat | Tab::Context) { return; }
+        let len = self.tab_lines[tab as usize].len();
+        if len == 0 { return; }
+        let cur = self.panel_cursor[tab as usize] as i32;
+        let new = (cur + delta).clamp(0, (len as i32) - 1) as usize;
+        self.panel_cursor[tab as usize] = new;
+        // Scroll the panel to keep the cursor visible
+        let scroll = &mut self.scroll[tab as usize];
+        // scroll is "lines from bottom"; we need the line visible in the window.
+        // Convert: visible_line = total - scroll - visible_height
+        // Simple heuristic: ensure scroll puts cursor near the middle.
+        let total = len as u16;
+        let cur16 = new as u16;
+        // from_bottom = total - cursor - 1 (cursor at very bottom)
+        // Clamp so cursor stays in view: if cursor > total - scroll, shrink scroll
+        let from_bottom = total.saturating_sub(cur16 + 3);
+        *scroll = (*scroll).min(from_bottom); // don't let cursor go above visible area
+        if total.saturating_sub(*scroll) <= cur16 {
+            *scroll = from_bottom; // scroll up to show cursor
+        }
+    }
+
+    /// Extract a virtual address from the line at the current panel cursor, if any.
+    fn addr_at_cursor(&self) -> Option<u64> {
+        let tab = self.active_tab;
+        if matches!(tab, Tab::Chat | Tab::Context) { return None; }
+        let line = self.tab_lines[tab as usize].get(self.panel_cursor[tab as usize])?;
+        // Try to parse the first hex token that looks like an address.
+        for token in line.split_whitespace() {
+            let stripped = token.trim_start_matches("0x").trim_start_matches("0X");
+            if stripped.len() >= 4 && stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(addr) = u64::from_str_radix(stripped, 16) {
+                    return Some(addr);
+                }
+            }
+        }
+        None
+    }
+
+    /// Bookmark the currently focused address (or cursor address).
+    fn bookmark_current(&mut self) {
+        let vaddr = self.focused_addr.or_else(|| self.addr_at_cursor());
+        if let Some(addr) = vaddr {
+            // Avoid duplicates
+            if self.bookmarks.iter().any(|b| b.vaddr == addr) {
+                self.status = format!("Already bookmarked: 0x{:x}", addr);
+                return;
+            }
+            let label = format!("0x{:x}", addr);
+            self.bookmarks.push(Bookmark { vaddr: addr, label });
+            self.status = format!("Bookmarked 0x{:x} ({} total)", addr, self.bookmarks.len());
+        } else {
+            self.status = "No address to bookmark — navigate to an address first".to_string();
+        }
+    }
+
+    /// Jump to a bookmarked address by index.
+    fn jump_to_bookmark(&mut self, idx: usize) {
+        if let Some(bm) = self.bookmarks.get(idx).cloned() {
+            self.nav_push();
+            self.goto_address(bm.vaddr);
+            self.popup = None;
+        }
+    }
+
+    /// Trigger an xref popup for the address at the current cursor / focused addr.
+    fn show_xref_popup(&mut self) {
+        let vaddr = self.addr_at_cursor().or(self.focused_addr);
+        if let Some(addr) = vaddr {
+            let args = serde_json::json!({ "vaddr": addr });
+            let result = crate::tools::dispatch("xrefs_to", &args);
+            let lines: Vec<String> = result.output.lines().map(|l| l.to_string()).collect();
+            self.popup = Some(Popup::Xref {
+                title: format!("XRefs to 0x{:x}", addr),
+                lines,
+            });
+        } else {
+            self.status = "No address at cursor — navigate to an address first".to_string();
+        }
     }
 
     pub fn apply_event(&mut self, ev: AgentEvent) {
@@ -181,9 +358,27 @@ impl App {
                 self.chat.push(ChatMsg::ToolResult { name: name.clone(), lines: lines.clone() });
                 // Populate dedicated tab
                 if let Some(tab) = Tab::from_tool(&name) {
-                    self.tab_lines[tab as usize] = lines;
+                    self.tab_lines[tab as usize] = lines.clone();
                     self.scroll[tab as usize] = 0;
+                    self.panel_cursor[tab as usize] = 0;
                     self.tab_dirty[tab as usize] = true;
+                }
+                // Sniff architecture from file_info output
+                if name == "file_info" {
+                    for line in &lines {
+                        let l = line.to_lowercase();
+                        if l.contains("x86_64") || l.contains("amd64") || l.contains("x86-64") {
+                            self.binary_arch = Some("x86_64".to_string());
+                        } else if l.contains("aarch64") || l.contains("arm64") {
+                            self.binary_arch = Some("aarch64".to_string());
+                        } else if l.contains("arm") {
+                            self.binary_arch = Some("arm".to_string());
+                        } else if l.contains("mips") {
+                            self.binary_arch = Some("mips".to_string());
+                        } else if l.contains("riscv") || l.contains("risc-v") {
+                            self.binary_arch = Some("riscv".to_string());
+                        }
+                    }
                 }
                 self.scroll[Tab::Chat as usize] = 0;
                 self.status = format!("{} done", name);
@@ -450,7 +645,12 @@ impl App {
                 None
             }
 
-            // Esc — clear active search
+            // Esc — dismiss popup first, then clear search
+            KeyCode::Esc if self.popup.is_some() => {
+                self.popup = None;
+                self.status = "Popup closed".to_string();
+                None
+            }
             KeyCode::Esc if self.search_pattern.is_some() => {
                 self.search_pattern = None;
                 self.status = "Search cleared".to_string();
@@ -461,6 +661,59 @@ impl App {
             KeyCode::Char('y') if self.input.is_empty() && key.modifiers.is_empty() => {
                 let text = self.copyable_content();
                 self.copy_to_clipboard(text);
+                None
+            }
+
+            // [ / ] — back / forward navigation
+            KeyCode::Char('[') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.nav_go_back();
+                None
+            }
+            KeyCode::Char(']') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.nav_go_forward();
+                None
+            }
+
+            // j / k — line cursor down / up in panels
+            KeyCode::Char('j') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.move_panel_cursor(1);
+                None
+            }
+            KeyCode::Char('k') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.move_panel_cursor(-1);
+                None
+            }
+
+            // m — bookmark current address
+            KeyCode::Char('m') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.bookmark_current();
+                None
+            }
+            // B — toggle bookmark list popup
+            KeyCode::Char('B') if self.input.is_empty()
+                && key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if matches!(self.popup, Some(Popup::Bookmarks)) {
+                    self.popup = None;
+                } else {
+                    self.popup = Some(Popup::Bookmarks);
+                }
+                None
+            }
+
+            // x — xref popup for address at cursor / focused addr
+            KeyCode::Char('x') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.show_xref_popup();
+                None
+            }
+
+            // 0-9 in bookmark popup — jump to bookmark by index
+            KeyCode::Char(c @ '0'..='9')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && matches!(self.popup, Some(Popup::Bookmarks)) =>
+            {
+                let idx = (c as usize) - ('0' as usize);
+                self.jump_to_bookmark(idx);
                 None
             }
 
@@ -511,8 +764,28 @@ impl App {
                 None
             }
 
-            // Submit
+            // Submit / go-to-definition
             KeyCode::Enter => {
+                // Go-to-definition: Enter with empty input while cursor is in a panel
+                if self.input.is_empty()
+                    && !matches!(self.active_tab, Tab::Chat | Tab::Context)
+                {
+                    if let Some(addr) = self.addr_at_cursor() {
+                        self.nav_push();
+                        self.goto_address(addr);
+                        return None;
+                    }
+                    return None;
+                }
+                // Bookmark popup: Enter selects bookmark at cursor line
+                if self.input.is_empty() {
+                    if let Some(Popup::Bookmarks) = &self.popup {
+                        let idx = self.panel_cursor[self.active_tab as usize];
+                        self.jump_to_bookmark(idx);
+                        return None;
+                    }
+                }
+
                 let msg = self.input.trim().to_string();
                 if msg.is_empty() {
                     return None;
@@ -741,6 +1014,10 @@ fn render(f: &mut Frame, app: &mut App) {
     render_content(f, chunks[2], app);
     render_statusbar(f, chunks[3], app);
     render_input(f, chunks[4], app);
+    // Popup overlay (drawn on top of everything)
+    if app.popup.is_some() {
+        render_popup(f, area, app);
+    }
 }
 
 // ─── Title bar ───────────────────────────────────────────────────────────────
@@ -864,7 +1141,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
         Line::from(parts.into_iter().map(|(s, st)| Span::styled(s, st)).collect::<Vec<_>>())
     };
 
-    let mut lines: Vec<Line<'static>> = vec![
+    let lines: Vec<Line<'static>> = vec![
         blank(),
         lo(vec![("       ██   ██                 ", mgb)]),
         lo(vec![("    ███████████                ", mgb)]),
@@ -928,6 +1205,12 @@ fn welcome_lines() -> Vec<Line<'static>> {
         kb("Tab",        "Cycle to next tab"),
         kb("↑  ↓",       "Browse sent-message history"),
         kb("PgUp  PgDn", "Scroll active panel  ·  drag to select text"),
+        kb("j  k",       "Move line cursor in panel"),
+        kb("Enter",      "Go-to-definition for address at cursor line"),
+        kb("[  ]",       "Navigate back / forward (address history)"),
+        kb("m",          "Bookmark current address"),
+        kb("B",          "Open bookmarks popup  (0-9 to jump · Esc to close)"),
+        kb("x",          "Xref popup — callers of address at cursor"),
         kb("Ctrl+C",     "Clear input  ·  quit when input is empty"),
         blank(),
     ];
@@ -1170,11 +1453,132 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
         Tab::Chat | Tab::Context => raw.iter().map(|l| Line::raw(l.clone())).collect(),
     };
 
+    // Apply cursor highlight to the panel cursor line
+    let cursor_idx = app.panel_cursor[tab as usize];
+    let lines: Vec<Line> = lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| {
+            if i == cursor_idx {
+                let spans: Vec<Span<'static>> = line
+                    .spans
+                    .into_iter()
+                    .map(|s| Span::styled(s.content, s.style.bg(Color::Rgb(40, 40, 80)).fg(Color::White)))
+                    .collect();
+                Line::from(spans)
+            } else {
+                line
+            }
+        })
+        .collect();
+
     let scroll = app.scroll[tab as usize];
     f.render_widget(
         Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
         inner,
     );
+}
+
+// ─── Popup overlay ────────────────────────────────────────────────────────────
+
+fn render_popup(f: &mut Frame, area: Rect, app: &App) {
+    use ratatui::layout::Alignment;
+
+    let popup = match &app.popup {
+        Some(p) => p,
+        None => return,
+    };
+
+    // Centre a box: 70% wide, 60% tall
+    let pw = (area.width * 7 / 10).max(40).min(area.width.saturating_sub(4));
+    let ph = (area.height * 6 / 10).max(10).min(area.height.saturating_sub(4));
+    let px = area.x + (area.width.saturating_sub(pw)) / 2;
+    let py = area.y + (area.height.saturating_sub(ph)) / 2;
+    let popup_area = Rect { x: px, y: py, width: pw, height: ph };
+
+    // Clear background under popup
+    f.render_widget(ratatui::widgets::Clear, popup_area);
+
+    match popup {
+        Popup::Bookmarks => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    " Bookmarks  (0-9 to jump · Esc to close) ",
+                    Style::new().fg(Color::Yellow).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Yellow));
+            let inner = block.inner(popup_area);
+            f.render_widget(block, popup_area);
+
+            if app.bookmarks.is_empty() {
+                f.render_widget(
+                    Paragraph::new(Span::styled(
+                        "  (no bookmarks yet — press m to bookmark an address)",
+                        Style::new().fg(Color::DarkGray).italic(),
+                    )),
+                    inner,
+                );
+                return;
+            }
+
+            let lines: Vec<Line> = app.bookmarks
+                .iter()
+                .enumerate()
+                .map(|(i, bm)| {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("  [{}]  ", i),
+                            Style::new().fg(Color::Yellow).bold(),
+                        ),
+                        Span::styled(bm.label.clone(), Style::new().fg(Color::White)),
+                    ])
+                })
+                .collect();
+
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).alignment(Alignment::Left),
+                inner,
+            );
+        }
+
+        Popup::Xref { title, lines } => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    format!(" {} (Esc to close) ", title),
+                    Style::new().fg(Color::Cyan).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Cyan));
+            let inner = block.inner(popup_area);
+            f.render_widget(block, popup_area);
+
+            if lines.is_empty() {
+                f.render_widget(
+                    Paragraph::new(Span::styled(
+                        "  (no cross-references found)",
+                        Style::new().fg(Color::DarkGray).italic(),
+                    )),
+                    inner,
+                );
+                return;
+            }
+
+            let styled: Vec<Line> = lines
+                .iter()
+                .map(|l| {
+                    let t = l.trim_start_matches("  ");
+                    if t.starts_with("0x") {
+                        highlight_addr_table(l)
+                    } else {
+                        Line::styled(l.clone(), Style::new().fg(Color::Gray))
+                    }
+                })
+                .collect();
+
+            f.render_widget(Paragraph::new(Text::from(styled)), inner);
+        }
+    }
 }
 
 // ─── Status bar ──────────────────────────────────────────────────────────────
@@ -1188,22 +1592,43 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         ("●", Color::Green)
     };
 
-    let keybinds = if app.search_pattern.is_some() {
+    let keybinds = if app.popup.is_some() {
+        "Esc:close  0-9:jump"
+    } else if app.search_pattern.is_some() {
         "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  PgUpDn:scroll"
     } else {
-        "Tab:next  1-7:tab  g:goto  /:search  y:copy  PgUpDn:scroll  Ctrl+C:quit"
+        "Tab  1-7:tab  g:goto  /:search  j/k:cursor  [/]:nav  m:mark  B:marks  x:xref  y:copy"
     };
-    let status = format!(" {} {}", icon, app.status);
 
-    // Right-align the keybind hint
-    let pad = area
-        .width
-        .saturating_sub(status.len() as u16 + keybinds.len() as u16 + 2);
+    // Right-side info: arch · focused addr · token estimate
+    let arch_part = app.binary_arch.as_deref()
+        .map(|a| format!("{}  ·  ", a))
+        .unwrap_or_default();
+    let addr_part = app.focused_addr
+        .map(|a| format!("@ 0x{:x}  ·  ", a))
+        .unwrap_or_default();
+    let token_est = if app.context_entries.is_empty() {
+        String::new()
+    } else {
+        let chars: usize = app.context_entries.iter().map(|e| e.char_count).sum();
+        format!("~{}k ctx", chars / 1000)
+    };
+    let info = format!("{}{}{}", arch_part, addr_part, token_est);
+
+    // Build the status line: icon + status | keybinds … info
+    let left = format!(" {} {}", icon, app.status);
+    let left_len = left.chars().count() as u16;
+    let right = format!("{}  {} ", keybinds, info);
+    let right_len = right.chars().count() as u16;
+    let pad = area.width.saturating_sub(left_len + right_len);
+
     let line = Line::from(vec![
         Span::styled(format!(" {} ", icon), Style::new().fg(color)),
         Span::styled(app.status.clone(), Style::new().fg(Color::Gray)),
         Span::raw(" ".repeat(pad as usize)),
         Span::styled(keybinds, Style::new().fg(Color::DarkGray)),
+        Span::raw("  "),
+        Span::styled(info, Style::new().fg(Color::Cyan)),
         Span::raw(" "),
     ]);
 
