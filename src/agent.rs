@@ -50,22 +50,54 @@ pub enum AgentEvent {
 /// ~80 K chars ≈ 20 K tokens, comfortable headroom under typical 128 K limits.
 const MAX_HISTORY_CHARS: usize = 80_000;
 
-/// Drop the oldest tool-result messages from `history` until the total estimated
-/// character count falls below `MAX_HISTORY_CHARS`.  Plain user/assistant text is
-/// never dropped so the conversation thread stays coherent.
+/// Replace the oldest tool-result messages with compact summaries until the total
+/// estimated character count falls below `MAX_HISTORY_CHARS`.
+/// Plain user/assistant text is never dropped so the conversation thread stays coherent.
+/// Summaries are injected as user messages so the LLM knows what data was seen,
+/// even though the full output is gone.
 fn trim_history(history: &mut Vec<crate::llm::LlmMessage>) {
     loop {
         let total: usize = history.iter().map(|m| m.estimated_chars()).sum();
         if total <= MAX_HISTORY_CHARS {
             break;
         }
-        // Find the earliest tool-result message and remove it
         if let Some(pos) = history.iter().position(|m| m.is_tool_result_message()) {
-            history.remove(pos);
+            let summary = summarize_tool_result_msg(&history[pos]);
+            history[pos] = crate::llm::LlmMessage::user_text(summary);
         } else {
-            break; // nothing left to drop
+            break; // nothing left to compress
         }
     }
+}
+
+/// Build a compact summary of a tool-result message so the LLM retains
+/// awareness of what was found without the full output consuming context budget.
+fn summarize_tool_result_msg(msg: &crate::llm::LlmMessage) -> String {
+    use crate::llm::MessageContent;
+    let parts: Vec<String> = msg.content.iter().filter_map(|c| {
+        if let MessageContent::ToolResult(tr) = c {
+            let lines = tr.content.lines().count();
+            // Keep the first 3 non-empty lines as a preview
+            let preview: String = tr.content
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let preview = if preview.len() > 300 {
+                format!("{}…", &preview[..300])
+            } else {
+                preview
+            };
+            Some(format!(
+                "[context-compressed] Previously called `{}` ({} lines). Preview: {}",
+                tr.name, lines, preview
+            ))
+        } else {
+            None
+        }
+    }).collect();
+    parts.join("\n")
 }
 
 const SYSTEM_PROMPT: &str = "\
@@ -93,6 +125,64 @@ impl Agent {
             history: Vec::new(),
             event_tx: None,
         }
+    }
+
+    /// Collect all tool results and assistant text from history as structured JSON.
+    /// Intended for `--output-json` one-shot mode.
+    pub fn structured_output(&self, binary_path: &str) -> serde_json::Value {
+        use crate::llm::MessageContent;
+        use serde_json::{json, Value};
+
+        let mut tool_results: std::collections::HashMap<String, Vec<Value>> =
+            std::collections::HashMap::new();
+        let mut conversation: Vec<Value> = Vec::new();
+
+        for msg in &self.history {
+            let role = match msg.role {
+                crate::llm::MessageRole::User      => "user",
+                crate::llm::MessageRole::Assistant => "assistant",
+            };
+            for content in &msg.content {
+                match content {
+                    MessageContent::Text(t) if !t.trim().is_empty() => {
+                        conversation.push(json!({"role": role, "text": t}));
+                    }
+                    MessageContent::ToolCall(tc) => {
+                        conversation.push(json!({
+                            "role":    "tool_call",
+                            "name":    tc.name,
+                            "args":    tc.args,
+                        }));
+                    }
+                    MessageContent::ToolResult(tr) => {
+                        conversation.push(json!({
+                            "role":   "tool_result",
+                            "name":   tr.name,
+                            "output": tr.content,
+                        }));
+                        tool_results
+                            .entry(tr.name.clone())
+                            .or_default()
+                            .push(json!(tr.content));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Final assistant text = last non-empty text from an assistant message
+        let summary = self.history.iter().rev()
+            .flat_map(|m| m.texts())
+            .find(|t| !t.trim().is_empty())
+            .map(|t| t.to_string());
+
+        json!({
+            "binary":       binary_path,
+            "backend":      self.backend.display_name(),
+            "tool_results": tool_results,
+            "summary":      summary,
+            "conversation": conversation,
+        })
     }
 
     /// Attach a TUI event channel.  When set the agent emits `AgentEvent`s

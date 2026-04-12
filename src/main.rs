@@ -2,6 +2,7 @@ mod agent;
 mod config;
 pub mod decompiler;
 pub mod dwarf;
+pub mod hashdb;
 mod llm;
 pub mod project;
 mod tools;
@@ -67,6 +68,15 @@ struct Cli {
     /// Use plain-text REPL instead of the TUI (useful for scripting / pipes)
     #[arg(long)]
     no_tui: bool,
+
+    /// [One-shot] Emit a structured JSON summary to stdout after analysis instead of plain text
+    #[arg(long)]
+    output_json: bool,
+
+    /// Run commands from a script file (one command per line, same syntax as the manual REPL)
+    /// and exit.  Lines starting with '#' and blank lines are ignored.
+    #[arg(long, value_name = "SCRIPT")]
+    script: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -120,12 +130,24 @@ async fn main() -> Result<()> {
     let backend: Box<dyn LlmBackend> = build_backend(&cfg)?;
     let display = backend.display_name();
 
+    // Script mode
+    if let Some(script_path) = &cli.script {
+        run_script(script_path).await?;
+        return Ok(());
+    }
+
     // One-shot mode: analyse a single file and exit
     if let Some(file) = &cli.file {
-        ui::print_banner(&display);
         let mut agent = agent::Agent::new(backend);
         let task = format!("Analyse this binary: {}", file.display());
-        agent.run(&task).await?;
+        if cli.output_json {
+            agent.run(&task).await?;
+            let out = agent.structured_output(&file.to_string_lossy());
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            ui::print_banner(&display);
+            agent.run(&task).await?;
+        }
         return Ok(());
     }
 
@@ -460,6 +482,55 @@ fn parse_int(s: &str) -> Option<u64> {
     } else {
         s.parse::<u64>().ok()
     }
+}
+
+// ─── Script / batch mode ─────────────────────────────────────────────────────
+
+/// Execute every non-blank, non-comment line in `path` as a manual tool command,
+/// printing results to stdout.  Identical syntax to the manual REPL.
+async fn run_script(path: &std::path::PathBuf) -> Result<()> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| anyhow::anyhow!("Cannot open script '{}': {}", path.display(), e))?;
+
+    let lines: Vec<String> = std::io::BufReader::new(file)
+        .lines()
+        .collect::<std::io::Result<_>>()
+        .map_err(|e| anyhow::anyhow!("Error reading script: {}", e))?;
+
+    println!("# KaijuLab script: {}", path.display());
+    println!();
+
+    for (lineno, raw) in lines.iter().enumerate() {
+        let line = raw.trim().to_string();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        println!(">> {}", line);
+
+        let (tx, mut rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
+        dispatch_manual_command(&line, &tx);
+        drop(tx); // close sender so recv() returns None when drained
+
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                agent::AgentEvent::ToolResult { name, output } => {
+                    println!("-- {} --", name);
+                    println!("{}", output);
+                }
+                agent::AgentEvent::LlmText(t) => println!("{}", t),
+                agent::AgentEvent::Error(e) => {
+                    eprintln!("Error (line {}): {}", lineno + 1, e);
+                }
+                _ => {}
+            }
+        }
+        println!();
+    }
+
+    Ok(())
 }
 
 // ─── Manual plain-text REPL ──────────────────────────────────────────────────

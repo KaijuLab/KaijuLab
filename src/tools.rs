@@ -158,6 +158,24 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "hex_bytes"),
         ),
         "section_entropy" => section_entropy(&str_arg(args, "path")),
+        "generate_yara_rule" => generate_yara_rule(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+            args["rule_name"].as_str(),
+        ),
+        "register_function_hash" => register_function_hash(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+            &str_arg(args, "name"),
+        ),
+        "lookup_function_hash" => lookup_function_hash(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+        ),
+        "match_all_functions" => match_all_functions(
+            &str_arg(args, "path"),
+            args["max_results"].as_u64().unwrap_or(50) as usize,
+        ),
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -398,6 +416,109 @@ fn strings_extract(path: &str, min_len: usize, max_results: usize, section: Opti
     ToolResult::ok(out)
 }
 
+// ─── Capstone disassembler (non-x86 architectures) ───────────────────────────
+
+fn disassemble_capstone(
+    data: &[u8],
+    arch: Architecture,
+    offset: Option<usize>,
+    length: usize,
+    vaddr_hint: Option<u64>,
+) -> ToolResult {
+    use capstone::prelude::*;
+    use capstone::{arch, Endian};
+
+    // Build the Capstone engine for the target architecture
+    let cs = match arch {
+        Architecture::Aarch64 | Architecture::Aarch64_Ilp32 => {
+            Capstone::new().arm64().mode(arch::arm64::ArchMode::Arm).build()
+        }
+        Architecture::Arm => {
+            Capstone::new().arm().mode(arch::arm::ArchMode::Arm).build()
+        }
+        Architecture::Mips => {
+            Capstone::new().mips().mode(arch::mips::ArchMode::Mips32).endian(Endian::Little).build()
+        }
+        Architecture::Mips64 => {
+            Capstone::new().mips().mode(arch::mips::ArchMode::Mips64).endian(Endian::Little).build()
+        }
+        Architecture::PowerPc => {
+            Capstone::new().ppc().mode(arch::ppc::ArchMode::Mode32).endian(Endian::Big).build()
+        }
+        Architecture::PowerPc64 => {
+            Capstone::new().ppc().mode(arch::ppc::ArchMode::Mode64).endian(Endian::Big).build()
+        }
+        Architecture::Riscv32 => {
+            Capstone::new().riscv().mode(arch::riscv::ArchMode::RiscV32).build()
+        }
+        Architecture::Riscv64 => {
+            Capstone::new().riscv().mode(arch::riscv::ArchMode::RiscV64).build()
+        }
+        other => {
+            return ToolResult::err(format!(
+                "No disassembler available for {:?}. Supported: x86, x86-64, ARM64, ARM, MIPS, PowerPC, RISC-V.",
+                other
+            ));
+        }
+    };
+
+    let cs = match cs {
+        Ok(c) => c,
+        Err(e) => return ToolResult::err(format!("Capstone init failed: {}", e)),
+    };
+
+    let file_offset: usize = match (offset, vaddr_hint) {
+        (Some(off), _) => off,
+        (None, Some(va)) => match vaddr_to_file_offset(data, va) {
+            Some(off) => off,
+            None => return ToolResult::err(format!(
+                "Virtual address 0x{:x} not found in any segment", va
+            )),
+        },
+        (None, None) => 0,
+    };
+
+    if file_offset >= data.len() {
+        return ToolResult::err(format!(
+            "Offset 0x{:x} is beyond file size {} bytes", file_offset, data.len()
+        ));
+    }
+
+    let end   = (file_offset + length).min(data.len());
+    let slice = &data[file_offset..end];
+    let ip    = vaddr_hint.unwrap_or(file_offset as u64);
+
+    let insns = match cs.disasm_all(slice, ip) {
+        Ok(i) => i,
+        Err(e) => return ToolResult::err(format!("Disassembly failed: {}", e)),
+    };
+
+    let mut out = format!(
+        "Disassembly ({:?}, file_offset=0x{:x}, ip=0x{:x}):\n\n",
+        arch, file_offset, ip
+    );
+
+    for insn in insns.as_ref() {
+        let bytes: String = insn.bytes().iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push_str(&format!(
+            "  {:016x}  {:<24}  {} {}\n",
+            insn.address(),
+            bytes,
+            insn.mnemonic().unwrap_or(""),
+            insn.op_str().unwrap_or(""),
+        ));
+    }
+
+    if insns.as_ref().is_empty() {
+        out.push_str("  (no instructions decoded — check offset/architecture)");
+    }
+
+    ToolResult::ok(out)
+}
+
 // ─── Tool: disassemble ───────────────────────────────────────────────────────
 
 fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Option<u64>) -> ToolResult {
@@ -406,15 +527,22 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
     };
 
-    let arch = object::File::parse(&*data).ok().map(|f| f.architecture());
+    let obj_arch = object::File::parse(&*data).ok().map(|f| f.architecture());
 
-    let bitness: u32 = match arch {
+    // Route non-x86 architectures through Capstone
+    let is_x86 = matches!(
+        obj_arch,
+        Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) | Some(Architecture::I386) | None
+    );
+
+    if !is_x86 {
+        return disassemble_capstone(&data, obj_arch.unwrap(), offset, length, vaddr_hint);
+    }
+
+    let bitness: u32 = match obj_arch {
         Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) => 64,
         Some(Architecture::I386) => 32,
-        Some(other) => return ToolResult::err(format!(
-            "Disassembly not supported for {:?} (only x86 / x86-64)", other
-        )),
-        None => 64,
+        _ => 64,
     };
 
     // Resolve file offset:
@@ -703,14 +831,20 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     }
 
     // ── Strategy 2: prologue scan (stripped binary) ─────────────────────────
-    let text_sec = obj.sections().find(|s| s.name().ok() == Some(".text"));
-    let (text_bytes, text_vaddr) = match text_sec {
+    // Mach-O uses "__text"; ELF uses ".text".  Accept both.
+    let text_sec = obj.sections().find(|s| {
+        s.name().ok().map_or(false, |n| {
+            n == ".text" || n == "__text" || n.ends_with(",__text")
+        })
+    });
+    let (text_bytes, text_vaddr, text_arch) = match text_sec {
         Some(s) => match s.data() {
-            Ok(d)  => (d.to_vec(), s.address()),
-            Err(e) => return ToolResult::err(format!("Cannot read .text: {}", e)),
+            Ok(d)  => (d.to_vec(), s.address(), obj.architecture()),
+            Err(e) => return ToolResult::err(format!("Cannot read text section: {}", e)),
         },
         None => return ToolResult::err(
-            "No .text section and no symbols — cannot enumerate functions"
+            "No text section and no symbols — cannot enumerate functions.\
+             \nFor Mach-O fat binaries, try extracting the desired slice with lipo first."
         ),
     };
 
@@ -719,27 +853,39 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     let len = text_bytes.len();
 
     // Common x86-64 prologues:
-    //   endbr64          f3 0f 1e fa
-    //   push rbp         55          (+ optional rex prefix before mov rbp,rsp)
+    //   endbr64                f3 0f 1e fa
     //   push rbp; mov rbp,rsp  55 48 89 e5
     // Common x86-32 prologue:
     //   push ebp; mov ebp,esp  55 89 e5
+    // Common AArch64 prologues (Mach-O ARM64):
+    //   stp x29, x30, [sp, #-N]!  fd 7b ?? d1   (save fp+lr, allocate frame)
+    //   sub  sp, sp, #N           ff ?? ?? d1   (stack allocation without frame ptr)
     let mut i = 0usize;
     while i + 4 <= len {
         let b = &text_bytes[i..];
-        let hit = if is_64 {
-            // endbr64
-            (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
-            // push rbp; mov rbp,rsp
-            || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
-        } else {
-            // push ebp; mov ebp,esp
-            b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5
+        let hit = match text_arch {
+            Architecture::Aarch64 | Architecture::Aarch64_Ilp32 => {
+                // stp x29, x30, [sp, ...] — bytes 0..1 are always fd 7b
+                (b[0] == 0xfd && b[1] == 0x7b)
+                // pacibsp (0xd503237f) — common in signed iOS/macOS binaries
+                || (b[0] == 0x7f && b[1] == 0x23 && b[2] == 0x03 && b[3] == 0xd5)
+            }
+            Architecture::Arm => {
+                // push {r11, lr}  00 48 2d e9
+                (b[0] == 0x00 && b[1] == 0x48 && b[2] == 0x2d && b[3] == 0xe9)
+                // push {r7, lr}   10 40 2d e9
+                || (b[0] == 0x10 && b[1] == 0x40 && b[2] == 0x2d && b[3] == 0xe9)
+            }
+            _ if is_64 => {
+                (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
+                || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
+            }
+            _ => b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5,
         };
         if hit {
             found.push(text_vaddr + i as u64);
         }
-        i += 1;
+        i += if matches!(text_arch, Architecture::Aarch64 | Architecture::Aarch64_Ilp32 | Architecture::Arm) { 4 } else { 1 };
     }
 
     if found.is_empty() {
@@ -2541,6 +2687,74 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                 "required": ["path"]
             }),
         },
+        ToolDefinition {
+            name: "register_function_hash".into(),
+            description: "Hash the function at a given virtual address (normalising out \
+                           position-dependent bytes) and store it under a name in the global \
+                           cross-binary hash database (~/.kaiju/fn_hashes.db). \
+                           Call this after identifying a function to make it recognisable \
+                           in other binaries via lookup_function_hash or match_all_functions.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Virtual address of the function" },
+                    "name":  { "type": "string",  "description": "Human-readable name to store, e.g. 'malloc' or 'parse_header'" }
+                },
+                "required": ["path", "vaddr", "name"]
+            }),
+        },
+        ToolDefinition {
+            name: "lookup_function_hash".into(),
+            description: "Hash the function at a given virtual address and look it up in \
+                           the global cross-binary hash database. Returns any previously \
+                           registered names and the source binaries they came from. \
+                           Useful for recognising library functions or malware components \
+                           that appear across multiple samples.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Virtual address of the function to look up" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "match_all_functions".into(),
+            description: "Scan every function in the binary and check each one against the \
+                           global cross-binary hash database. Returns functions whose \
+                           normalised hash matches a previously registered entry, along \
+                           with the known name and the source binary it was registered from. \
+                           Run this after loading a new sample to instantly identify known \
+                           functions without symbol information.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":        { "type": "string",  "description": "Path to the binary file" },
+                    "max_results": { "type": "integer", "description": "Maximum matches to return (default 50)" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "generate_yara_rule".into(),
+            description: "Generate a YARA detection rule for a function at a given virtual address. \
+                           Position-dependent bytes (CALL/JMP rel32, RIP-relative LEA/MOV, \
+                           64-bit absolute immediates) are automatically wildcarded with ?? so the \
+                           rule matches the same function even after relinking or ASLR. \
+                           Useful for threat-hunting and cross-sample correlation. \
+                           Only supported for x86 / x86-64 binaries.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":      { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr":     { "type": "integer", "description": "Virtual address of the function entry point" },
+                    "rule_name": { "type": "string",  "description": "Optional YARA rule name (default: fn_<hex_addr>)" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
     ]
 }
 
@@ -2782,6 +2996,331 @@ fn patch_bytes(
         out_path,
         out_path,
     ))
+}
+
+// ─── Tools: cross-binary function hash database ──────────────────────────────
+
+/// Hash the function at `vaddr` and store it under `name` in the global DB.
+fn register_function_hash(path: &str, vaddr: u64, name: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if name.is_empty() { return ToolResult::err("'name' is required"); }
+
+    let (hash, byte_count) = match compute_fn_hash(path, vaddr) {
+        Ok(v) => v,
+        Err(e) => return ToolResult::err(e),
+    };
+
+    let db = match crate::hashdb::FnHashDb::open() {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot open hash DB: {}", e)),
+    };
+
+    match db.register(hash, name, path, byte_count) {
+        Ok(_) => ToolResult::ok(format!(
+            "Registered: hash=0x{:016x}  name={}  ({} bytes)  source={}",
+            hash, name, byte_count, path
+        )),
+        Err(e) => ToolResult::err(format!("DB write failed: {}", e)),
+    }
+}
+
+/// Hash the function at `vaddr` and return any known names from the global DB.
+fn lookup_function_hash(path: &str, vaddr: u64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+
+    let (hash, byte_count) = match compute_fn_hash(path, vaddr) {
+        Ok(v) => v,
+        Err(e) => return ToolResult::err(e),
+    };
+
+    let db = match crate::hashdb::FnHashDb::open() {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot open hash DB: {}", e)),
+    };
+
+    match db.lookup(hash) {
+        Err(e) => ToolResult::err(format!("DB query failed: {}", e)),
+        Ok(matches) if matches.is_empty() => ToolResult::ok(format!(
+            "hash=0x{:016x} ({} bytes) — no matches in database", hash, byte_count
+        )),
+        Ok(matches) => {
+            let mut out = format!(
+                "hash=0x{:016x} ({} bytes) — {} match(es):\n\n",
+                hash, byte_count, matches.len()
+            );
+            for (name, source) in &matches {
+                out.push_str(&format!("  {:<30}  from: {}\n", name, source));
+            }
+            ToolResult::ok(out)
+        }
+    }
+}
+
+/// Scan all functions in the binary and report any that match the global DB.
+fn match_all_functions(path: &str, max_results: usize) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let db = match crate::hashdb::FnHashDb::open() {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot open hash DB: {}", e)),
+    };
+
+    // Collect function addresses from symbol table or prologue scan
+    let obj = match object::File::parse(&*data) {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
+    };
+
+    let bitness: u32 = if obj.is_64() { 64 } else { 32 };
+
+    let mut candidates: Vec<u64> = obj
+        .symbols()
+        .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0)
+        .map(|s| s.address())
+        .collect();
+
+    if candidates.is_empty() {
+        // Prologue scan (x86-64 only)
+        if let Some(sec) = obj.sections().find(|s| matches!(s.name().ok(), Some(".text") | Some("__text"))) {
+            if let Ok(bytes) = sec.data() {
+                let base = sec.address();
+                let mut i = 0usize;
+                while i + 4 <= bytes.len() {
+                    let b = &bytes[i..];
+                    if (b[0]==0xf3&&b[1]==0x0f&&b[2]==0x1e&&b[3]==0xfa)
+                     ||(b[0]==0x55&&b[1]==0x48&&b[2]==0x89&&b[3]==0xe5) {
+                        candidates.push(base + i as u64);
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    let mut hits: Vec<(u64, String, String)> = Vec::new();
+
+    for vaddr in &candidates {
+        if let Some(file_off) = vaddr_to_file_offset(&data, *vaddr) {
+            let slice = &data[file_off..(file_off + 512).min(data.len())];
+            let hash = crate::hashdb::normalised_hash(slice, bitness);
+            if let Ok(names) = db.lookup(hash) {
+                for (name, source) in names {
+                    hits.push((*vaddr, name, source));
+                }
+            }
+        }
+    }
+
+    if hits.is_empty() {
+        return ToolResult::ok(format!(
+            "Scanned {} function candidates — no matches in hash database.\n\
+             Use register_function_hash to populate the database.",
+            candidates.len()
+        ));
+    }
+
+    let total = hits.len();
+    let mut out = format!(
+        "Scanned {} functions — {} DB match(es):\n\n  {:<20}  {:<30}  {}\n  {}\n",
+        candidates.len(), total,
+        "Address", "Known as", "Source",
+        "─".repeat(75)
+    );
+    for (vaddr, name, source) in hits.iter().take(max_results) {
+        out.push_str(&format!("  0x{:016x}  {:<30}  {}\n", vaddr, name, source));
+    }
+    if total > max_results {
+        out.push_str(&format!("  … and {} more", total - max_results));
+    }
+    ToolResult::ok(out)
+}
+
+/// Internal: hash the function at `vaddr` in `path`.
+/// Returns (hash, byte_count) or an error string.
+fn compute_fn_hash(path: &str, vaddr: u64) -> std::result::Result<(u64, usize), String> {
+    let data = std::fs::read(path)
+        .map_err(|e| format!("Cannot read '{}': {}", path, e))?;
+
+    let bitness = object::File::parse(&*data).ok()
+        .map(|o| if o.is_64() { 64u32 } else { 32u32 })
+        .unwrap_or(64);
+
+    let file_off = vaddr_to_file_offset(&data, vaddr)
+        .ok_or_else(|| format!("vaddr 0x{:x} not mapped in any segment", vaddr))?;
+
+    // Grab up to 512 bytes; stop at first RET for tighter matching
+    let raw = &data[file_off..(file_off + 512).min(data.len())];
+    let end = find_ret_boundary(raw, bitness);
+    let fn_bytes = &raw[..end];
+
+    let hash = crate::hashdb::normalised_hash(fn_bytes, bitness);
+    Ok((hash, fn_bytes.len()))
+}
+
+/// Find the byte offset just after the first RET in `bytes`, or return `bytes.len()`.
+fn find_ret_boundary(bytes: &[u8], bitness: u32) -> usize {
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic};
+    let mut dec = Decoder::with_ip(bitness, bytes, 0, DecoderOptions::NONE);
+    for instr in &mut dec {
+        if matches!(instr.mnemonic(), Mnemonic::Ret | Mnemonic::Retf) {
+            return (instr.ip() as usize) + instr.len();
+        }
+    }
+    bytes.len()
+}
+
+// ─── Tool: generate_yara_rule ────────────────────────────────────────────────
+
+/// Generate a YARA rule for a function at `vaddr`.
+/// Position-dependent bytes (CALL/JMP rel32, RIP-relative LEA/MOV) are
+/// replaced with `??` wildcards so the rule matches even after relinking.
+fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required (must be non-zero)"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let arch = object::File::parse(&*data).ok().map(|f| f.architecture());
+    let bitness: u32 = match arch {
+        Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) | None => 64,
+        Some(Architecture::I386) => 32,
+        Some(other) => return ToolResult::err(format!(
+            "YARA rule generation requires x86/x86-64 (got {:?})", other
+        )),
+    };
+
+    let file_off = match vaddr_to_file_offset(&data, vaddr) {
+        Some(off) => off,
+        None => return ToolResult::err(format!(
+            "Virtual address 0x{:x} not mapped in any segment", vaddr
+        )),
+    };
+
+    // Find function size from symbol table, default to a generous 512 bytes
+    let fn_size = object::File::parse(&*data).ok().and_then(|o| {
+        o.symbols()
+            .find(|s| s.address() == vaddr && s.size() > 0)
+            .map(|s| s.size() as usize)
+    }).unwrap_or(512);
+
+    let end = (file_off + fn_size).min(data.len());
+    let fn_bytes = &data[file_off..end];
+
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind, Register};
+
+    let mut decoder = Decoder::with_ip(bitness, fn_bytes, vaddr, DecoderOptions::NONE);
+    // Each entry: Some(byte) = concrete, None = wildcard
+    let mut yara_bytes: Vec<Option<u8>> = Vec::new();
+
+    for instr in &mut decoder {
+        let offset = (instr.ip() - vaddr) as usize;
+        let len = instr.len();
+        if offset + len > fn_bytes.len() { break; }
+        let raw = &fn_bytes[offset..offset + len];
+
+        // Determine wildcard mask for this instruction
+        let mut wildcard = vec![false; len];
+
+        // Near-branch operands (CALL rel32, JMP rel32, Jcc rel32)
+        let has_rel_branch = (0..instr.op_count()).any(|i| matches!(
+            instr.op_kind(i),
+            OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
+            | OpKind::FarBranch16 | OpKind::FarBranch32
+        ));
+        if has_rel_branch && len > 1 {
+            // Opcode is 1 byte (E8/E9/7x) or 2 bytes (0F 8x); displacement follows
+            let opcode_len = if raw[0] == 0x0F { 2 } else { 1 };
+            for i in opcode_len..len {
+                wildcard[i] = true;
+            }
+        }
+
+        // RIP-relative memory operand (LEA/MOV [rip+disp32])
+        let has_rip_rel = (0..instr.op_count()).any(|i| {
+            instr.op_kind(i) == OpKind::Memory && instr.memory_base() == Register::RIP
+        });
+        if has_rip_rel && len >= 5 {
+            // The 4-byte disp32 always occupies the last 4 bytes of the encoding
+            for i in (len - 4)..len {
+                wildcard[i] = true;
+            }
+        }
+
+        // Absolute 64-bit immediate (MOV r64, imm64): 10-byte encoding
+        if len == 10 && raw[0] >= 0x48 {
+            // REX.W prefix + B8+r opcode: last 8 bytes are the immediate address
+            for i in 2..10 {
+                wildcard[i] = true;
+            }
+        }
+
+        for (i, &byte) in raw.iter().enumerate() {
+            yara_bytes.push(if wildcard[i] { None } else { Some(byte) });
+        }
+
+        if matches!(instr.mnemonic(), Mnemonic::Ret | Mnemonic::Retf) {
+            break;
+        }
+    }
+
+    if yara_bytes.is_empty() {
+        return ToolResult::err(format!(
+            "No instructions decoded at 0x{:x} — verify vaddr and architecture", vaddr
+        ));
+    }
+
+    // Build hex string, 16 bytes per line
+    let hex_rows: Vec<String> = yara_bytes.chunks(16).map(|chunk| {
+        chunk.iter().map(|b| match b {
+            Some(v) => format!("{:02X}", v),
+            None    => "??".to_string(),
+        }).collect::<Vec<_>>().join(" ")
+    }).collect();
+    let hex_body = hex_rows.join("\n             ");
+
+    let wildcarded = yara_bytes.iter().filter(|b| b.is_none()).count();
+    let concrete   = yara_bytes.len() - wildcarded;
+
+    let default_name = format!("fn_{:016x}", vaddr);
+    let name = rule_name.unwrap_or(&default_name)
+        .chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect::<String>();
+
+    let rule = format!(
+        "// Auto-generated by KaijuLab from '{}' at 0x{:x}\n\
+         // {concrete} concrete bytes, {wildcarded} wildcards (calls/jumps/RIP-relative refs)\n\
+         rule {name} {{\n\
+         \n    meta:\n\
+             source      = \"{path}\"\n\
+             fn_vaddr    = \"0x{vaddr:x}\"\n\
+             total_bytes = {total}\n\
+         \n    strings:\n\
+             $bytes = {{ {hex_body} }}\n\
+         \n    condition:\n\
+             $bytes\n\
+         }}\n",
+        path,
+        vaddr,
+        concrete   = concrete,
+        wildcarded = wildcarded,
+        name       = name,
+        path       = path,
+        vaddr      = vaddr,
+        total      = yara_bytes.len(),
+        hex_body   = hex_body,
+    );
+
+    ToolResult::ok(rule)
 }
 
 // ─── Tool: section_entropy ───────────────────────────────────────────────────

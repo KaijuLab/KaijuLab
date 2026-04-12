@@ -65,3 +65,6 @@ pdb = "0.8"
 
 # System clipboard (copy panel content with 'y')
 arboard = "3"
+
+# Multi-architecture disassembler (ARM64, ARM, MIPS, …)
+capstone = "0.12"
