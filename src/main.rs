@@ -276,29 +276,40 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async move {
         while let Some(msg) = user_rx.recv().await {
-            // Intercept plugin commands before sending to the LLM agent.
-            if msg.trim() == "plugins" {
-                let listing = plugin::format_plugin_list();
-                let _ = plugin_event_tx.send(agent::AgentEvent::LlmText(listing));
-                let _ = plugin_event_tx.send(agent::AgentEvent::Done);
-                continue;
-            }
-            if let Some(rest) = msg.trim().strip_prefix("run ") {
-                let mut parts = rest.splitn(2, ' ');
-                let name    = parts.next().unwrap_or("").trim().to_string();
-                let binary  = parts.next().unwrap_or("").trim().to_string();
-                let tx = plugin_event_tx.clone();
-                tokio::task::spawn_blocking(move || {
-                    let out = plugin::run_named(&name, &binary);
-                    let output = format_plugin_output(&name, &out);
-                    let _ = tx.send(agent::AgentEvent::PluginOutput {
-                        name: name.clone(),
-                        output,
+            // Slash-prefixed messages ("/cmd args") are direct tool commands —
+            // never sent to the LLM.  Strip the '/' and dispatch locally.
+            // Bare messages (no '/') are natural-language prompts for the LLM.
+            let trimmed = msg.trim();
+            if let Some(cmd_input) = trimmed.strip_prefix('/') {
+                // /plugins — list installed plugins
+                if cmd_input.trim() == "plugins" {
+                    let listing = plugin::format_plugin_list();
+                    let _ = plugin_event_tx.send(agent::AgentEvent::LlmText(listing));
+                    let _ = plugin_event_tx.send(agent::AgentEvent::Done);
+                    continue;
+                }
+                // /run <name> [path] — execute a Rhai plugin
+                if let Some(rest) = cmd_input.trim().strip_prefix("run ") {
+                    let mut parts = rest.splitn(2, ' ');
+                    let name   = parts.next().unwrap_or("").trim().to_string();
+                    let binary = parts.next().unwrap_or("").trim().to_string();
+                    let tx = plugin_event_tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let out = plugin::run_named(&name, &binary);
+                        let output = format_plugin_output(&name, &out);
+                        let _ = tx.send(agent::AgentEvent::PluginOutput {
+                            name: name.clone(),
+                            output,
+                        });
+                        let _ = tx.send(agent::AgentEvent::Done);
                     });
-                    let _ = tx.send(agent::AgentEvent::Done);
-                });
+                    continue;
+                }
+                // All other /cmd → direct tool dispatch (no LLM)
+                dispatch_manual_command(cmd_input, &plugin_event_tx);
                 continue;
             }
+            // No '/' prefix → natural-language prompt for the LLM agent
             if let Err(e) = ag.run(&msg).await {
                 eprintln!("agent error: {}", e);
             }
@@ -321,62 +332,66 @@ async fn main() -> Result<()> {
 // ─── Manual command dispatcher ───────────────────────────────────────────────
 
 const MANUAL_HELP: &str = "\
-No LLM configured — running in manual tool mode.
+Quick commands — prefix with  /  to bypass the LLM and call tools directly.
+In LLM mode:  /cmd args  →  direct tool.     No /  →  natural-language prompt.
 
 Analysis:
-  file_info       <path>                  Binary metadata & segment table
-  hexdump         <path> [offset] [len]   Raw hex dump
-  strings         <path> [min_len]        Extract printable strings
-  disassemble     <path> [vaddr]          Disassemble (default: entry point)
-  functions       <path> [max]            List all functions
-  decompile       <path> [vaddr]          Decompile a function
-  decompile_flat  <path> <base> <vaddr>   Decompile raw firmware / shellcode
-  imports         <path>                  Resolve PLT / PE imports
-  xrefs           <path> <vaddr>          Cross-references to an address
-  callgraph       <path>                  Full static call graph
-  cfg             <path> <vaddr>          Control-flow graph for a function
-  dwarf           <path>                  DWARF debug info
+  /file_info       <path>                 Binary metadata & segment table
+  /hexdump         <path> [offset] [len]  Raw hex dump
+  /strings         <path> [min_len]       Extract printable strings
+  /disasm          <path> [vaddr]         Disassemble (default: entry point)
+  /functions       <path> [max]           List all functions
+  /decompile       <path> [vaddr]         Decompile a function
+  /decompile_flat  <path> <base> <vaddr>  Decompile raw firmware / shellcode
+  /imports         <path>                 Resolve PLT / PE imports
+  /xrefs           <path> <vaddr>         Cross-references to an address
+  /callgraph       <path>                 Full static call graph
+  /cfg             <path> <vaddr>         Control-flow graph for a function
+  /dwarf           <path>                 DWARF debug info
 
 Search & patch:
-  entropy         <path>                  Section entropy — detect packers/crypto
-  search          <path> <hex pattern>    Byte-pattern search (e.g.  E8 ?? ?? ?? ??)
-  patch           <path> <vaddr> <hex>    Patch bytes  →  writes  <file>.patched
-  yara            <path> <vaddr> [name]   Generate a YARA rule for a function
+  /entropy         <path>                 Section entropy — detect packers/crypto
+  /search          <path> <hex pattern>   Byte-pattern search (e.g. E8 ?? ?? ?? ??)
+  /patch           <path> <vaddr> <hex>   Patch bytes  →  writes  <file>.patched
+  /yara            <path> <vaddr> [name]  Generate a YARA rule for a function
 
 Intelligence:
-  scan            <path> [max_fns]        Vulnerability scan (top N functions)
-  explain         <path> <vaddr>          Explain a function
-  identify        <path>                  FLIRT-style library recognition
-  auto            <path> [top_n]          Full auto-analysis pass
+  /scan            <path> [max_fns]       Vulnerability scan (top N functions)
+  /explain         <path> <vaddr>         Explain a function
+  /identify        <path>                 FLIRT-style library recognition
+  /auto            <path> [top_n]         Full auto-analysis pass
 
 Diff & output:
-  diff            <path_a> <path_b>       Diff two binaries by function content
-  report          <path>                  Export HTML analysis report
-  vt              <path>                  VirusTotal hash lookup (needs VIRUSTOTAL_API_KEY)
-  pdb             <binary> <pdb_file>     Load Windows PDB symbols
+  /diff            <path_a> <path_b>      Diff two binaries by function content
+  /report          <path>                 Export HTML analysis report
+  /vt              <path>                 VirusTotal hash lookup (needs API key)
+  /pdb             <binary> <pdb_file>    Load Windows PDB symbols
 
 Project (persistent across sessions):
-  rename        <path> <vaddr> <name>     Name a function
-  comment       <path> <vaddr> <text>     Attach a comment to an address
-  project       <path>                    Show all saved annotations
-  types         <path>                    Show struct / signature definitions
+  /rename          <path> <vaddr> <name>  Name a function
+  /comment         <path> <vaddr> <text>  Attach a comment to an address
+  /project         <path>                 Show all saved annotations
+  /types           <path>                 Show struct / signature definitions
 
 Plugins / scripting:
-  plugins                                 List available plugins (~/.kaiju/plugins/)
-  run <name> [binary]                     Run a Rhai plugin by name (or path)
+  /plugins                                List available plugins (~/.kaiju/plugins/)
+  /run <name> [binary]                    Run a Rhai plugin by name (or path)
 
 Other:
-  ls            [path]                    List files in a directory
-  help                                    Show this message
+  /ls              [path]                 List files in a directory
 
-Example:  disassemble /bin/ls 0x5880
-          entropy /path/to/suspect.exe
-          search  /path/to/binary  E8 ?? ?? ?? ?? 48 89 C7
-          run my_script /bin/ls";
+Examples:
+  /disasm /bin/ls 0x5880
+  /entropy /path/to/suspect.exe
+  /search /path/to/binary E8 ?? ?? ?? ?? 48 89 C7
+  /run my_script /bin/ls";
 
 /// Parse a user-typed command and fire AgentEvents into the TUI channel.
+/// Accepts both bare commands ("entropy /bin/ls") and slash-prefixed
+/// commands ("/entropy /bin/ls") — the leading '/' is stripped first.
 fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentEvent>) {
-    let parts: Vec<&str> = input.trim().splitn(5, ' ').collect();
+    let input = input.trim().strip_prefix('/').unwrap_or(input.trim());
+    let parts: Vec<&str> = input.splitn(5, ' ').collect();
     let cmd = parts.first().copied().unwrap_or("").to_lowercase();
 
     let send = |ev| { let _ = tx.send(ev); };

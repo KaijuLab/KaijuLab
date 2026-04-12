@@ -809,6 +809,14 @@ impl App {
 
         // ── 3. Keyword / phrase completion ─────────────────────────────────────
         const PHRASES: &[&str] = &[
+            // TUI commands (/ prefix)
+            "/auto",
+            "/goto ",
+            "/g ",
+            "/plugins",
+            "/run ",
+            "/timeout ",
+            // LLM prompts (natural language — no prefix)
             "analyse ",
             "disassemble the entry point",
             "disassemble function at 0x",
@@ -830,9 +838,6 @@ impl App {
             "show xrefs to 0x",
             "generate yara rule for 0x",
             "export report",
-            "run ",
-            "plugins",
-            "timeout ",
         ];
         for phrase in PHRASES {
             if phrase.to_lowercase().starts_with(&token_lower) {
@@ -1313,10 +1318,10 @@ impl App {
                 None
             }
 
-            // g — prefill goto prompt when input is empty
+            // g — prefill /goto prompt when input is empty
             KeyCode::Char('g') if self.input.is_empty() && key.modifiers.is_empty() => {
-                self.input = "g ".to_string();
-                self.input_cursor = 2;
+                self.input = "/g ".to_string();
+                self.input_cursor = 3;
                 None
             }
 
@@ -1576,28 +1581,154 @@ impl App {
                     return None;
                 }
 
-                // ── Local TUI commands (never sent to LLM) ──────────────────
-                // goto: "g 0x401234" or "goto 0x401234"
-                let goto_arg = msg.strip_prefix("g ")
-                    .or_else(|| msg.strip_prefix("goto "));
-                if let Some(addr_str) = goto_arg {
-                    if let Some(addr) = parse_addr(addr_str.trim()) {
-                        self.goto_address(addr);
-                    } else {
-                        self.status = format!("Cannot parse address: '{}'", addr_str.trim());
+                // ── Local TUI commands — all begin with '/' ─────────────────
+                //
+                // /goto <addr>  or  /g <addr>      — jump to address
+                // /auto [path]                      — run auto-analysis
+                // /timeout <n>                      — set HTTP timeout
+                // /plugins                          — list installed plugins
+                // /run <name> [path]                — run a plugin
+                // /pattern                          — search current panel
+                //   (any other /word falls through to panel search)
+                //
+                // `:cmd args` (colon prefix) pre-fills a natural-language LLM
+                // prompt for review — a different concept; left unchanged.
+                if let Some(rest) = msg.strip_prefix('/') {
+                    let rest = rest.trim();
+
+                    // /goto <addr>  or  /g <addr>
+                    let goto_arg = rest.strip_prefix("goto ")
+                        .or_else(|| rest.strip_prefix("g "));
+                    if let Some(addr_str) = goto_arg {
+                        if let Some(addr) = parse_addr(addr_str.trim()) {
+                            self.goto_address(addr);
+                        } else {
+                            self.status = format!("Cannot parse address: '{}'", addr_str.trim());
+                        }
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.history_cursor = None;
+                        return None;
                     }
-                    self.input.clear();
-                    self.input_cursor = 0;
-                    self.history_cursor = None;
-                    return None;
-                }
-                // search: "/pattern"
-                if let Some(pattern) = msg.strip_prefix('/') {
-                    self.search_panel(pattern.trim());
-                    self.input.clear();
-                    self.input_cursor = 0;
-                    self.history_cursor = None;
-                    return None;
+
+                    // /auto [path] — structured auto-analysis prompt → forwarded to LLM
+                    let auto_path = if rest == "auto" {
+                        Some(self.binary_path.clone().unwrap_or_default())
+                    } else if let Some(p) = rest.strip_prefix("auto ") {
+                        Some(p.trim().to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(path) = auto_path {
+                        let prompt = if path.is_empty() {
+                            "Run a full auto-analysis on the loaded binary: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.".to_string()
+                        } else {
+                            format!("Run a full auto-analysis on {}: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.", path)
+                        };
+                        if self.is_loading { return None; }
+                        if self.input_history.last().map_or(true, |last| last != &msg) {
+                            self.input_history.push(msg.clone());
+                        }
+                        self.history_cursor = None;
+                        self.input_saved = String::new();
+                        self.chat.push(ChatMsg::User(msg.clone()));
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.is_loading = true;
+                        self.status = "Running auto-analysis…".to_string();
+                        self.active_tab = Tab::Chat;
+                        self.scroll[Tab::Chat as usize] = 0;
+                        return Some(prompt);
+                    }
+
+                    // /timeout <n> — update per-request HTTP timeout
+                    if let Some(t_rest) = rest.strip_prefix("timeout ") {
+                        let t_rest = t_rest.trim();
+                        match t_rest.parse::<u64>() {
+                            Ok(secs) if secs > 0 => {
+                                crate::llm::set_timeout_secs(secs);
+                                self.status = format!("Timeout set to {}s", secs);
+                            }
+                            _ => {
+                                self.status = format!(
+                                    "Invalid timeout: '{}' (must be a positive integer)", t_rest
+                                );
+                            }
+                        }
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.clear_completions();
+                        return None;
+                    }
+
+                    // /plugins  and  /run <name> [path]
+                    // These are intercepted in the main.rs message loop before reaching
+                    // the LLM agent.  We show the user-typed form in the chat and forward
+                    // the bare form (without '/') so the interceptor recognises it.
+                    if rest == "plugins" || rest.starts_with("run ") {
+                        // Auto-inject binary path for /run when none given
+                        let forwarded = if let Some(plugin_rest) = rest.strip_prefix("run ") {
+                            let parts: Vec<&str> = plugin_rest.splitn(2, ' ').collect();
+                            let plugin_name = parts[0].trim();
+                            let has_binary = parts.get(1)
+                                .map_or(false, |s| !s.trim().is_empty());
+                            if !has_binary {
+                                if let Some(ref bp) = self.binary_path.clone() {
+                                    format!("run {} {}", plugin_name, bp)
+                                } else {
+                                    rest.to_string()
+                                }
+                            } else {
+                                rest.to_string()
+                            }
+                        } else {
+                            rest.to_string() // "plugins"
+                        };
+                        if self.is_loading { return None; }
+                        if self.input_history.last().map_or(true, |last| last != &msg) {
+                            self.input_history.push(msg.clone());
+                        }
+                        self.history_cursor = None;
+                        self.input_saved = String::new();
+                        self.chat.push(ChatMsg::User(msg.clone()));
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.is_loading = true;
+                        self.status = "Running…".to_string();
+                        self.active_tab = Tab::Chat;
+                        self.scroll[Tab::Chat as usize] = 0;
+                        return Some(forwarded);
+                    }
+
+                    // Fallthrough:
+                    //   /pattern          (no spaces) → search current panel
+                    //   /cmd arg1 arg2    (has spaces) → direct tool command,
+                    //                     forwarded to the pipeline for dispatch
+                    if rest.contains(' ') {
+                        // Direct command — show in chat, forward with '/' intact so
+                        // main.rs routes it to dispatch_manual_command, not the LLM.
+                        if self.is_loading { return None; }
+                        if self.input_history.last().map_or(true, |last| last != &msg) {
+                            self.input_history.push(msg.clone());
+                        }
+                        self.history_cursor = None;
+                        self.input_saved = String::new();
+                        self.chat.push(ChatMsg::User(msg.clone()));
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.is_loading = true;
+                        self.status = "Running command…".to_string();
+                        self.active_tab = Tab::Chat;
+                        self.scroll[Tab::Chat as usize] = 0;
+                        return Some(msg.clone()); // forwarded with '/' so main.rs dispatches it
+                    } else {
+                        // No args — treat as panel search pattern
+                        self.search_panel(rest);
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.history_cursor = None;
+                        return None;
+                    }
                 }
 
                 // `:cmd args` — command palette shortcut: strip `:` and pre-fill input.
@@ -1619,72 +1750,7 @@ impl App {
                     return None;
                 }
 
-                // `auto [path]` — structured auto-analysis prompt
-                let auto_path = if msg == "auto" {
-                    Some(self.binary_path.clone().unwrap_or_default())
-                } else if let Some(p) = msg.strip_prefix("auto ") {
-                    Some(p.trim().to_string())
-                } else {
-                    None
-                };
-                if let Some(path) = auto_path {
-                    let prompt = if path.is_empty() {
-                        "Run a full auto-analysis on the loaded binary: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.".to_string()
-                    } else {
-                        format!("Run a full auto-analysis on {}: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.", path)
-                    };
-                    if self.is_loading { return None; }
-                    if self.input_history.last().map_or(true, |last| last != &prompt) {
-                        self.input_history.push(prompt.clone());
-                    }
-                    self.history_cursor = None;
-                    self.input_saved = String::new();
-                    self.chat.push(ChatMsg::User(prompt.clone()));
-                    self.input.clear();
-                    self.input_cursor = 0;
-                    self.is_loading = true;
-                    self.status = "Running auto-analysis…".to_string();
-                    self.active_tab = Tab::Chat;
-                    self.scroll[Tab::Chat as usize] = 0;
-                    return Some(prompt);
-                }
-
-                // `timeout <n>` — set per-request HTTP timeout (seconds).
-                if let Some(rest) = msg.strip_prefix("timeout ") {
-                    let rest = rest.trim();
-                    match rest.parse::<u64>() {
-                        Ok(secs) if secs > 0 => {
-                            crate::llm::set_timeout_secs(secs);
-                            self.status = format!("Timeout set to {}s", secs);
-                        }
-                        _ => {
-                            self.status = format!("Invalid timeout: '{}' (must be a positive integer)", rest);
-                        }
-                    }
-                    self.input.clear();
-                    self.input_cursor = 0;
-                    self.clear_completions();
-                    return None;
-                }
-
-                // `run <name>` — plugin command: auto-inject current binary path
-                // when none is specified so scripts can use the `binary` global.
-                let msg = if let Some(rest) = msg.strip_prefix("run ") {
-                    let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                    let plugin_name = parts[0].trim();
-                    let has_binary  = parts.get(1).map_or(false, |s| !s.trim().is_empty());
-                    if !has_binary {
-                        if let Some(ref bp) = self.binary_path.clone() {
-                            format!("run {} {}", plugin_name, bp)
-                        } else {
-                            msg
-                        }
-                    } else {
-                        msg
-                    }
-                } else {
-                    msg
-                };
+                let msg = msg;
 
                 if self.is_loading {
                     return None;
@@ -2209,28 +2275,30 @@ fn welcome_lines() -> Vec<Line<'static>> {
         div(),
         blank(),
         // ── Commands reference ────────────────────────────────────────────────
-        sec("Quick Commands  (type in the input box, no AI needed)"),
+        sec("Quick Commands  (start with  /  — no AI, direct tool calls)"),
         div(),
-        cmd("help",      "",                      "Full command list"),
-        cmd("entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
-        cmd("search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
-        cmd("patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
-        cmd("yara",      "<path> <vaddr> [name]", "YARA rule for a function"),
-        cmd("disasm",    "<path> [vaddr]",         "Disassemble at address"),
-        cmd("functions", "<path>",                "List all functions"),
-        cmd("decompile", "<path> [vaddr]",         "Decompile a function"),
-        cmd("imports",   "<path>",                "Resolve PLT / PE imports"),
-        cmd("scan",      "<path>",                "Vulnerability scan"),
-        cmd("auto",      "<path>",                "Full auto-analysis pass"),
-        cmd("diff",      "<a> <b>",               "Diff two binaries by content"),
-        cmd("report",    "<path>",                "Export HTML analysis report"),
-        cmd("cfg",       "<path> <vaddr>",         "Control-flow graph for a function"),
-        cmd("callgraph", "<path>",                "Full call graph"),
+        cmd("/entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
+        cmd("/search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
+        cmd("/patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
+        cmd("/yara",      "<path> <vaddr> [name]", "YARA rule for a function"),
+        cmd("/disasm",    "<path> [vaddr]",         "Disassemble at address"),
+        cmd("/functions", "<path>",                "List all functions"),
+        cmd("/decompile", "<path> [vaddr]",         "Decompile a function"),
+        cmd("/imports",   "<path>",                "Resolve PLT / PE imports"),
+        cmd("/scan",      "<path>",                "Vulnerability scan"),
+        cmd("/diff",      "<a> <b>",               "Diff two binaries by content"),
+        cmd("/report",    "<path>",                "Export HTML analysis report"),
+        cmd("/cfg",       "<path> <vaddr>",         "Control-flow graph for a function"),
+        cmd("/callgraph", "<path>",                "Full call graph"),
         blank(),
         sec("TUI Shortcuts  (when the input field is empty)"),
         div(),
-        kb("g 0xADDR",   "Jump to address in current panel"),
-        kb("/pattern",   "Search panel  ·  n = next  ·  N = prev  ·  Esc = clear"),
+        kb("/goto 0xADDR",  "Jump to address in current panel  (also /g 0xADDR)"),
+        kb("/pattern",      "Search panel  ·  n = next  ·  N = prev  ·  Esc = clear"),
+        kb("/auto [path]",  "Run full auto-analysis and summarise"),
+        kb("/plugins",      "List installed plugins"),
+        kb("/run <name>",   "Run a plugin by name"),
+        kb("/timeout <n>",  "Set HTTP timeout in seconds"),
         kb("y",          "Copy panel content to system clipboard"),
         kb("1 – 7",      "Switch tab directly"),
         kb("Tab",        "Cycle to next tab"),
@@ -2883,14 +2951,21 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
                 kb("1–8",              "Switch to tab directly  (8=Notes)"),
                 kb("Tab / Shift+Tab",  "Cycle tabs  ·  split-pane: switch focus"),
                 kb("s",               "Toggle split-pane (Disasm | Decompile)"),
-                kb("g 0xADDR",        "Jump to address in current panel"),
+                kb("/goto 0xADDR",    "Jump to address  (also /g 0xADDR)"),
                 kb("[  ]",             "Navigate back / forward (address history)"),
                 kb("j  k",            "Move line cursor in panel"),
                 kb("Enter",           "Go-to-definition for address at cursor"),
                 Line::raw(""),
-                sec("Search & Copy"),
+                sec("Slash Commands  (type in input, press Enter)"),
                 div(),
                 kb("/pattern",        "Search panel  ·  n=next  N=prev  Esc=clear"),
+                kb("/auto [path]",    "Full auto-analysis + summary"),
+                kb("/plugins",        "List installed plugins"),
+                kb("/run <name>",     "Run a plugin by name"),
+                kb("/timeout <n>",    "Set HTTP timeout (seconds)"),
+                Line::raw(""),
+                sec("Copy & Export"),
+                div(),
                 kb("y",               "Copy panel content to system clipboard"),
                 kb("Ctrl+E",          "Export markdown summary to clipboard"),
                 Line::raw(""),
@@ -2917,7 +2992,7 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
                 kb("Ctrl+R",          "Fill input with last history entry (cycle)"),
                 kb("Ctrl+X",          "Cancel current agent turn"),
                 kb("r",               "Retry last message (when status shows Error)"),
-                kb(":",               "Command prefix  e.g.  :auto /bin/ls"),
+                kb(":",               "LLM prompt shortcut  e.g.  :decompile 0x401000"),
                 kb("PgUp  PgDn",      "Scroll active panel"),
                 Line::raw(""),
                 sec("Other"),
@@ -2952,7 +3027,7 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
     } else if app.is_loading {
         "Ctrl+X:cancel  Tab:tab  ?:help"
     } else {
-        "Tab  1-8:tab  s:split  R:rename  c:comment  a:note  ?:help  /:search  Ctrl+E:export"
+        "Tab  1-8:tab  s:split  R:rename  c:comment  a:note  ?:help  /:cmd  Ctrl+E:export"
     };
 
     // Right-side info: arch · focused addr · token budget bar
