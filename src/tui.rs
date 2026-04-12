@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture,
         Event, EventStream, KeyCode, KeyModifiers,
         MouseEvent, MouseEventKind,
     },
@@ -1543,7 +1542,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -1563,7 +1562,7 @@ pub async fn run_tui(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(info);
     }));
 
@@ -1622,7 +1621,7 @@ pub async fn run_tui(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -1800,7 +1799,9 @@ fn render_panel_split(f: &mut Frame, area: Rect, app: &App, tab: Tab, focused: b
 
     let scroll = app.scroll[tab as usize];
     f.render_widget(
-        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
         inner,
     );
 }
@@ -2215,7 +2216,9 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
 
     let scroll = app.scroll[tab as usize];
     f.render_widget(
-        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
         inner,
     );
 }
@@ -2826,7 +2829,9 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
 
     let scroll = app.scroll[Tab::Notes as usize];
     f.render_widget(
-        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
         inner,
     );
 }
