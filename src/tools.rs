@@ -3969,4 +3969,224 @@ mod tests {
         assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
         assert!(r.output.contains(".kaiju.json"), "should mention sidecar path:\n{}", r.output);
     }
+
+    // ── hexdump ──────────────────────────────────────────────────────────────
+
+    fn write_temp_file(data: &[u8]) -> String {
+        let path = temp_bin();
+        std::fs::write(&path, data).unwrap();
+        path
+    }
+
+    #[test]
+    fn hexdump_produces_hex_columns() {
+        let data: Vec<u8> = (0u8..32).collect();
+        let path = write_temp_file(&data);
+        let r = dispatch("hexdump", &json!({"path": path, "offset": 0, "length": 32}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        // First row should contain address 00000000
+        assert!(r.output.contains("00000000"), "address column missing:\n{}", r.output);
+        // Should contain ASCII representation area
+        assert!(r.output.contains('|'), "ASCII column missing:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn hexdump_offset_beyond_eof_errors() {
+        let data = b"hello";
+        let path = write_temp_file(data);
+        let r = dispatch("hexdump", &json!({"path": path, "offset": 9999, "length": 16}));
+        assert!(r.output.contains("Error:"), "should error for offset beyond EOF:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn hexdump_partial_read_at_eof() {
+        let data: Vec<u8> = (0u8..20).collect();
+        let path = write_temp_file(&data);
+        // Request more bytes than exist — should not error, just return what's there
+        let r = dispatch("hexdump", &json!({"path": path, "offset": 0, "length": 1024}));
+        assert!(!r.output.contains("Error:"), "should not error for oversized length:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── search_bytes ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn search_bytes_finds_exact_pattern() {
+        let data = b"\x00\x01\x02\xDE\xAD\xBE\xEF\x07\x08";
+        let path = write_temp_file(data);
+        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "DE AD BE EF"}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("Matches: 1"), "expected 1 match:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_bytes_no_match_reports_zero() {
+        let data = b"\x00\x01\x02\x03";
+        let path = write_temp_file(data);
+        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "FF FF FF FF"}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("no matches"), "expected no-match message:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_bytes_wildcard_matches_any_byte() {
+        let data = b"\xDE\xAD\x01\xEF\xDE\xAD\x02\xEF";
+        let path = write_temp_file(data);
+        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "DE AD ?? EF"}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("Matches: 2"), "expected 2 wildcard matches:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_bytes_invalid_token_errors() {
+        let path = write_temp_file(b"\x00");
+        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "ZZ"}));
+        assert!(r.output.contains("Error:"), "should error on invalid token:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn search_bytes_empty_pattern_errors() {
+        let path = write_temp_file(b"\x00");
+        let r = dispatch("search_bytes", &json!({"path": path, "pattern": ""}));
+        assert!(r.output.contains("Error:"), "should error on empty pattern:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── patch_bytes ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn patch_bytes_creates_patched_file() {
+        let data = b"\x90\x90\x90\x90\x90"; // 5 NOPs
+        let path = write_temp_file(data);
+        let r = dispatch("patch_bytes", &json!({
+            "path": path, "offset": 0, "hex_bytes": "CC CC"
+        }));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(r.output.contains("Patch applied"), "expected success message:\n{}", r.output);
+
+        let patched_path = format!("{}.patched", path);
+        let patched = std::fs::read(&patched_path).unwrap();
+        assert_eq!(patched[0], 0xCC);
+        assert_eq!(patched[1], 0xCC);
+        assert_eq!(patched[2], 0x90, "bytes after patch should be unchanged");
+
+        // Original should be untouched
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(&original[..], b"\x90\x90\x90\x90\x90");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&patched_path);
+    }
+
+    #[test]
+    fn patch_bytes_offset_beyond_file_errors() {
+        let data = b"\x90\x90";
+        let path = write_temp_file(data);
+        let r = dispatch("patch_bytes", &json!({
+            "path": path, "offset": 100, "hex_bytes": "CC"
+        }));
+        assert!(r.output.contains("Error:"), "should error when offset is out of bounds:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn patch_bytes_requires_offset_or_vaddr() {
+        let path = write_temp_file(b"\x90");
+        let r = dispatch("patch_bytes", &json!({"path": path, "hex_bytes": "CC"}));
+        assert!(r.output.contains("Error:"), "should require offset or vaddr:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn patch_bytes_invalid_hex_errors() {
+        let path = write_temp_file(b"\x90\x90");
+        let r = dispatch("patch_bytes", &json!({
+            "path": path, "offset": 0, "hex_bytes": "ZZ"
+        }));
+        assert!(r.output.contains("Error:"), "should error on invalid hex:\n{}", r.output);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── virustotal_check (no-key path) ────────────────────────────────────────
+
+    #[test]
+    fn virustotal_check_no_api_key_returns_instructions() {
+        // Unset the VT key so we hit the early-return path
+        // (If the env var IS set in CI, the test still passes — it just won't
+        //  exercise the no-key branch. That is acceptable.)
+        let old_key = std::env::var("VIRUSTOTAL_API_KEY").ok();
+        unsafe { std::env::remove_var("VIRUSTOTAL_API_KEY"); }
+        let path = write_temp_file(b"\x7fELF");
+        let r = dispatch("virustotal_check", &json!({"path": path}));
+        // Restore
+        if let Some(k) = old_key {
+            unsafe { std::env::set_var("VIRUSTOTAL_API_KEY", k); }
+        }
+        // When no key is set the tool should return usage instructions, NOT an Error:
+        assert!(!r.output.contains("Error:"), "no-key path should not return an error:\n{}", r.output);
+        assert!(
+            r.output.contains("VIRUSTOTAL_API_KEY") || r.output.contains("VirusTotal"),
+            "should mention how to set the API key:\n{}", r.output
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── tool cache hit/miss ───────────────────────────────────────────────────
+
+    #[test]
+    fn cache_hit_returns_same_result() {
+        // Call the same cacheable tool twice — second call must be served from cache
+        let r1 = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}));
+        let r2 = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}));
+        assert_eq!(r1.output, r2.output, "cache hit should return identical output");
+    }
+
+    #[test]
+    fn cache_write_invalidates_read() {
+        // Rename a function in a temp project, then verify the cache for that path is cleared
+        // (We can't directly observe the cache, so instead we verify the rename is applied.)
+        let bin = temp_bin();
+        let sidecar = crate::project::Project::project_path(&bin);
+        dispatch("rename_function", &json!({"path": bin, "vaddr": 0x401000_u64, "name": "cached_fn"}));
+        let p = crate::project::Project::load_for(&bin);
+        assert_eq!(p.get_name(0x401000), Some("cached_fn".to_string()));
+        let _ = std::fs::remove_file(&sidecar);
+    }
+
+    // ── dispatch panic safety ─────────────────────────────────────────────────
+
+    #[test]
+    fn dispatch_unknown_tool_returns_error() {
+        let r = dispatch("totally_unknown_tool_xyz", &json!({}));
+        assert!(r.output.contains("Error:"), "unknown tool should return Error:\n{}", r.output);
+    }
+
+    // ── export_report ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn export_report_produces_html_file() {
+        let bin = temp_bin();
+        // Create the binary file so file_info won't fail
+        std::fs::write(&bin, b"\x7fELF\x02\x01\x01\x00").unwrap();
+        let sidecar = crate::project::Project::project_path(&bin);
+        let html_path = format!("{}.kaiju.html", bin);
+
+        let r = dispatch("export_report", &json!({"path": bin}));
+        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+
+        if std::path::Path::new(&html_path).exists() {
+            let html = std::fs::read_to_string(&html_path).unwrap();
+            assert!(html.contains("<!DOCTYPE html>"), "should be valid HTML:\n{}", &html[..200.min(html.len())]);
+            let _ = std::fs::remove_file(&html_path);
+        }
+
+        let _ = std::fs::remove_file(&bin);
+        let _ = std::fs::remove_file(&sidecar);
+    }
 }

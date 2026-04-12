@@ -232,6 +232,101 @@ mod tests {
         };
         assert_eq!(m.texts(), vec!["hello", " world"]);
     }
+
+    // ── constructor helpers ───────────────────────────────────────────────────
+
+    #[test]
+    fn user_text_sets_role() {
+        let m = LlmMessage::user_text("hi");
+        assert_eq!(m.role, MessageRole::User);
+        assert_eq!(m.texts(), vec!["hi"]);
+    }
+
+    #[test]
+    fn tool_results_constructor_role_is_user() {
+        // Tool results are submitted as user messages per OpenAI/Anthropic convention
+        let m = tool_result_msg("data");
+        assert_eq!(m.role, MessageRole::User);
+    }
+
+    #[test]
+    fn tool_results_constructor_has_tool_result_content() {
+        let tr = ToolResult {
+            call_id: "abc".to_string(),
+            name: "my_tool".to_string(),
+            content: "output".to_string(),
+        };
+        let m = LlmMessage::tool_results(vec![tr]);
+        assert!(m.is_tool_result_message());
+        // texts() should return nothing — only ToolResult content, not Text
+        assert!(m.texts().is_empty());
+    }
+
+    #[test]
+    fn tool_results_multiple_results_all_present() {
+        let results = vec![
+            ToolResult { call_id: "1".to_string(), name: "a".to_string(), content: "out_a".to_string() },
+            ToolResult { call_id: "2".to_string(), name: "b".to_string(), content: "out_b".to_string() },
+        ];
+        let m = LlmMessage::tool_results(results);
+        assert_eq!(m.content.len(), 2);
+        assert!(m.is_tool_result_message());
+    }
+
+    #[test]
+    fn estimated_chars_tool_call() {
+        let m = LlmMessage {
+            role: MessageRole::Assistant,
+            content: vec![MessageContent::ToolCall(ToolCall {
+                id: "id".to_string(),
+                name: "fn".to_string(),          // 2 chars
+                args: serde_json::json!({"k":"v"}), // {"k":"v"} = 9 chars
+            })],
+        };
+        // name.len() + args.to_string().len() + 16 overhead
+        let expected = 2 + serde_json::json!({"k":"v"}).to_string().len() + 16;
+        assert_eq!(m.estimated_chars(), expected);
+    }
+
+    #[test]
+    fn is_tool_result_message_empty_content_is_false() {
+        let m = LlmMessage { role: MessageRole::User, content: vec![] };
+        assert!(!m.is_tool_result_message(), "empty content should not be a tool result message");
+    }
+
+    // ── serde roundtrip ───────────────────────────────────────────────────────
+
+    #[test]
+    fn llm_message_serde_roundtrip() {
+        let original = LlmMessage::user_text("roundtrip test");
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: LlmMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.role, original.role);
+        assert_eq!(restored.texts(), original.texts());
+    }
+
+    #[test]
+    fn tool_result_serde_roundtrip() {
+        let tr = ToolResult {
+            call_id: "xyz".to_string(),
+            name: "my_tool".to_string(),
+            content: "the output".to_string(),
+        };
+        let json = serde_json::to_string(&tr).unwrap();
+        let restored: ToolResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.call_id, "xyz");
+        assert_eq!(restored.name, "my_tool");
+        assert_eq!(restored.content, "the output");
+    }
+
+    #[test]
+    fn message_role_serde_roundtrip() {
+        for role in [MessageRole::User, MessageRole::Assistant] {
+            let json = serde_json::to_string(&role).unwrap();
+            let restored: MessageRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, role);
+        }
+    }
 }
 
 // ─── Backend trait ────────────────────────────────────────────────────────────

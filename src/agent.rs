@@ -519,6 +519,294 @@ mod tests {
         trim_history(&mut history); // must not panic
         assert!(history.is_empty());
     }
+
+    // ── extract_focus_vaddr ──────────────────────────────────────────────────
+
+    #[test]
+    fn focus_vaddr_from_disassemble() {
+        let args = serde_json::json!({"path": "/bin/foo", "vaddr": 0x401000_u64});
+        assert_eq!(extract_focus_vaddr("disassemble", &args), Some(0x401000));
+    }
+
+    #[test]
+    fn focus_vaddr_from_fn_vaddr() {
+        let args = serde_json::json!({"path": "/bin/foo", "fn_vaddr": 0x402000_u64});
+        assert_eq!(extract_focus_vaddr("rename_function", &args), Some(0x402000));
+    }
+
+    #[test]
+    fn focus_vaddr_unrelated_tool_returns_none() {
+        let args = serde_json::json!({"path": "/bin/foo"});
+        assert_eq!(extract_focus_vaddr("file_info", &args), None);
+        assert_eq!(extract_focus_vaddr("strings_extract", &args), None);
+    }
+
+    #[test]
+    fn focus_vaddr_missing_field_returns_none() {
+        let args = serde_json::json!({"path": "/bin/foo"});
+        assert_eq!(extract_focus_vaddr("disassemble", &args), None);
+    }
+
+    // ── truncate_preview ─────────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_preview_short_string() {
+        assert_eq!(truncate_preview("hello", 100), "hello");
+    }
+
+    #[test]
+    fn truncate_preview_exact_boundary() {
+        let s = "a".repeat(100);
+        assert_eq!(truncate_preview(&s, 100), s);
+    }
+
+    #[test]
+    fn truncate_preview_long_string() {
+        let s = "a".repeat(150);
+        let result = truncate_preview(&s, 100);
+        assert!(result.ends_with('…'));
+        // The non-ellipsis part should be 100 chars
+        assert!(result.len() > 100);
+    }
+
+    #[test]
+    fn truncate_preview_trims_whitespace() {
+        assert_eq!(truncate_preview("  hello  ", 100), "hello");
+    }
+
+    // ── args_display ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn args_display_simple_string() {
+        let args = serde_json::json!({"path": "/bin/foo"});
+        let d = args_display(&args);
+        assert!(d.contains("path"), "should contain key");
+        assert!(d.contains("/bin/foo"), "should contain value");
+    }
+
+    #[test]
+    fn args_display_long_string_truncated() {
+        let long_val = "x".repeat(100);
+        let args = serde_json::json!({"key": long_val});
+        let d = args_display(&args);
+        assert!(d.contains('…'), "long string should be truncated with ellipsis");
+    }
+
+    #[test]
+    fn args_display_numeric_value() {
+        let args = serde_json::json!({"vaddr": 0x401000_u64});
+        let d = args_display(&args);
+        assert!(d.contains("vaddr"), "should contain key");
+    }
+
+    #[test]
+    fn args_display_non_object() {
+        let args = serde_json::json!("bare string");
+        let d = args_display(&args);
+        assert_eq!(d, "\"bare string\"");
+    }
+
+    // ── snapshot_context ─────────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_context_empty_history() {
+        let entries = snapshot_context(&[]);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn snapshot_context_text_entry() {
+        let history = vec![LlmMessage::user_text("analyze this")];
+        let entries = snapshot_context(&history);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].role, "user");
+        assert_eq!(entries[0].kind, "text");
+        assert!(entries[0].tool_name.is_none());
+        assert_eq!(entries[0].char_count, "analyze this".len());
+    }
+
+    #[test]
+    fn snapshot_context_tool_call_entry() {
+        use crate::llm::{MessageRole, MessageContent, ToolCall};
+        let msg = LlmMessage {
+            role: MessageRole::Assistant,
+            content: vec![MessageContent::ToolCall(ToolCall {
+                id: "id1".to_string(),
+                name: "file_info".to_string(),
+                args: serde_json::json!({"path": "/bin/ls"}),
+            })],
+        };
+        let entries = snapshot_context(&[msg]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "tool_call");
+        assert_eq!(entries[0].tool_name.as_deref(), Some("file_info"));
+    }
+
+    #[test]
+    fn snapshot_context_tool_result_entry() {
+        use crate::llm::{ToolResult};
+        let msg = LlmMessage::tool_results(vec![ToolResult {
+            call_id: "id1".to_string(),
+            name: "hexdump".to_string(),
+            content: "deadbeef".to_string(),
+        }]);
+        let entries = snapshot_context(&[msg]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "tool_result");
+        assert_eq!(entries[0].tool_name.as_deref(), Some("hexdump"));
+        assert_eq!(entries[0].char_count, "deadbeef".len());
+    }
+
+    // ── summarize_tool_result_msg ─────────────────────────────────────────────
+
+    #[test]
+    fn summarize_contains_tool_name() {
+        use crate::llm::ToolResult;
+        let msg = LlmMessage::tool_results(vec![ToolResult {
+            call_id: "id".to_string(),
+            name: "disassemble".to_string(),
+            content: "push rbp\nmov rbp, rsp\nret".to_string(),
+        }]);
+        let s = summarize_tool_result_msg(&msg);
+        assert!(s.contains("disassemble"), "should mention tool name");
+        assert!(s.contains("context-compressed"), "should be marked compressed");
+    }
+
+    #[test]
+    fn summarize_includes_line_count() {
+        use crate::llm::ToolResult;
+        let content = (1..=10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let msg = LlmMessage::tool_results(vec![ToolResult {
+            call_id: "id".to_string(),
+            name: "mytool".to_string(),
+            content,
+        }]);
+        let s = summarize_tool_result_msg(&msg);
+        assert!(s.contains("10 lines"), "should include line count: {}", s);
+    }
+
+    #[test]
+    fn summarize_non_tool_result_returns_empty() {
+        let msg = LlmMessage::user_text("hello");
+        let s = summarize_tool_result_msg(&msg);
+        assert!(s.is_empty(), "non-tool-result message should produce empty summary");
+    }
+
+    // ── session_path ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn session_path_produces_valid_path() {
+        let p = session_path("/tmp/my_binary").unwrap();
+        let s = p.to_str().unwrap();
+        assert!(s.contains(".kaiju"), "should be under .kaiju dir: {}", s);
+        assert!(s.ends_with(".session.json"), "should end with .session.json: {}", s);
+        assert!(s.contains("_tmp_my_binary"), "slug should encode path: {}", s);
+    }
+
+    #[test]
+    fn session_path_slug_truncated_for_long_names() {
+        let long_path = format!("/tmp/{}", "a".repeat(200));
+        let p = session_path(&long_path).unwrap();
+        let filename = p.file_name().unwrap().to_str().unwrap();
+        // Slug is capped at 120 chars + ".session.json"
+        assert!(filename.len() <= 135, "filename too long: {} chars", filename.len());
+    }
+
+    // ── pop_last_user_message ─────────────────────────────────────────────────
+
+    struct MockBackend;
+
+    #[async_trait::async_trait]
+    impl crate::llm::LlmBackend for MockBackend {
+        async fn generate(
+            &self,
+            _system: &str,
+            _history: &[crate::llm::LlmMessage],
+            _tools: &[crate::llm::ToolDefinition],
+        ) -> anyhow::Result<crate::llm::LlmMessage> {
+            Ok(crate::llm::LlmMessage::user_text("mock"))
+        }
+        fn display_name(&self) -> String { "mock".to_string() }
+    }
+
+    fn make_agent() -> Agent {
+        Agent::new(Box::new(MockBackend))
+    }
+
+    #[test]
+    fn pop_last_user_message_returns_text() {
+        let mut agent = make_agent();
+        agent.history.push(LlmMessage::user_text("first"));
+        agent.history.push(LlmMessage::user_text("second"));
+        let popped = agent.pop_last_user_message();
+        assert_eq!(popped.as_deref(), Some("second"));
+        assert_eq!(agent.history.len(), 1, "only one message should remain");
+    }
+
+    #[test]
+    fn pop_last_user_message_empty_history_returns_none() {
+        let mut agent = make_agent();
+        assert!(agent.pop_last_user_message().is_none());
+    }
+
+    #[test]
+    fn pop_last_user_message_skips_non_user_messages() {
+        use crate::llm::{MessageRole, MessageContent, ToolCall};
+        let mut agent = make_agent();
+        agent.history.push(LlmMessage::user_text("my question"));
+        // Push an assistant message (tool call)
+        agent.history.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: vec![MessageContent::ToolCall(ToolCall {
+                id: "id".to_string(),
+                name: "file_info".to_string(),
+                args: serde_json::json!({}),
+            })],
+        });
+        let popped = agent.pop_last_user_message();
+        assert_eq!(popped.as_deref(), Some("my question"));
+        // The assistant message should remain
+        assert_eq!(agent.history.len(), 1);
+        assert_eq!(agent.history[0].role, MessageRole::Assistant);
+    }
+
+    // ── save/load session ─────────────────────────────────────────────────────
+
+    #[test]
+    fn save_load_session_roundtrip() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
+        let fake_binary = format!("/tmp/kaijulab_test_session_{}.bin", ts);
+
+        let mut agent = make_agent();
+        agent.history.push(LlmMessage::user_text("hello session"));
+        agent.save_session(&fake_binary).unwrap();
+
+        assert!(Agent::has_session(&fake_binary), "session should exist after save");
+
+        let mut agent2 = make_agent();
+        let loaded = agent2.load_session(&fake_binary).unwrap();
+        assert!(loaded, "should report session was loaded");
+        assert_eq!(agent2.history.len(), 1);
+        let texts: Vec<_> = agent2.history[0].texts().to_vec();
+        assert_eq!(texts, vec!["hello session"]);
+
+        // Cleanup
+        let path = session_path(&fake_binary).unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_session_nonexistent_returns_false() {
+        let mut agent = make_agent();
+        let result = agent.load_session("/no/such/binary/ever.bin").unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn has_session_returns_false_for_missing() {
+        assert!(!Agent::has_session("/no/such/binary/ever.bin"));
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

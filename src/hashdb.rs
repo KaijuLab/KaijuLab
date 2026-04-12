@@ -168,3 +168,154 @@ fn global_dir() -> Result<PathBuf> {
         .context("cannot determine home directory (HOME / USERPROFILE not set)")?;
     Ok(PathBuf::from(home).join(".kaiju"))
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── fnv1a ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn fnv1a_empty_bytes_is_offset_basis() {
+        // FNV-1a of empty input is the offset basis constant
+        assert_eq!(fnv1a(&[]), 0xcbf29ce484222325u64);
+    }
+
+    #[test]
+    fn fnv1a_known_value() {
+        // FNV-1a is deterministic — verify same input always produces same output
+        let h = fnv1a(b"a");
+        assert_ne!(h, 0, "hash of 'a' must be non-zero");
+        assert_eq!(h, fnv1a(b"a"), "hash must be deterministic");
+        // Different byte → different hash
+        assert_ne!(h, fnv1a(b"b"), "different bytes must produce different hashes");
+    }
+
+    #[test]
+    fn fnv1a_different_inputs_differ() {
+        assert_ne!(fnv1a(b"hello"), fnv1a(b"world"));
+    }
+
+    #[test]
+    fn fnv1a_same_input_deterministic() {
+        let bytes = b"test data for hashing";
+        assert_eq!(fnv1a(bytes), fnv1a(bytes));
+    }
+
+    // ── normalised_hash ───────────────────────────────────────────────────────
+
+    #[test]
+    fn normalised_hash_empty_is_fnv1a_empty() {
+        assert_eq!(normalised_hash(&[], 64), fnv1a(&[]));
+    }
+
+    #[test]
+    fn normalised_hash_non_x86_passes_through() {
+        // bitness != 32/64 → raw hash
+        let bytes = b"\x01\x02\x03\x04";
+        let raw = fnv1a(bytes);
+        // Non-x86 bitness (e.g. 16) → raw bytes unchanged → same as fnv1a
+        let h16 = normalised_hash(bytes, 16);
+        assert_eq!(h16, raw);
+    }
+
+    #[test]
+    fn normalised_hash_call_rel32_zeroed() {
+        // E8 xx xx xx xx = CALL rel32
+        // Two calls with different relative targets should hash the same
+        let call1 = vec![0xE8u8, 0x10, 0x00, 0x00, 0x00, 0xC3]; // CALL +0x10; RET
+        let call2 = vec![0xE8u8, 0x20, 0x00, 0x00, 0x00, 0xC3]; // CALL +0x20; RET
+        assert_eq!(
+            normalised_hash(&call1, 64),
+            normalised_hash(&call2, 64),
+            "CALL rel32 with different targets should hash identically after normalisation"
+        );
+    }
+
+    #[test]
+    fn normalised_hash_different_non_branch_code_differs() {
+        // NOP vs. INC eax — no branches, raw bytes differ
+        let nop  = vec![0x90u8]; // NOP
+        let inc  = vec![0xFFu8, 0xC0]; // INC eax
+        assert_ne!(normalised_hash(&nop, 64), normalised_hash(&inc, 64));
+    }
+
+    // ── FnHashDb ──────────────────────────────────────────────────────────────
+
+    fn open_in_memory() -> FnHashDb {
+        // Use an in-memory SQLite database for isolation
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        FnHashDb { conn }
+    }
+
+    #[test]
+    fn register_and_lookup_roundtrip() {
+        let db = open_in_memory();
+        db.register(0xdeadbeef_u64, "main", "/bin/foo", 42).unwrap();
+        let results = db.lookup(0xdeadbeef_u64).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "main");
+        assert_eq!(results[0].1, "/bin/foo");
+    }
+
+    #[test]
+    fn lookup_unknown_hash_returns_empty() {
+        let db = open_in_memory();
+        let results = db.lookup(0x1234567890abcdef_u64).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn register_multiple_names_for_same_hash() {
+        let db = open_in_memory();
+        db.register(0xAABB_u64, "alpha", "/a", 10).unwrap();
+        db.register(0xAABB_u64, "beta",  "/b", 20).unwrap();
+        let results = db.lookup(0xAABB_u64).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn register_idempotent_on_same_hash_and_name() {
+        let db = open_in_memory();
+        db.register(0x1111_u64, "foo", "/x", 5).unwrap();
+        db.register(0x1111_u64, "foo", "/x", 5).unwrap(); // should not error
+        let results = db.lookup(0x1111_u64).unwrap();
+        assert_eq!(results.len(), 1, "deduplication: same (hash, name) should appear once");
+    }
+
+    #[test]
+    fn all_returns_all_entries_sorted_by_name() {
+        let db = open_in_memory();
+        db.register(0x01_u64, "zoo", "/z", 1).unwrap();
+        db.register(0x02_u64, "alpha", "/a", 2).unwrap();
+        db.register(0x03_u64, "middle", "/m", 3).unwrap();
+        let all = db.all().unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].1, "alpha");
+        assert_eq!(all[1].1, "middle");
+        assert_eq!(all[2].1, "zoo");
+    }
+
+    #[test]
+    fn all_empty_database_returns_empty_vec() {
+        let db = open_in_memory();
+        let all = db.all().unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn all_entry_fields_correct() {
+        let db = open_in_memory();
+        db.register(0xCAFE_u64, "parse", "/path/to/binary", 128).unwrap();
+        let all = db.all().unwrap();
+        assert_eq!(all.len(), 1);
+        let (hash, name, source, byte_count) = &all[0];
+        assert_eq!(*hash, 0xCAFE_u64);
+        assert_eq!(name, "parse");
+        assert_eq!(source, "/path/to/binary");
+        assert_eq!(*byte_count, 128);
+    }
+}
