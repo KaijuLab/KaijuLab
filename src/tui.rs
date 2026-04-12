@@ -2191,9 +2191,30 @@ fn highlight_disasm(line: &str) -> Line<'static> {
         Span::styled(mnemonic.to_string(), Style::new().fg(Color::Cyan).bold()),
     ];
 
-    if !operands.is_empty() {
+    // Split operands from inline comment ("; comment") produced by the disasm tool
+    // when a call target has a known name or the tool appended a DWARF annotation.
+    let (operands_part, comment_part) = if let Some(sc) = operands.find(';') {
+        (operands[..sc].trim_end(), Some(operands[sc..].trim()))
+    } else {
+        (operands, None)
+    };
+
+    if !operands_part.is_empty() {
         spans.push(Span::raw("  "));
-        spans.extend(highlight_operands(operands));
+        spans.extend(highlight_operands(operands_part));
+    }
+
+    // Inline comment — dark gray, slightly dimmed
+    if let Some(comment) = comment_part {
+        if !operands_part.is_empty() {
+            spans.push(Span::raw("  "));
+        } else {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            comment.to_string(),
+            Style::new().fg(Color::DarkGray).italic(),
+        ));
     }
 
     Line::from(spans)

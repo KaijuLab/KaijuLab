@@ -81,6 +81,10 @@ struct Cli {
     /// Headless mode: implies --no-tui --output-json; runs analysis and prints JSON to stdout.
     #[arg(long)]
     headless: bool,
+
+    /// Do not load or save a session file for this run.
+    #[arg(long)]
+    no_session: bool,
 }
 
 #[tokio::main]
@@ -178,11 +182,28 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Add --no-session CLI flag support (cli.no_session checked below)
+    let no_session = cli.no_session;
+    let session_key = cli.file.as_ref().map(|f| f.to_string_lossy().to_string());
+
     // Interactive TUI (default)
     let (event_tx, event_rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
     let (user_tx, mut user_rx) = mpsc::channel::<String>(4);
 
     let mut ag = agent::Agent::new(backend).with_events(event_tx);
+
+    // Restore previous session if one exists for this binary
+    if !no_session {
+        if let Some(ref key) = session_key {
+            if agent::Agent::has_session(key) {
+                if let Err(e) = ag.load_session(key) {
+                    eprintln!("Warning: could not load session: {}", e);
+                }
+            }
+        }
+    }
+
+    let initial_file = cli.file.as_deref();
 
     tokio::spawn(async move {
         while let Some(msg) = user_rx.recv().await {
@@ -190,9 +211,17 @@ async fn main() -> Result<()> {
                 eprintln!("agent error: {}", e);
             }
         }
+        // Save session on shutdown
+        if !no_session {
+            if let Some(ref key) = session_key {
+                if let Err(e) = ag.save_session(key) {
+                    eprintln!("Warning: could not save session: {}", e);
+                }
+            }
+        }
     });
 
-    tui::run_tui(event_rx, user_tx, &display, None).await?;
+    tui::run_tui(event_rx, user_tx, &display, initial_file).await?;
 
     Ok(())
 }

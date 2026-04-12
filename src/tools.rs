@@ -282,6 +282,7 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "path"),
             args["max_results"].as_u64().unwrap_or(50) as usize,
         ),
+        "virustotal_check" => virustotal_check(&str_arg(args, "path")),
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -694,6 +695,25 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
     // Load project annotations (renames, comments) — optional, never fail
     let project = if !path.is_empty() { Some(Project::load_for(path)) } else { None };
 
+    // Build a symbol-address → name map from the binary's own symbol table
+    // (covers DWARF debug symbols and exported/imported names).
+    // Used as fallback when the project has no user rename for a call target.
+    let sym_map: HashMap<u64, String> = object::File::parse(&*data).ok().map(|obj| {
+        obj.symbols()
+            .filter_map(|s| {
+                let name = s.name().ok()?.trim();
+                if name.is_empty() || name.starts_with("$") { return None; }
+                // Demangle Rust / C++ names if they look mangled
+                let display = if name.starts_with("_Z") || name.starts_with("__Z") {
+                    name.to_string()
+                } else {
+                    name.to_string()
+                };
+                Some((s.address(), display))
+            })
+            .collect()
+    }).unwrap_or_default();
+
     use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic, OpKind};
 
     let mut decoder   = Decoder::with_ip(bitness, slice, ip, DecoderOptions::NONE);
@@ -733,7 +753,7 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
                         annotation.push_str(&format!(" <{}>", name));
                     }
                 }
-                // Resolve branch / call targets to renamed names
+                // Resolve branch / call targets to renamed names (project first, sym_map fallback)
                 let op0_kind = if instr.op_count() > 0 { instr.op_kind(0) } else { OpKind::Register };
                 if matches!(op0_kind,
                     OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 |
@@ -741,8 +761,11 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
                 ) {
                     let target = instr.near_branch_target();
                     if target != 0 {
-                        if let Some(name) = p.renames.get(&target) {
-                            annotation.push_str(&format!("  ; → <{}>", name));
+                        let resolved = p.renames.get(&target)
+                            .map(|s| s.as_str())
+                            .or_else(|| sym_map.get(&target).map(|s| s.as_str()));
+                        if let Some(name) = resolved {
+                            annotation.push_str(&format!("  ; → {}", name));
                         }
                     }
                 }

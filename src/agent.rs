@@ -382,6 +382,52 @@ impl Agent {
             None
         }
     }
+
+    // ─── Session persistence ─────────────────────────────────────────────────
+
+    /// Persist the current conversation history to `~/.kaiju/sessions/<slug>.json`.
+    /// The slug is derived from the binary path so each binary has its own file.
+    pub fn save_session(&self, binary_path: &str) -> anyhow::Result<()> {
+        let path = session_path(binary_path)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&self.history)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    /// Restore a previously saved conversation history from disk.
+    /// Returns `true` if a session was loaded, `false` if none existed.
+    pub fn load_session(&mut self, binary_path: &str) -> anyhow::Result<bool> {
+        let path = session_path(binary_path)?;
+        if !path.exists() {
+            return Ok(false);
+        }
+        let raw = std::fs::read_to_string(&path)?;
+        let history: Vec<LlmMessage> = serde_json::from_str(&raw)?;
+        self.history = history;
+        Ok(true)
+    }
+
+    /// True if a saved session exists for `binary_path`.
+    pub fn has_session(binary_path: &str) -> bool {
+        session_path(binary_path).map(|p| p.exists()).unwrap_or(false)
+    }
+}
+
+fn session_path(binary_path: &str) -> anyhow::Result<std::path::PathBuf> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("HOME not set"))?;
+    let sessions_dir = std::path::PathBuf::from(home).join(".kaiju").join("sessions");
+    // Derive a safe filename from the binary path
+    let slug: String = binary_path
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let slug = if slug.len() > 120 { slug[slug.len() - 120..].to_string() } else { slug };
+    Ok(sessions_dir.join(format!("{}.session.json", slug)))
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

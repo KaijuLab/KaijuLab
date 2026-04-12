@@ -20,7 +20,7 @@ pub enum MessageRole {
 }
 
 /// A single tool invocation inside a model response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     /// Provider-assigned call ID (Gemini: function name; OpenAI/Anthropic: UUID).
     /// Sent back verbatim in `ToolResult.call_id`.
@@ -30,7 +30,7 @@ pub struct ToolCall {
 }
 
 /// Result of executing a tool, to be fed back to the LLM.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub call_id: String,
     pub name: String,
@@ -38,14 +38,14 @@ pub struct ToolResult {
     pub content: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageContent {
     Text(String),
     ToolCall(ToolCall),
     ToolResult(ToolResult),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
     pub role: MessageRole,
     pub content: Vec<MessageContent>,
