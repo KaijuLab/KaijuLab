@@ -53,6 +53,9 @@ pub enum AgentEvent {
     Progress { step: usize, total: usize, label: String },
     /// The current agent turn was cancelled by the user (Ctrl+X).
     Cancelled,
+    /// Updated notes list after an add_note / delete_note tool call.
+    /// The TUI uses this to refresh the Notes tab immediately.
+    NotesUpdate(Vec<crate::project::Note>),
 }
 
 /// Estimated character budget before we start trimming old tool-result messages.
@@ -110,12 +113,50 @@ fn summarize_tool_result_msg(msg: &crate::llm::LlmMessage) -> String {
 }
 
 const SYSTEM_PROMPT: &str = "\
-You are KaijuLab, an expert reverse-engineering assistant. \
-You analyse binary files using the tools available to you. \
-Start with file_info to understand the file format, then use other tools \
-to dig deeper as needed. Be precise, technical, and explain your reasoning \
-step by step. When you encounter addresses or offsets, prefer the \
-disassemble tool to verify what the code actually does.";
+You are KaijuLab, an expert reverse-engineering assistant embedded in an interactive \
+analysis environment. You have persistent tools that write findings directly into the \
+analyst's workspace — use them proactively.
+
+## Workflow
+
+1. **Orient first**: call `load_project` to see what renames, comments, notes, and \
+vulnerability scores already exist from previous sessions. Call `list_notes` if you \
+want to read analyst observations in detail.
+
+2. **Enumerate before diving**: call `file_info` (format/arch/segments), then \
+`list_functions` (or `dwarf_info` for debug-info binaries) to understand scope.
+
+3. **Annotate as you go** — every finding should be persisted immediately:
+   - `rename_function(path, vaddr, name)` whenever you identify what a function does.
+   - `add_comment(path, vaddr, comment)` for important addresses, suspicious patterns, \
+     or non-obvious observations at instruction level.
+   - `rename_variable(path, fn_vaddr, old, new)` after decompiling to make pseudo-C readable.
+   - `set_return_type` / `set_param_type` / `set_param_name` when you can infer a signature.
+   - `add_note(path, text, vaddr?)` for high-level findings: algorithm identification, \
+     vulnerability hypotheses, analysis conclusions, or anything the analyst should know.
+   - `set_vuln_score(path, vaddr, score)` after reviewing any function: 0=clean, \
+     4-6=suspicious, 7-9=high-risk, 10=critical. Always score functions you analyse.
+
+4. **Verify with disasm/decompile**: never assume what a call target does — use \
+`disassemble` or `decompile` to confirm. Use `xrefs_to` to understand data flow.
+
+5. **Summarise at the end**: after tool calls, give a concise, structured summary of \
+what you found. Reference function names and addresses. Highlight the most important findings.
+
+## Tool selection guidance
+
+- Strings → `strings_extract` (pass `section='.rodata'` to avoid .text noise)
+- Vulnerability hunting → `scan_vulnerabilities`, then `decompile` suspicious functions, \
+  then `set_vuln_score`
+- Unknown stripped binary → `identify_library_functions` first to name libc functions
+- Import resolution → `resolve_plt` (ELF) or `resolve_pe_imports` (PE) before disassembling
+- Full pass → `auto_analyze` kicks off file_info + list_functions + strings + vuln scan
+
+## What the analyst sees
+
+Renames appear inline in disassembly and decompile output. Comments appear as `; comment` \
+annotations. Vuln scores appear as `[!]`/`[!!]` badges in the Functions panel. Notes appear \
+in the dedicated Notes tab. Everything persists across sessions in a per-binary SQLite database.";
 
 static LOADED_SYSTEM_PROMPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
@@ -400,11 +441,17 @@ impl Agent {
                     ui::print_tool_output(&tool_out.output);
                 }
 
-                // After set_vuln_score, reload the project and broadcast updated scores
+                // After write tools, reload the project and broadcast updated state to TUI
                 if tc.name == "set_vuln_score" {
                     if let Some(path) = tc.args["path"].as_str() {
                         let p = crate::project::Project::load_for(path);
                         self.emit(AgentEvent::VulnScores(p.vuln_scores.clone()));
+                    }
+                }
+                if tc.name == "add_note" || tc.name == "delete_note" {
+                    if let Some(path) = tc.args["path"].as_str() {
+                        let p = crate::project::Project::load_for(path);
+                        self.emit(AgentEvent::NotesUpdate(p.notes.clone()));
                     }
                 }
 

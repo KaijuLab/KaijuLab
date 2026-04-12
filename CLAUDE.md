@@ -258,9 +258,13 @@ is relocate-invariant (survives ASLR and recompilation).
 | `set_param_name` | Set the name of parameter N (1-indexed) |
 | `define_struct` | Define a named struct with typed fields |
 | `list_types` | List all struct and signature annotations in the project |
-| `load_project` | Show all saved annotations for a binary |
+| `load_project` | Show all saved annotations (renames, comments, notes, scores) for a binary |
 | `load_pdb` | Load Windows PDB symbols and import names + addresses into the project |
 | `export_report` | Generate a self-contained HTML analysis report (`<binary>.kaiju.html`) |
+| `add_note` | Save a free-form analyst note (optionally anchored to a vaddr); persists to SQLite; updates TUI Notes tab live |
+| `delete_note` | Delete an analyst note by id |
+| `list_notes` | List all analyst notes for a binary |
+| `get_vuln_scores` | Read all previously set vulnerability scores for a binary |
 
 ### vaddr / file-offset distinction
 

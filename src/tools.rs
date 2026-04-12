@@ -78,6 +78,7 @@ const CACHEABLE_TOOLS: &[&str] = &[
 const WRITE_TOOLS: &[&str] = &[
     "rename_function", "add_comment", "set_vuln_score", "rename_variable",
     "set_return_type", "set_param_type", "set_param_name", "define_struct",
+    "add_note", "delete_note",
 ];
 
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
@@ -283,6 +284,21 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["max_results"].as_u64().unwrap_or(50) as usize,
         ),
         "virustotal_check" => virustotal_check(&str_arg(args, "path")),
+
+        // ── Analyst notes ──────────────────────────────────────────────────
+        "add_note" => add_note_tool(
+            &str_arg(args, "path"),
+            &str_arg(args, "text"),
+            args["vaddr"].as_u64(),
+        ),
+        "delete_note" => delete_note_tool(
+            &str_arg(args, "path"),
+            args["id"].as_i64().unwrap_or(0),
+        ),
+        "list_notes" => list_notes_tool(&str_arg(args, "path")),
+
+        // ── Vulnerability score query ──────────────────────────────────────
+        "get_vuln_scores" => get_vuln_scores_tool(&str_arg(args, "path")),
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -1394,13 +1410,19 @@ fn list_types(path: &str) -> ToolResult {
 fn load_project(path: &str) -> ToolResult {
     if path.is_empty() { return ToolResult::err("'path' is required"); }
     let p = Project::load_for(path);
-    let proj_path = Project::project_path(path);
-    if !proj_path.exists() {
+    let db_path = Project::db_path(path);
+    let has_data = !p.renames.is_empty() || !p.comments.is_empty()
+        || !p.notes.is_empty() || !p.vuln_scores.is_empty()
+        || !p.var_renames.is_empty() || !p.signatures.is_empty()
+        || !p.structs.is_empty();
+    if !has_data {
         return ToolResult::ok(format!(
-            "No project file found for '{}'\nWould be saved at: {}", path, proj_path.display()
+            "No project annotations found for '{}'\nDatabase would be at: {}",
+            path, db_path.display()
         ));
     }
-    let mut out = format!("Project: {}\n\n", proj_path.display());
+    let mut out = format!("Project annotations for: {}\n\n", path);
+
     if !p.renames.is_empty() {
         out.push_str(&format!("Renames ({}):\n", p.renames.len()));
         let mut renames: Vec<_> = p.renames.iter().collect();
@@ -1417,6 +1439,98 @@ fn load_project(path: &str) -> ToolResult {
         for (addr, cmt) in comments {
             out.push_str(&format!("  0x{:016x}  {}\n", addr, cmt));
         }
+        out.push('\n');
+    }
+    if !p.vuln_scores.is_empty() {
+        out.push_str(&format!("Vulnerability scores ({}):\n", p.vuln_scores.len()));
+        let mut scores: Vec<_> = p.vuln_scores.iter().collect();
+        scores.sort_by_key(|(k, _)| *k);
+        for (addr, score) in scores {
+            let badge = if *score >= 7 { "[HIGH]" } else if *score >= 4 { "[MED]" } else { "[LOW]" };
+            let name = p.renames.get(addr).map(|s| s.as_str()).unwrap_or("?");
+            out.push_str(&format!("  0x{:016x}  score={}/10  {}  {}\n", addr, score, badge, name));
+        }
+        out.push('\n');
+    }
+    if !p.notes.is_empty() {
+        out.push_str(&format!("Analyst notes ({}):\n", p.notes.len()));
+        for note in &p.notes {
+            let addr_str = note.vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
+            out.push_str(&format!("  [{}]{} ({}): {}\n", note.id, addr_str, note.timestamp, note.text));
+        }
+        out.push('\n');
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: add_note ───────────────────────────────────────────────────────────
+
+fn add_note_tool(path: &str, text: &str, vaddr: Option<u64>) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if text.is_empty()  { return ToolResult::err("'text' is required"); }
+    let mut p = Project::load_for(path);
+    match p.add_note(vaddr, text.to_string()) {
+        Ok(note) => {
+            let addr_str = vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
+            ToolResult::ok(format!(
+                "Note [{}]{} saved: {}",
+                note.id, addr_str, note.text
+            ))
+        }
+        Err(e) => ToolResult::err(format!("Failed to save note: {}", e)),
+    }
+}
+
+// ─── Tool: delete_note ────────────────────────────────────────────────────────
+
+fn delete_note_tool(path: &str, id: i64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if id <= 0 { return ToolResult::err("'id' must be a positive integer"); }
+    let mut p = Project::load_for(path);
+    match p.delete_note(id) {
+        Ok(true)  => ToolResult::ok(format!("Note [{}] deleted", id)),
+        Ok(false) => ToolResult::err(format!("No note with id={} found", id)),
+        Err(e)    => ToolResult::err(format!("Failed to delete note: {}", e)),
+    }
+}
+
+// ─── Tool: list_notes ─────────────────────────────────────────────────────────
+
+fn list_notes_tool(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let p = Project::load_for(path);
+    if p.notes.is_empty() {
+        return ToolResult::ok("No analyst notes saved for this binary yet.");
+    }
+    let mut out = format!("Analyst notes for {} ({} total):\n\n", path, p.notes.len());
+    for note in &p.notes {
+        let addr_str = note.vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
+        out.push_str(&format!(
+            "  [{}]{} ({}):\n    {}\n\n",
+            note.id, addr_str, note.timestamp, note.text
+        ));
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: get_vuln_scores ────────────────────────────────────────────────────
+
+fn get_vuln_scores_tool(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let p = Project::load_for(path);
+    if p.vuln_scores.is_empty() {
+        return ToolResult::ok("No vulnerability scores set for this binary yet.");
+    }
+    let mut scores: Vec<_> = p.vuln_scores.iter().collect();
+    scores.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    let mut out = format!("Vulnerability scores for {} ({} functions scored):\n\n", path, scores.len());
+    for (addr, score) in scores {
+        let badge = if *score >= 7 { "HIGH " } else if *score >= 4 { "MED  " } else { "LOW  " };
+        let name = p.renames.get(addr).map(|s| s.as_str()).unwrap_or("(unnamed)");
+        out.push_str(&format!(
+            "  {}/10  [{}]  0x{:016x}  {}\n",
+            score, badge, addr, name
+        ));
     }
     ToolResult::ok(out)
 }
@@ -2655,6 +2769,67 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     "score": { "type": "integer", "description": "Suspicion score 0-10" }
                 },
                 "required": ["path", "vaddr", "score"]
+            }),
+        },
+        ToolDefinition {
+            name: "add_note".into(),
+            description: "Save a free-form analyst note for this binary, optionally anchored to \
+                           a virtual address. Use this to record findings, hypotheses, observations, \
+                           and analysis conclusions that should persist across sessions. \
+                           Notes appear in the TUI Notes tab and are visible to future analysis \
+                           turns via list_notes or load_project. \
+                           Examples: 'This function appears to be a custom RC4 implementation', \
+                           'Parameter 2 is attacker-controlled via the network socket'.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "text":  { "type": "string",  "description": "Note text — what you observed or concluded" },
+                    "vaddr": { "type": "integer", "description": "Optional virtual address this note is anchored to" }
+                },
+                "required": ["path", "text"]
+            }),
+        },
+        ToolDefinition {
+            name: "delete_note".into(),
+            description: "Delete an analyst note by its id. \
+                           Use list_notes or load_project to find the id of the note to delete.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string",  "description": "Path to the binary file" },
+                    "id":   { "type": "integer", "description": "Note id (from list_notes output)" }
+                },
+                "required": ["path", "id"]
+            }),
+        },
+        ToolDefinition {
+            name: "list_notes".into(),
+            description: "List all analyst notes saved for a binary, including their ids, \
+                           anchored addresses, timestamps, and text. \
+                           Call this at the start of a session to understand what has already \
+                           been observed or hypothesised in previous analysis turns.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_vuln_scores".into(),
+            description: "Retrieve all vulnerability suspicion scores previously set for this binary. \
+                           Returns each scored function's address, score (0–10), badge (LOW/MED/HIGH), \
+                           and name. Use this before calling set_vuln_score to avoid overwriting \
+                           scores set by previous analysis turns, and to understand the current \
+                           risk landscape before diving deeper.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary file" }
+                },
+                "required": ["path"]
             }),
         },
         ToolDefinition {

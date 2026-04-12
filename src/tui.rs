@@ -557,6 +557,17 @@ impl App {
                 self.chat.push(ChatMsg::Error("Turn cancelled by user".to_string()));
                 self.scroll[Tab::Chat as usize] = 0;
             }
+
+            AgentEvent::NotesUpdate(notes) => {
+                self.notes = notes.into_iter().map(|n| NoteEntry {
+                    id:        n.id,
+                    vaddr:     n.vaddr,
+                    text:      n.text,
+                    timestamp: n.timestamp,
+                }).collect();
+                self.tab_dirty[Tab::Notes as usize] = true;
+                self.status = format!("Notes updated ({} total)", self.notes.len());
+            }
         }
     }
 
