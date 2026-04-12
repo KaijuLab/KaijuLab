@@ -259,6 +259,7 @@ Intelligence:
 Diff & output:
   diff          <path_a> <path_b>         Diff two binaries by function content
   report        <path>                    Export HTML analysis report
+  vt            <path>                    VirusTotal hash lookup (needs VIRUSTOTAL_API_KEY)
   pdb           <binary> <pdb_file>       Load Windows PDB symbols
 
 Project (persistent across sessions):
@@ -434,6 +435,11 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         "report" => {
             let path = parts.get(1).copied().unwrap_or("");
             run_tool("export_report", json!({"path": path}), tx);
+        }
+
+        "vt" | "virustotal" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("virustotal_check", json!({"path": path}), tx);
         }
 
         "pdb" => {
