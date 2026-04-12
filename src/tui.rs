@@ -919,7 +919,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
         kb("1 – 7",      "Switch tab directly"),
         kb("Tab",        "Cycle to next tab"),
         kb("↑  ↓",       "Browse sent-message history"),
-        kb("PgUp  PgDn / scroll", "Scroll active panel  ·  Ctrl+drag to select text"),
+        kb("PgUp  PgDn", "Scroll active panel  ·  drag to select text"),
         kb("Ctrl+C",     "Clear input  ·  quit when input is empty"),
         blank(),
     ];
@@ -1181,9 +1181,9 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let keybinds = if app.search_pattern.is_some() {
-        "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  scroll/PgUpDn:scroll"
+        "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  PgUpDn:scroll"
     } else {
-        "Tab:next  1-7:tab  g:goto  /:search  y:copy  scroll/PgUpDn:scroll  Ctrl+drag:select  Ctrl+C:quit"
+        "Tab:next  1-7:tab  g:goto  /:search  y:copy  PgUpDn:scroll  Ctrl+C:quit"
     };
     let status = format!(" {} {}", icon, app.status);
 
