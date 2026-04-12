@@ -300,6 +300,14 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
         // ── Vulnerability score query ──────────────────────────────────────
         "get_vuln_scores" => get_vuln_scores_tool(&str_arg(args, "path")),
 
+        // ── Python sandbox ────────────────────────────────────────────────
+        "run_python" => run_python(
+            &str_arg(args, "script"),
+            args["stdin"].as_str(),
+            args["binary"].as_str(),
+            args["timeout_secs"].as_u64().unwrap_or(30).min(120),
+        ),
+
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -2554,6 +2562,195 @@ fn decompile_flat(path: &str, base_addr: u64, vaddr: u64, arch: &str) -> ToolRes
     }
 }
 
+// ─── Tool: run_python ────────────────────────────────────────────────────────
+
+/// Write `script` to a temp file and execute it with `python3`.
+///
+/// - `stdin_data`  : optional bytes piped to the child's stdin.
+/// - `binary_path` : if provided, set as `KAIJU_BINARY` env var.
+/// - `timeout_secs`: hard wall-clock kill limit (clamped to 1–120 s).
+///
+/// Returns combined stdout + stderr (interleaved order is not guaranteed;
+/// stderr is appended after stdout).  Output is truncated to 32 KiB so
+/// runaway scripts don't flood the LLM context.
+fn run_python(
+    script: &str,
+    stdin_data: Option<&str>,
+    binary_path: Option<&str>,
+    timeout_secs: u64,
+) -> ToolResult {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if script.trim().is_empty() {
+        return ToolResult::err("'script' must not be empty");
+    }
+
+    // ── Write script to a temp file ───────────────────────────────────────────
+    let mut tmp = match tempfile::Builder::new()
+        .prefix("kaiju_py_")
+        .suffix(".py")
+        .tempfile()
+    {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot create temp file: {}", e)),
+    };
+    if let Err(e) = tmp.write_all(script.as_bytes()) {
+        return ToolResult::err(format!("Cannot write script: {}", e));
+    }
+    // Flush before handing path to child process.
+    if let Err(e) = tmp.flush() {
+        return ToolResult::err(format!("Cannot flush script: {}", e));
+    }
+    let script_path = tmp.path().to_owned();
+
+    // ── Build child process ───────────────────────────────────────────────────
+    let mut cmd = Command::new("python3");
+    cmd.arg(&script_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Stdin: either piped data or /dev/null so the script doesn't block.
+    if stdin_data.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+
+    // Inject binary path as env var so scripts can:
+    //   import os; path = os.environ.get("KAIJU_BINARY", "")
+    // Priority: explicit `binary` arg → KAIJU_BINARY env var set by main.rs at startup.
+    let effective_binary: String;
+    if let Some(bp) = binary_path {
+        if !bp.is_empty() {
+            effective_binary = bp.to_string();
+            cmd.env("KAIJU_BINARY", bp);
+        } else if let Ok(env_bp) = std::env::var("KAIJU_BINARY") {
+            effective_binary = env_bp.clone();
+            cmd.env("KAIJU_BINARY", env_bp);
+        } else {
+            effective_binary = String::new();
+        }
+    } else if let Ok(env_bp) = std::env::var("KAIJU_BINARY") {
+        effective_binary = env_bp.clone();
+        cmd.env("KAIJU_BINARY", env_bp);
+    } else {
+        effective_binary = String::new();
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return ToolResult::err(
+                    "python3 not found — install Python 3 and make sure it is on PATH",
+                );
+            }
+            return ToolResult::err(format!("Failed to spawn python3: {}", e));
+        }
+    };
+
+    // ── Write stdin data ──────────────────────────────────────────────────────
+    if let Some(data) = stdin_data {
+        if let Some(mut stdin_handle) = child.stdin.take() {
+            // Ignore write errors (broken pipe if the script exits early).
+            let _ = stdin_handle.write_all(data.as_bytes());
+        }
+    }
+
+    // ── Wait with timeout (poll-based; avoids nightly-only wait_timeout) ──────
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs.max(1));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Ok(s),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait(); // reap zombie
+                    break Err(format!(
+                        "Script timed out after {}s — killed. Reduce work or increase timeout_secs.",
+                        timeout_secs
+                    ))
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => break Err(format!("wait error: {}", e)),
+        }
+    };
+
+    // ── Collect output ────────────────────────────────────────────────────────
+    // Take stdout/stderr handles before consuming child via wait/output.
+    use std::io::Read;
+    let mut stdout_str = String::new();
+    let mut stderr_str = String::new();
+
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(&mut stdout_str);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(&mut stderr_str);
+    }
+
+    // ── Build result ──────────────────────────────────────────────────────────
+    const MAX_OUTPUT: usize = 32 * 1024; // 32 KiB
+
+    match status {
+        Err(timeout_msg) => {
+            let mut out = format!("[TIMEOUT] {}\n\n", timeout_msg);
+            if !stdout_str.is_empty() {
+                out.push_str("--- stdout (partial) ---\n");
+                out.push_str(&stdout_str);
+            }
+            ToolResult::err(out)
+        }
+        Ok(exit_status) => {
+            let mut combined = String::new();
+            if !stdout_str.is_empty() {
+                combined.push_str(&stdout_str);
+            }
+            if !stderr_str.is_empty() {
+                if !combined.is_empty() && !combined.ends_with('\n') {
+                    combined.push('\n');
+                }
+                combined.push_str("--- stderr ---\n");
+                combined.push_str(&stderr_str);
+            }
+
+            let truncated = if combined.len() > MAX_OUTPUT {
+                format!(
+                    "{}\n\n[output truncated — {} bytes total, showing first {} bytes]",
+                    &combined[..MAX_OUTPUT],
+                    combined.len(),
+                    MAX_OUTPUT,
+                )
+            } else {
+                combined
+            };
+
+            let exit_note = if exit_status.success() {
+                String::new()
+            } else {
+                format!("\n[exit code: {}]", exit_status)
+            };
+
+            let header = format!(
+                "run_python — exit: {}{}  timeout: {}s\n{}\n",
+                exit_status,
+                if !effective_binary.is_empty() {
+                    format!("  KAIJU_BINARY={}", effective_binary)
+                } else {
+                    String::new()
+                },
+                timeout_secs,
+                "─".repeat(60),
+            );
+
+            ToolResult::ok(format!("{}{}{}", header, truncated, exit_note))
+        }
+    }
+}
+
 // ─── Tool definitions for the LLM ────────────────────────────────────────────
 
 /// All tool definitions in standard JSON Schema (lowercase types).
@@ -3239,6 +3436,42 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     "rule_name": { "type": "string",  "description": "Optional YARA rule name (default: fn_<hex_addr>)" }
                 },
                 "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "run_python".into(),
+            description: "Execute a Python 3 script and return its combined stdout+stderr output. \
+                           Use this for custom analysis tasks that are awkward with the built-in tools: \
+                           parsing complex data structures, decrypting embedded payloads, solving \
+                           CTF challenges (crypto, format-string offsets, ROP chain building), \
+                           scripting pwntools interactions, or processing tool output programmatically. \
+                           The binary under analysis is available as the KAIJU_BINARY environment \
+                           variable. Common packages (pwntools, capstone, angr, z3) are usable if \
+                           installed on the host. You can call this tool repeatedly to iterate — \
+                           write a script, inspect its output, refine it, and run it again.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "Python 3 source code to execute. Use print() to emit output."
+                    },
+                    "stdin": {
+                        "type": "string",
+                        "description": "Optional data to pipe into the script's stdin."
+                    },
+                    "binary": {
+                        "type": "string",
+                        "description": "Optional path to the binary file under analysis. \
+                                        Injected as KAIJU_BINARY env var (already set if the TUI \
+                                        has a binary loaded — only specify this to override)."
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Maximum wall-clock execution time in seconds (default 30, max 120)."
+                    }
+                },
+                "required": ["script"]
             }),
         },
     ]

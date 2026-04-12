@@ -251,6 +251,8 @@ pub struct App {
     /// The part of `input` that precedes the token being completed.
     /// Applying a completion writes `completion_prefix + completions[idx]` → `input`.
     pub completion_prefix: String,
+    /// Scroll offset for the Help popup (PgUp/PgDn while popup is open).
+    pub help_scroll: u16,
 }
 
 
@@ -305,6 +307,7 @@ impl App {
             completions: Vec::new(),
             completion_idx: 0,
             completion_prefix: String::new(),
+            help_scroll: 0,
         };
         app.chat.push(ChatMsg::Welcome);
         app
@@ -814,6 +817,7 @@ impl App {
             "/goto ",
             "/g ",
             "/plugins",
+            "/python ",
             "/run ",
             "/timeout ",
             // LLM prompts (natural language — no prefix)
@@ -831,6 +835,9 @@ impl App {
             "show imports",
             "find vulnerabilities",
             "auto analyze",
+            "write a python script to ",
+            "decrypt the payload using python",
+            "solve this ctf challenge",
             "describe what you can do",
             "search for bytes ",
             "show call graph",
@@ -1432,6 +1439,7 @@ impl App {
                     self.popup = None;
                 } else {
                     self.popup = Some(Popup::Help);
+                    self.help_scroll = 0;
                 }
                 None
             }
@@ -1544,13 +1552,21 @@ impl App {
                 None
             }
             KeyCode::PageUp => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_add(20);
+                if matches!(self.popup, Some(Popup::Help)) {
+                    self.help_scroll = self.help_scroll.saturating_add(10);
+                } else {
+                    let s = &mut self.scroll[self.active_tab as usize];
+                    *s = s.saturating_add(20);
+                }
                 None
             }
             KeyCode::PageDown => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_sub(20);
+                if matches!(self.popup, Some(Popup::Help)) {
+                    self.help_scroll = self.help_scroll.saturating_sub(10);
+                } else {
+                    let s = &mut self.scroll[self.active_tab as usize];
+                    *s = s.saturating_sub(20);
+                }
                 None
             }
 
@@ -1667,6 +1683,7 @@ impl App {
                             self.popup = None;
                         } else {
                             self.popup = Some(Popup::Help);
+                            self.help_scroll = 0;
                         }
                         self.input.clear();
                         self.input_cursor = 0;
@@ -2268,67 +2285,132 @@ fn welcome_lines() -> Vec<Line<'static>> {
             Span::styled("  ·  AI-powered reverse engineering", dg),
         ]),
         blank(),
-        // AI prompt hints
+        // AI prompt examples
         Line::from(vec![
-            Span::styled("  Ask: ", yeb),
-            Span::styled("\"Analyse /path/to/binary and tell me what it does\"", it),
+            Span::styled("  Ask the AI: ", yeb),
+            Span::styled("\"Analyse /path/to/binary — what does it do?\"", it),
         ]),
         Line::from(vec![
-            Span::raw("       "),
+            Span::raw("              "),
             Span::styled("\"What does function 0x401234 do? Is it vulnerable?\"", it),
+        ]),
+        Line::from(vec![
+            Span::raw("              "),
+            Span::styled("\"Solve this CTF — find the flag check and bypass it\"", it),
+        ]),
+        Line::from(vec![
+            Span::raw("              "),
+            Span::styled("\"Write a Python script to decrypt the embedded payload\"", it),
         ]),
         blank(),
         // Scroll-down hint
         Line::from(vec![
-            Span::styled("  ↓ scroll down for the full command reference  ·  type  ", dg),
+            Span::styled("  ↓ scroll for command reference  ·  ", dg),
+            Span::styled("?", grb),
+            Span::styled(" or ", dg),
             Span::styled("/help", grb),
-            Span::styled("  for all commands", dg),
+            Span::styled(" for key bindings", dg),
         ]),
         blank(),
         div(),
         blank(),
+        // ── Tabs ──────────────────────────────────────────────────────────────
+        sec("Tabs  (press 1–8 or Tab to switch)"),
+        div(),
+        kb("1  Functions", "All functions — symbol names, prologue scan, vuln scores [!]"),
+        kb("2  Disasm",    "Disassembly — syntax-highlighted, inline comments, go-to-def"),
+        kb("3  Decompile", "Pseudo-C decompiler — applies project renames & types"),
+        kb("4  Strings",   "Extracted printable strings from the binary"),
+        kb("5  Imports",   "PLT / PE import table — stub addresses → symbol names"),
+        kb("6  Chat",      "LLM conversation — tool calls, streaming output"),
+        kb("7  Context",   "Token budget breakdown — per-message char counts"),
+        kb("8  Notes",     "Persistent analyst notes — add with  a  delete with  d"),
+        blank(),
+        div(),
+        blank(),
         // ── Most-used commands ────────────────────────────────────────────────
-        sec("Most Used  (prefix  /  — direct tool call, no AI)"),
+        sec("Most Used  (prefix  /  to call tools directly, no AI round-trip)"),
         div(),
-        cmd("/disasm",    "<path> [vaddr]",         "Disassemble at address"),
-        cmd("/decompile", "<path> [vaddr]",         "Decompile a function  →  pseudo-C"),
-        cmd("/functions", "<path>",                "List all functions in the binary"),
-        cmd("/scan",      "<path>",                "Vulnerability heuristic scan"),
-        cmd("/auto",      "[path]",                "Full auto-analysis + AI summary"),
+        cmd("/disasm",    "<path> [vaddr]",         "Disassemble — auto-resolves vaddr to file offset"),
+        cmd("/decompile", "<path> [vaddr]",         "Decompile a function  →  pseudo-C with annotations"),
+        cmd("/functions", "<path>",                 "List all functions (symbols + prologue scan)"),
+        cmd("/scan",      "<path> [n]",             "Vulnerability heuristic scan — top N functions"),
+        cmd("/auto",      "<path> [n]",             "Full auto-analysis: info + funcs + strings + vuln"),
+        cmd("/python",    "<script.py> [timeout]",  "Run a Python 3 file  (LLM uses run_python tool)"),
         blank(),
-        // ── All commands reference ────────────────────────────────────────────
-        sec("All Quick Commands"),
+        // ── Disasm & decompile ────────────────────────────────────────────────
+        sec("Disasm & Decompile"),
         div(),
-        cmd("/entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
-        cmd("/search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
-        cmd("/patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
-        cmd("/yara",      "<path> <vaddr> [name]", "YARA rule for a function"),
-        cmd("/imports",   "<path>",                "Resolve PLT / PE imports"),
-        cmd("/diff",      "<a> <b>",               "Diff two binaries by content"),
-        cmd("/report",    "<path>",                "Export HTML analysis report"),
-        cmd("/cfg",       "<path> <vaddr>",         "Control-flow graph for a function"),
-        cmd("/callgraph", "<path>",                "Full call graph"),
+        cmd("/hexdump",       "<path> [offset] [len]", "Raw hex dump at a file offset"),
+        cmd("/cfg",           "<path> <vaddr>",         "Control-flow graph for a function"),
+        cmd("/callgraph",     "<path> [depth]",          "Full static call graph (default depth 2)"),
+        cmd("/xrefs",         "<path> <vaddr>",         "All CALL/JMP sites targeting an address"),
+        cmd("/dwarf",         "<path>",                 "DWARF debug-info: function names & sizes"),
+        cmd("/decompile_flat","<path> <base> <vaddr>",  "Decompile raw firmware/shellcode (no ELF/PE)"),
         blank(),
-        sec("TUI Shortcuts  (when the input field is empty)"),
+        // ── Search & patch ────────────────────────────────────────────────────
+        sec("Search & Patch"),
         div(),
-        kb("/goto 0xADDR",  "Jump to address in current panel  (also /g 0xADDR)"),
-        kb("/pattern",      "Search panel  ·  n = next  ·  N = prev  ·  Esc = clear"),
-        kb("/auto [path]",  "Run full auto-analysis and summarise"),
-        kb("/plugins",      "List installed plugins"),
-        kb("/run <name>",   "Run a plugin by name"),
-        kb("/timeout <n>",  "Set HTTP timeout in seconds"),
-        kb("y",          "Copy panel content to system clipboard"),
-        kb("1 – 7",      "Switch tab directly"),
-        kb("Tab",        "Cycle to next tab"),
-        kb("↑  ↓",       "Browse sent-message history"),
-        kb("PgUp  PgDn", "Scroll active panel  ·  drag to select text"),
-        kb("j  k",       "Move line cursor in panel"),
-        kb("Enter",      "Go-to-definition for address at cursor line"),
-        kb("[  ]",       "Navigate back / forward (address history)"),
-        kb("m",          "Bookmark current address"),
-        kb("B",          "Open bookmarks popup  (0-9 to jump · Esc to close)"),
-        kb("x",          "Xref popup — callers of address at cursor"),
-        kb("Ctrl+C",     "Clear input  ·  quit when input is empty"),
+        cmd("/search",    "<path> <hex…>",          "Byte-pattern search  (?? = wildcard byte)"),
+        cmd("/patch",     "<path> <vaddr> <hex>",   "Patch bytes  →  writes  <file>.patched"),
+        cmd("/entropy",   "<path>",                 "Shannon entropy per section — detect packers"),
+        cmd("/yara",      "<path> <vaddr> [name]",  "YARA rule (auto-wildcards reloc bytes)"),
+        blank(),
+        // ── Intelligence ──────────────────────────────────────────────────────
+        sec("Intelligence"),
+        div(),
+        cmd("/imports",   "<path>",                 "Resolve PLT / PE imports → symbol names"),
+        cmd("/strings",   "<path> [min_len]",       "Extract printable strings"),
+        cmd("/identify",  "<path>",                 "FLIRT-style library function recognition"),
+        cmd("/explain",   "<path> <vaddr>",         "Decompile + prompt you for interpretation"),
+        cmd("/diff",      "<path_a> <path_b>",      "Diff two binaries by function content hash"),
+        cmd("/vt",        "<path>",                 "VirusTotal SHA-256 lookup (needs API key)"),
+        cmd("/report",    "<path>",                 "Export self-contained HTML analysis report"),
+        blank(),
+        // ── Project annotations ───────────────────────────────────────────────
+        sec("Project Annotations  (persistent per binary, stored in <file>.kaiju.db)"),
+        div(),
+        cmd("/rename",    "<path> <vaddr> <name>",  "Name a function"),
+        cmd("/comment",   "<path> <vaddr> <text>",  "Attach a comment to an address"),
+        cmd("/project",   "<path>",                 "Show all saved renames, comments, notes"),
+        cmd("/types",     "<path>",                 "Show struct & signature definitions"),
+        blank(),
+        // ── Plugins ───────────────────────────────────────────────────────────
+        sec("Plugins & Scripting  (~/.kaiju/plugins/)"),
+        div(),
+        cmd("/plugins",   "",                       "List installed Rhai plugins"),
+        cmd("/run",       "<name> [binary]",        "Run a Rhai plugin by name or path"),
+        cmd("/python",    "<script.py> [timeout]",  "Run a Python 3 script directly"),
+        blank(),
+        // ── TUI navigation ────────────────────────────────────────────────────
+        sec("TUI Navigation & Keys"),
+        div(),
+        kb("/goto 0xADDR", "Jump to address in current panel  (also /g 0xADDR)"),
+        kb("/pattern",     "Search panel  ·  n=next  N=prev  Esc=clear"),
+        kb("/timeout <n>", "Set per-request HTTP timeout (seconds)"),
+        kb("1–8",          "Jump to tab directly"),
+        kb("Tab",          "Cycle tab  ·  in split-pane: switch focus left↔right"),
+        kb("s",            "Toggle split-pane (Disasm left, Decompile right)"),
+        kb("j  k",         "Move line cursor in panel"),
+        kb("Enter",        "Go-to-definition for address at cursor line"),
+        kb("[  ]",         "Navigate back / forward (address history)"),
+        kb("PgUp  PgDn",   "Scroll active panel"),
+        kb("m",            "Bookmark current address"),
+        kb("B",            "Open bookmarks popup  (0-9 to jump · Esc to close)"),
+        kb("x",            "Xref popup — callers of address at cursor"),
+        kb("R",            "Rename function at cursor (opens inline popup)"),
+        kb("c",            "Add comment at cursor address"),
+        kb("a",            "Add analyst note (optionally anchored to cursor)"),
+        kb("d",            "Delete note at cursor  (Notes tab — asks for confirm)"),
+        kb("f",            "Fuzzy filter Functions tab  (Esc to clear)"),
+        kb("y",            "Copy panel content to system clipboard"),
+        kb("Ctrl+E",       "Export markdown summary to clipboard"),
+        kb("Ctrl+R",       "Cycle through sent-message history into input"),
+        kb("Ctrl+X",       "Cancel current agent turn"),
+        kb("r",            "Retry last message  (when status starts with Error)"),
+        kb("↑  ↓",         "Browse sent-message history in input"),
+        kb("?  /help",     "Toggle keyboard help popup"),
+        kb("Ctrl+C",       "Clear input  ·  quit when input is empty"),
         blank(),
     ];
 
@@ -2922,15 +3004,23 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
         }
 
         Popup::Help => {
+            // Give Help a larger popup than other dialogs: 88% wide, 90% tall
+            let hw = (area.width * 88 / 100).max(60).min(area.width.saturating_sub(2));
+            let hh = (area.height * 90 / 100).max(20).min(area.height.saturating_sub(2));
+            let hx = area.x + (area.width.saturating_sub(hw)) / 2;
+            let hy = area.y + (area.height.saturating_sub(hh)) / 2;
+            let help_area = Rect { x: hx, y: hy, width: hw, height: hh };
+            f.render_widget(ratatui::widgets::Clear, help_area);
+
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(
-                    " Keyboard Shortcuts  (Esc / ? to close) ",
+                    " KaijuLab — Commands & Key Bindings  (Esc / ? to close) ",
                     Style::new().fg(Color::Yellow).bold(),
                 ))
                 .border_style(Style::new().fg(Color::Yellow));
-            let inner = block.inner(popup_area);
-            f.render_widget(block, popup_area);
+            let inner = block.inner(help_area);
+            f.render_widget(block, help_area);
 
             let cyb = Style::new().fg(Color::Cyan).bold();
             let wh  = Style::new().fg(Color::White);
@@ -2952,63 +3042,86 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
             };
 
             let lines: Vec<Line<'static>> = vec![
+                sec("Tabs  (1–8 or Tab to switch)"),
+                div(),
+                kb("1  Functions",    "Functions list — vuln scores [!][!!]"),
+                kb("2  Disasm",       "Disassembly — syntax highlighted"),
+                kb("3  Decompile",    "Pseudo-C decompiler + annotations"),
+                kb("4  Strings",      "Extracted printable strings"),
+                kb("5  Imports",      "PLT / PE import table"),
+                kb("6  Chat",         "LLM conversation + tool calls"),
+                kb("7  Context",      "Token budget per-message breakdown"),
+                kb("8  Notes",        "Persistent analyst notes"),
+                Line::raw(""),
                 sec("Navigation"),
                 div(),
-                kb("1–8",              "Switch to tab directly  (8=Notes)"),
-                kb("Tab / Shift+Tab",  "Cycle tabs  ·  split-pane: switch focus"),
-                kb("s",               "Toggle split-pane (Disasm | Decompile)"),
-                kb("/goto 0xADDR",    "Jump to address  (also /g 0xADDR)"),
-                kb("[  ]",             "Navigate back / forward (address history)"),
+                kb("Tab / Shift+Tab", "Cycle tabs  ·  split-pane: switch focus L↔R"),
+                kb("s",               "Toggle split-pane (Disasm left | Decompile right)"),
+                kb("/goto 0xADDR",    "Jump to address  (also /g ADDR)"),
+                kb("[  ]",            "Navigate back / forward (address history)"),
                 kb("j  k",            "Move line cursor in panel"),
                 kb("Enter",           "Go-to-definition for address at cursor"),
+                kb("PgUp  PgDn",      "Scroll active panel"),
                 Line::raw(""),
-                sec("Slash Commands  (type in input, press Enter)"),
+                sec("Slash Commands  (type then Enter — no AI round-trip)"),
                 div(),
-                kb("/pattern",        "Search panel  ·  n=next  N=prev  Esc=clear"),
-                kb("/auto [path]",    "Full auto-analysis + summary"),
+                kb("/disasm <path>",  "Disassemble  (+ optional vaddr)"),
+                kb("/decompile",      "Decompile  (+ path vaddr)"),
+                kb("/functions",      "List all functions"),
+                kb("/scan <path>",    "Vulnerability scan"),
+                kb("/auto <path>",    "Full auto-analysis + AI summary"),
+                kb("/search <hex>",   "Byte-pattern search  (?? = wildcard)"),
+                kb("/entropy",        "Section entropy — detect packers"),
+                kb("/imports",        "Resolve PLT / PE imports"),
+                kb("/cfg  /callgraph","Control-flow / call graph"),
+                kb("/yara <vaddr>",   "Generate YARA detection rule"),
+                kb("/patch <vaddr>",  "Patch bytes → <file>.patched"),
+                kb("/report",         "Export HTML analysis report"),
+                kb("/diff <a> <b>",   "Diff two binaries by content hash"),
+                kb("/python <file>",  "Run a Python 3 script"),
+                kb("/run <plugin>",   "Run a Rhai plugin by name"),
                 kb("/plugins",        "List installed plugins"),
-                kb("/run <name>",     "Run a plugin by name"),
-                kb("/timeout <n>",    "Set HTTP timeout (seconds)"),
+                kb("/timeout <n>",    "Set HTTP request timeout (seconds)"),
+                kb("/pattern",        "Search panel  ·  n=next  N=prev  Esc=clear"),
+                kb("/help",           "Toggle this popup"),
                 Line::raw(""),
-                sec("Copy & Export"),
-                div(),
-                kb("y",               "Copy panel content to system clipboard"),
-                kb("Ctrl+E",          "Export markdown summary to clipboard"),
-                Line::raw(""),
-                sec("Annotations"),
+                sec("Annotations  (persistent in <binary>.kaiju.db)"),
                 div(),
                 kb("R",               "Rename function at cursor address"),
-                kb("c",               "Add/edit comment at cursor address"),
-                kb("f",               "Fuzzy filter Functions tab  (Esc to clear)"),
-                Line::raw(""),
-                sec("Notes tab (8)"),
-                div(),
-                kb("a",               "Add analyst note (optionally at cursor address)"),
-                kb("d",               "Delete note at cursor (confirms before deleting)"),
+                kb("c",               "Add comment at cursor address"),
+                kb("a",               "Add analyst note (anchors to cursor if set)"),
+                kb("d",               "Delete note at cursor  (confirms first)"),
+                kb("f",               "Fuzzy-filter Functions tab  (Esc to clear)"),
                 Line::raw(""),
                 sec("Bookmarks & Xrefs"),
                 div(),
                 kb("m",               "Bookmark current address"),
-                kb("B",               "Open bookmarks popup  (0-9 to jump)"),
-                kb("x",               "Xref popup — callers of address at cursor"),
+                kb("B",               "Bookmarks popup  (0-9 jump · Esc close)"),
+                kb("x",               "Xref popup — all CALL/JMP sites to cursor addr"),
                 Line::raw(""),
-                sec("Input & History"),
+                sec("Input, History & Export"),
                 div(),
                 kb("↑  ↓",            "Browse sent-message history"),
-                kb("Ctrl+R",          "Fill input with last history entry (cycle)"),
+                kb("Ctrl+R",          "Cycle history into input field"),
                 kb("Ctrl+X",          "Cancel current agent turn"),
-                kb("r",               "Retry last message (when status shows Error)"),
-                kb(":",               "LLM prompt shortcut  e.g.  :decompile 0x401000"),
-                kb("PgUp  PgDn",      "Scroll active panel"),
-                Line::raw(""),
-                sec("Other"),
-                div(),
-                kb("?",               "Toggle this help popup"),
+                kb("Ctrl+E",          "Export markdown summary to clipboard"),
+                kb("r",               "Retry last message  (when status: Error)"),
+                kb("y",               "Copy panel content to clipboard"),
                 kb("Ctrl+C",          "Clear input  ·  quit when input is empty"),
             ];
 
+            // Scrollable: PgUp scrolls down (towards end), PgDn scrolls back up.
+            // We render from `help_scroll` lines from the top.
+            let text = Text::from(lines);
+            let total_lines = Paragraph::new(text.clone())
+                .wrap(Wrap { trim: false })
+                .line_count(inner.width) as u16;
+            let max_scroll = total_lines.saturating_sub(inner.height);
+            let scroll = app.help_scroll.min(max_scroll);
             f.render_widget(
-                Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .scroll((scroll, 0)),
                 inner,
             );
         }

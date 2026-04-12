@@ -140,6 +140,11 @@ async fn main() -> Result<()> {
         cli.base_url,
     )?;
 
+    // ── Set KAIJU_BINARY env var so run_python scripts inherit it automatically
+    if let Some(ref f) = cli.file {
+        std::env::set_var("KAIJU_BINARY", f.to_string_lossy().as_ref());
+    }
+
     // ── Plugin / scripting mode ──────────────────────────────────────────────
     if let Some(plugin_arg) = &cli.plugin {
         let binary_path = cli.file.as_ref()
@@ -373,7 +378,8 @@ Project (persistent across sessions):
   /project         <path>                 Show all saved annotations
   /types           <path>                 Show struct / signature definitions
 
-Plugins / scripting:
+Scripting & execution:
+  /python          <script.py> [timeout]  Run a Python 3 file (LLM uses run_python tool)
   /plugins                                List available plugins (~/.kaiju/plugins/)
   /run <name> [binary]                    Run a Rhai plugin by name (or path)
 
@@ -384,6 +390,7 @@ Examples:
   /disasm /bin/ls 0x5880
   /entropy /path/to/suspect.exe
   /search /path/to/binary E8 ?? ?? ?? ?? 48 89 C7
+  /python solve.py 60
   /run my_script /bin/ls";
 
 /// Parse a user-typed command and fire AgentEvents into the TUI channel.
@@ -620,6 +627,31 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             let output = format_plugin_output(&name, &out);
             send(agent::AgentEvent::PluginOutput { name, output: output.clone() });
             send(agent::AgentEvent::Done);
+        }
+
+        // /python <script_file> [timeout]  — run a .py file directly
+        "python" | "py" => {
+            let script_file = parts.get(1).copied().unwrap_or("");
+            let timeout     = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(30);
+            if script_file.is_empty() {
+                send(agent::AgentEvent::Error(
+                    "Usage: /python <script.py> [timeout_secs]\n\
+                     Tip: for inline scripts, ask the LLM to use the run_python tool.".to_string()
+                ));
+                send(agent::AgentEvent::Done);
+                return;
+            }
+            match std::fs::read_to_string(script_file) {
+                Err(e) => {
+                    send(agent::AgentEvent::Error(format!("Cannot read {}: {}", script_file, e)));
+                    send(agent::AgentEvent::Done);
+                }
+                Ok(script) => {
+                    run_tool("run_python",
+                        json!({ "script": script, "timeout_secs": timeout }),
+                        tx);
+                }
+            }
         }
 
         other => {
