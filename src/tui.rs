@@ -236,6 +236,9 @@ pub struct App {
     pub recent_files: Vec<String>,
     /// Analyst notes for the current binary (shown in Notes tab).
     pub notes: Vec<NoteEntry>,
+    /// Last decompile args so write tools can auto-refresh the Decompile tab.
+    pub last_decompile_path: String,
+    pub last_decompile_vaddr: u64,
 }
 
 
@@ -284,6 +287,8 @@ impl App {
             cancel_token,
             recent_files: recent,
             notes: Vec::new(),
+            last_decompile_path: String::new(),
+            last_decompile_vaddr: 0,
         };
         app.chat.push(ChatMsg::Welcome);
         app
@@ -429,6 +434,17 @@ impl App {
                 self.status = "Thinking…".to_string();
             }
             AgentEvent::ToolCall { name, display_args } => {
+                // Track decompile args so write tools can refresh the Decompile tab later.
+                if name == "decompile" {
+                    if let Ok(args) = serde_json::from_str::<serde_json::Value>(&display_args) {
+                        if let Some(path) = args["path"].as_str() {
+                            self.last_decompile_path = path.to_string();
+                        }
+                        if let Some(vaddr) = args["vaddr"].as_u64() {
+                            self.last_decompile_vaddr = vaddr;
+                        }
+                    }
+                }
                 self.chat.push(ChatMsg::ToolCall { name: name.clone(), args: display_args });
                 self.status = format!("⏺ {}(…)", name);
                 self.is_loading = true;
@@ -444,6 +460,24 @@ impl App {
                     self.scroll[tab as usize] = 0;
                     self.panel_cursor[tab as usize] = 0;
                     self.tab_dirty[tab as usize] = true;
+                }
+                // Auto-refresh the Decompile tab after write tools that affect decompile output.
+                const DECOMPILE_WRITE_TOOLS: &[&str] = &[
+                    "rename_function", "rename_variable", "add_comment",
+                    "set_return_type", "set_param_type", "set_param_name",
+                ];
+                if DECOMPILE_WRITE_TOOLS.contains(&name.as_str())
+                    && self.last_decompile_vaddr != 0
+                    && !self.tab_lines[Tab::Decompile as usize].is_empty()
+                {
+                    let args = serde_json::json!({
+                        "path": self.last_decompile_path,
+                        "vaddr": self.last_decompile_vaddr,
+                    });
+                    let result = crate::tools::dispatch("decompile", &args);
+                    let new_lines: Vec<String> = result.output.lines().map(|l| l.to_string()).collect();
+                    self.tab_lines[Tab::Decompile as usize] = new_lines;
+                    self.tab_dirty[Tab::Decompile as usize] = true;
                 }
                 // Parse structured function entries for the Functions tab
                 if name == "list_functions" {

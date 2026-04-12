@@ -190,6 +190,9 @@ pub struct Agent {
     /// When set, the agent checks this flag between tool calls.
     /// If `true`, the current turn is cancelled and `AgentEvent::Cancelled` is emitted.
     cancel_token: Option<Arc<AtomicBool>>,
+    /// Whether the most recent LLM response was delivered via streaming chunks.
+    /// Used to avoid double-displaying text when the backend doesn't stream.
+    last_response_streamed: bool,
 }
 
 impl Agent {
@@ -200,6 +203,7 @@ impl Agent {
             history: Vec::new(),
             event_tx: None,
             cancel_token: None,
+            last_response_streamed: false,
         }
     }
 
@@ -330,10 +334,15 @@ impl Agent {
                 let system = load_system_prompt();
                 let event_tx_clone = self.event_tx.clone();
 
+                // Track whether the backend actually sent any streaming chunks.
+                let had_chunks = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let had_chunks_fwd = had_chunks.clone();
+
                 // Spawn a task to forward chunks to the TUI
                 let forward_task = tokio::spawn(async move {
                     let mut rx = chunk_rx;
                     while let Some(chunk) = rx.recv().await {
+                        had_chunks_fwd.store(true, Ordering::Relaxed);
                         if let Some(tx) = &event_tx_clone {
                             let _ = tx.send(AgentEvent::LlmTextChunk(chunk));
                         }
@@ -348,6 +357,9 @@ impl Agent {
 
                 // Wait for forward task to drain any buffered chunks
                 let _ = forward_task.await;
+
+                // Store whether streaming actually produced any chunks.
+                self.last_response_streamed = had_chunks.load(Ordering::Relaxed);
 
                 stream_result
             } else {
@@ -374,18 +386,17 @@ impl Agent {
             };
 
             // ── Emit / print any inline text ────────────────────────────────
-            // In TUI mode the text was already streamed via LlmTextChunk;
-            // only emit LlmText for the non-streaming (plain-text) path.
+            // In TUI mode, prefer streaming chunks (LlmTextChunk).
+            // If the backend doesn't implement streaming (no chunks were sent),
+            // fall back to emitting a single LlmText event so the response is
+            // never silently dropped.
             for text in response.texts() {
                 if !text.trim().is_empty() {
                     if self.tui_mode() {
-                        // Only emit LlmText if there were no streaming chunks
-                        // (i.e. the default non-streaming backend was used).
-                        // We can tell this if the backend's generate_streaming
-                        // just fell through to generate() — but since we
-                        // always forward chunk events, just emit LlmText
-                        // only when NOT in streaming (no chunks sent).
-                        // For simplicity: emit LlmText only in non-TUI path.
+                        if !self.last_response_streamed {
+                            self.emit(AgentEvent::LlmText(text.to_string()));
+                        }
+                        // else: already displayed incrementally via LlmTextChunk
                     } else {
                         ui::print_agent_response(text);
                     }
