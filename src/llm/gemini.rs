@@ -136,15 +136,26 @@ struct GGenerationConfig {
 }
 
 #[derive(Deserialize, Debug)]
-struct GResponse {
-    candidates: Vec<GCandidate>,
+struct GCandidate {
+    // `content` is absent when the response is blocked (finishReason = "SAFETY" etc.)
+    #[serde(default)]
+    content: Option<GContent>,
+    #[serde(rename = "finishReason")]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
-struct GCandidate {
-    content: GContent,
-    #[serde(rename = "finishReason")]
-    finish_reason: Option<String>,
+struct GPromptFeedback {
+    #[serde(rename = "blockReason")]
+    block_reason: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GResponse {
+    #[serde(default)]
+    candidates: Vec<GCandidate>,
+    #[serde(rename = "promptFeedback")]
+    prompt_feedback: Option<GPromptFeedback>,
 }
 
 // ─── Schema conversion ────────────────────────────────────────────────────────
@@ -212,17 +223,25 @@ fn to_gemini_contents(history: &[LlmMessage]) -> Vec<GContent> {
         .collect()
 }
 
-fn from_gemini_candidate(candidate: GCandidate) -> LlmMessage {
-    if let Some(reason) = &candidate.finish_reason {
-        if reason != "STOP" && reason != "MAX_TOKENS" {
-            // Surface unexpected stop reasons as a text note (non-fatal)
-            eprintln!("[gemini] finish_reason: {}", reason);
+fn from_gemini_candidate(candidate: GCandidate) -> Result<LlmMessage> {
+    // Treat non-STOP finish reasons as errors so the TUI surfaces them clearly.
+    if let Some(ref reason) = candidate.finish_reason {
+        match reason.as_str() {
+            "STOP" | "MAX_TOKENS" => {}
+            "SAFETY" => anyhow::bail!(
+                "Response blocked by Gemini safety filters (finishReason: SAFETY). \
+                 Try rephrasing your request."
+            ),
+            other => anyhow::bail!(
+                "Gemini stopped with unexpected finishReason: {}. Try again.", other
+            ),
         }
     }
 
     let content: Vec<MessageContent> = candidate
         .content
-        .parts
+        .map(|c| c.parts)
+        .unwrap_or_default()
         .into_iter()
         .enumerate()
         .filter_map(|(i, part)| match part {
@@ -237,10 +256,10 @@ fn from_gemini_candidate(candidate: GCandidate) -> LlmMessage {
         })
         .collect();
 
-    LlmMessage {
+    Ok(LlmMessage {
         role: MessageRole::Assistant,
         content,
-    }
+    })
 }
 
 // ─── Backend ──────────────────────────────────────────────────────────────────
@@ -266,7 +285,10 @@ impl GeminiBackend {
         let sa: ServiceAccount =
             serde_json::from_str(&raw).context("Cannot parse service-account JSON")?;
         Ok(GeminiBackend {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
             sa,
             project_id: project_id.into(),
             location: location.into(),
@@ -370,13 +392,21 @@ impl LlmBackend for GeminiBackend {
         }
 
         let gen_resp: GResponse = resp.json().await.context("Failed to parse Gemini response")?;
-        let candidate = gen_resp
-            .candidates
-            .into_iter()
-            .next()
-            .context("Gemini returned no candidates")?;
 
-        Ok(from_gemini_candidate(candidate))
+        // Surface prompt-level blocks (no candidates returned at all).
+        if gen_resp.candidates.is_empty() {
+            let reason = gen_resp
+                .prompt_feedback
+                .as_ref()
+                .and_then(|pf| pf.block_reason.as_deref())
+                .unwrap_or("unknown");
+            anyhow::bail!(
+                "Request blocked by Gemini (blockReason: {}). Try rephrasing.", reason
+            );
+        }
+
+        let candidate = gen_resp.candidates.into_iter().next().unwrap();
+        from_gemini_candidate(candidate)
     }
 
     fn display_name(&self) -> String {

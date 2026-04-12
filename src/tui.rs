@@ -2240,7 +2240,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
                 ]));
                 for l in text.lines() {
                     all_lines.push(Line::from(vec![
-                        Span::styled(" │  ", Style::new().fg(Color::DarkGray)),
+                        Span::raw("    "),
                         Span::styled(l.to_string(), Style::new().fg(Color::White)),
                     ]));
                 }
@@ -2255,7 +2255,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
                 ]));
                 for l in text.lines() {
                     all_lines.push(Line::from(vec![
-                        Span::styled(" │  ", Style::new().fg(Color::DarkGray)),
+                        Span::raw("    "),
                         Span::raw(l.to_string()),
                     ]));
                 }
@@ -2330,9 +2330,23 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Scroll: 0 = bottom. Positive = scrolled up.
-    let total = all_lines.len() as u16;
+    //
+    // ratatui's Paragraph::scroll() counts *visual* rows (after word-wrap),
+    // so we must derive at_bottom from the visual row total, not the logical
+    // line count.  Each logical line occupies ceil(char_count / width) visual
+    // rows (minimum 1).
+    let panel_width = inner.width.max(1) as usize;
+    let visual_total: u16 = all_lines
+        .iter()
+        .map(|line| {
+            let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            ((chars.max(1) + panel_width - 1) / panel_width) as u16
+        })
+        .sum::<u16>()
+        .max(1);
+
     let visible = inner.height;
-    let at_bottom = total.saturating_sub(visible);
+    let at_bottom = visual_total.saturating_sub(visible);
     // Clamp stored scroll to the real maximum so PgDn/mouse-scroll work
     // immediately even when the initial value was set to u16::MAX.
     app.scroll[Tab::Chat as usize] = app.scroll[Tab::Chat as usize].min(at_bottom);

@@ -142,7 +142,10 @@ impl OpenAiBackend {
         model_id: impl Into<String>,
     ) -> Self {
         OpenAiBackend {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
             api_key: api_key.into(),
             base_url: base_url.into(),
             model_id: model_id.into(),

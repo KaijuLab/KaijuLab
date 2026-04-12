@@ -403,11 +403,23 @@ impl Agent {
                 }
             }
 
+            let has_text = response.texts().iter().any(|t| !t.trim().is_empty());
             let tool_calls = response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
             self.history.push(response);
 
             if tool_calls.is_empty() {
-                self.emit(AgentEvent::Done);
+                // If the LLM returned neither text nor tool calls the response was
+                // silently empty (e.g. content filtered).  Surface it so the user
+                // isn't left staring at a "Thinking…" spinner that never clears.
+                if !has_text && !self.last_response_streamed {
+                    self.emit(AgentEvent::Error(
+                        "The model returned an empty response — the request may have been \
+                         blocked by a content filter. Try rephrasing."
+                            .to_string(),
+                    ));
+                } else {
+                    self.emit(AgentEvent::Done);
+                }
                 break;
             }
 

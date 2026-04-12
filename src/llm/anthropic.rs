@@ -101,7 +101,10 @@ impl AnthropicBackend {
     /// `api_key` — value of `ANTHROPIC_API_KEY`.
     pub fn new(api_key: impl Into<String>, model_id: impl Into<String>) -> Self {
         AnthropicBackend {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_default(),
             api_key: api_key.into(),
             model_id: model_id.into(),
         }
@@ -144,8 +147,14 @@ impl LlmBackend for AnthropicBackend {
             resp.json().await.context("Failed to parse Anthropic response")?;
 
         if let Some(reason) = &ar.stop_reason {
-            if reason != "tool_use" && reason != "end_turn" && reason != "max_tokens" {
-                eprintln!("[anthropic] stop_reason: {}", reason);
+            match reason.as_str() {
+                "tool_use" | "end_turn" | "max_tokens" => {}
+                "error" => anyhow::bail!(
+                    "Anthropic returned stop_reason: error — the request may have been refused."
+                ),
+                other => anyhow::bail!(
+                    "Anthropic stopped with unexpected stop_reason: {}. Try again.", other
+                ),
             }
         }
 
