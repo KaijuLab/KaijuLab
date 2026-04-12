@@ -565,8 +565,11 @@ impl App {
             // Text editing
             KeyCode::Backspace => {
                 if self.input_cursor > 0 {
-                    self.input_cursor -= 1;
-                    self.input.remove(self.input_cursor);
+                    // Step back to the previous char boundary
+                    let prev = self.input[..self.input_cursor]
+                        .char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+                    self.input.remove(prev);
+                    self.input_cursor = prev;
                 }
                 None
             }
@@ -577,12 +580,17 @@ impl App {
                 None
             }
             KeyCode::Left => {
-                self.input_cursor = self.input_cursor.saturating_sub(1);
+                if self.input_cursor > 0 {
+                    self.input_cursor = self.input[..self.input_cursor]
+                        .char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+                }
                 None
             }
             KeyCode::Right => {
                 if self.input_cursor < self.input.len() {
-                    self.input_cursor += 1;
+                    if let Some(ch) = self.input[self.input_cursor..].chars().next() {
+                        self.input_cursor += ch.len_utf8();
+                    }
                 }
                 None
             }
@@ -599,7 +607,7 @@ impl App {
                 self.history_cursor = None;
                 self.input_saved = String::new();
                 self.input.insert(self.input_cursor, c);
-                self.input_cursor += 1;
+                self.input_cursor += c.len_utf8();
                 None
             }
             _ => None,
@@ -998,8 +1006,10 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled(format!("  ┌{}┐", sep), Style::new().fg(Color::DarkGray)),
                 ]));
                 for l in lines.iter().take(preview_n) {
-                    let display = if l.len() + 4 > border_w + 2 {
-                        format!("{}…", &l[..l.len().min(border_w.saturating_sub(1))])
+                    let display = if l.chars().count() + 4 > border_w + 2 {
+                        let limit = border_w.saturating_sub(1);
+                        let truncated: String = l.chars().take(limit).collect();
+                        format!("{}…", truncated)
                     } else {
                         l.clone()
                     };
@@ -1087,8 +1097,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
             Tab::Decompile => "Say \"decompile 0x<addr>\" or \"decompile the main function\"",
             Tab::Strings   => "Say \"extract strings\" or \"show strings in .rodata\"",
             Tab::Imports   => "Say \"what does this binary import?\" or \"resolve the PLT\"",
-            Tab::Chat      => unreachable!(),
-            Tab::Context   => unreachable!(), // handled by render_context
+            Tab::Chat | Tab::Context => "",
         };
         f.render_widget(
             Paragraph::new(Span::styled(
@@ -1158,8 +1167,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
                 apply_search_highlight(line)
             } else { line }
         }).collect(),
-        Tab::Chat    => unreachable!(),
-        Tab::Context => unreachable!(),
+        Tab::Chat | Tab::Context => raw.iter().map(|l| Line::raw(l.clone())).collect(),
     };
 
     let scroll = app.scroll[tab as usize];
@@ -1234,8 +1242,11 @@ fn render_input(f: &mut Frame, area: Rect, app: &App) {
 
     // Show cursor only when not loading
     if !app.is_loading {
+        // Count chars (not bytes) so the cursor lands on the right visual column
+        // even when the input contains multi-byte characters.
+        let col = app.input[..app.input_cursor].chars().count() as u16;
         f.set_cursor_position(Position {
-            x: inner.x + 1 + app.input_cursor as u16,
+            x: inner.x.saturating_add(1).saturating_add(col),
             y: inner.y,
         });
     }
@@ -1409,10 +1420,17 @@ fn highlight_disasm(line: &str) -> Line<'static> {
     let after_sep = &after_addr[2..];
 
     // Bytes field is {:<24}, so take up to 24 chars, then skip "  "
-    let bytes_field_end = 24.min(after_sep.len());
-    let bytes_str = after_sep[..bytes_field_end].trim_end();
+    // Use char-boundary-safe get() — disasm output is ASCII in practice, but
+    // be defensive against any non-ASCII that might slip through.
+    let bytes_end = (0..=24.min(after_sep.len())).rev()
+        .find(|&i| after_sep.is_char_boundary(i))
+        .unwrap_or(0);
+    let bytes_str = after_sep[..bytes_end].trim_end();
+    let rest_start = (26..=after_sep.len())
+        .find(|&i| after_sep.is_char_boundary(i))
+        .unwrap_or(after_sep.len());
     let rest = if after_sep.len() > 26 {
-        after_sep[26..].trim_start()
+        after_sep[rest_start..].trim_start()
     } else {
         ""
     };
