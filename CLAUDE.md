@@ -74,7 +74,7 @@ src/
 │                                                             │
 │  Disasm: address=yellow, bytes=gray, mnemonic=cyan,         │
 │          registers=green, immediates=magenta                │
-│          inline comments (;) = dark-gray italic             │
+│          inline comments (;) = light-gray italic            │
 └─────────────────────────────────────────────────────────────┘
  ● Ready  x86_64  ·  @ 0x401000  ·  [████░░░░░░] 42%    Tab  1-7:tab  ?:help
  > _

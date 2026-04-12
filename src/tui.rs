@@ -2974,16 +2974,12 @@ fn highlight_disasm_arch(line: &str, arch: Option<&str>) -> Line<'static> {
         spans.extend(highlight_operands_arch(operands_part, arch));
     }
 
-    // Inline comment — dark gray, slightly dimmed
+    // Inline comment — muted but readable against a dark background
     if let Some(comment) = comment_part {
-        if !operands_part.is_empty() {
-            spans.push(Span::raw("  "));
-        } else {
-            spans.push(Span::raw("  "));
-        }
+        spans.push(Span::raw("  "));
         spans.push(Span::styled(
             comment.to_string(),
-            Style::new().fg(Color::DarkGray).italic(),
+            Style::new().fg(Color::Rgb(160, 160, 180)).italic(),
         ));
     }
 
