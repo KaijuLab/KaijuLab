@@ -1,7 +1,13 @@
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture,
+        Event, EventStream, KeyCode, KeyModifiers,
+        MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -20,7 +26,7 @@ use crate::agent::AgentEvent;
 
 // ─── Tab identifiers ─────────────────────────────────────────────────────────
 
-const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Decompile", "Strings", "Imports", "Chat", "Context"];
+const TAB_NAMES: &[&str] = &["Functions", "Disasm", "Decompile", "Strings", "Imports", "Chat", "Context", "Notes"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -31,6 +37,7 @@ pub enum Tab {
     Imports    = 4,
     Chat       = 5,
     Context    = 6,
+    Notes      = 7,
 }
 
 impl Tab {
@@ -43,6 +50,7 @@ impl Tab {
             4 => Some(Tab::Imports),
             5 => Some(Tab::Chat),
             6 => Some(Tab::Context),
+            7 => Some(Tab::Notes),
             _ => None,
         }
     }
@@ -88,6 +96,40 @@ pub struct Bookmark {
 
 // ─── Popup overlay ────────────────────────────────────────────────────────────
 
+// ─── Function entry (parsed from list_functions output) ──────────────────────
+
+#[derive(Clone, Debug)]
+pub struct FnEntry {
+    pub vaddr: u64,
+    pub name:  String,
+}
+
+impl FnEntry {
+    /// Try to parse one line from `list_functions` output.
+    /// Expected format: `  0x<hex>  <name>…`
+    fn parse(line: &str) -> Option<Self> {
+        let t = line.trim_start();
+        if !t.starts_with("0x") { return None; }
+        let sp = t.find(|c: char| c.is_whitespace())?;
+        let addr_str = &t[..sp];
+        let name = t[sp..].trim_start().split_whitespace().next()?.to_string();
+        let vaddr = u64::from_str_radix(addr_str.trim_start_matches("0x"), 16).ok()?;
+        Some(FnEntry { vaddr, name })
+    }
+}
+
+// ─── Note display entry ───────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct NoteEntry {
+    pub id:        i64,
+    pub vaddr:     Option<u64>,
+    pub text:      String,
+    pub timestamp: String,
+}
+
+// ─── Popup overlay ────────────────────────────────────────────────────────────
+
 #[derive(Clone, Debug)]
 pub enum Popup {
     /// Session bookmarks list.
@@ -96,6 +138,12 @@ pub enum Popup {
     Xref { title: String, lines: Vec<String> },
     /// Keyboard cheat-sheet.
     Help,
+    /// Inline rename function at `addr` (current name shown as placeholder).
+    Rename { addr: u64, current: String },
+    /// Inline add/edit comment at `addr`.
+    Comment { addr: u64, current: String },
+    /// Add analyst note, optionally anchored to a virtual address.
+    NoteEdit { addr: Option<u64> },
 }
 
 // ─── Context entries (mirrors agent::ContextEntry) ────────────────────────────
@@ -126,12 +174,12 @@ pub enum ChatMsg {
 pub struct App {
     pub active_tab: Tab,
     /// Latest content for each dedicated panel (indexed by Tab as usize).
-    pub tab_lines: [Vec<String>; 7],
+    pub tab_lines: [Vec<String>; 8],
     /// Whether each tab has unseen content (shows a dot indicator).
-    pub tab_dirty: [bool; 7],
+    pub tab_dirty: [bool; 8],
     pub chat: Vec<ChatMsg>,
     /// Scroll offsets for each tab (lines from top for panels; lines from bottom for chat).
-    pub scroll: [u16; 7],
+    pub scroll: [u16; 8],
     pub input: String,
     pub input_cursor: usize,
     pub status: String,
@@ -160,11 +208,13 @@ pub struct App {
     /// Forward-navigation stack (positions we can revisit with `]`).
     pub nav_forward: Vec<NavState>,
     /// Line cursor position in each panel (0-based line index).
-    pub panel_cursor: [usize; 7],
+    pub panel_cursor: [usize; 8],
     /// Session bookmarks (vaddr + user label).
     pub bookmarks: Vec<Bookmark>,
     /// Active popup overlay, if any.
     pub popup: Option<Popup>,
+    /// Text typed inside a popup input box (Rename / Comment / NoteEdit).
+    pub popup_input: String,
     /// Detected binary architecture string (e.g. "x86_64", "aarch64").
     pub binary_arch: Option<String>,
     /// Split-pane mode: show Disasm (left) and Decompile (right) side-by-side.
@@ -173,21 +223,33 @@ pub struct App {
     pub split_focus_right: bool,
     /// Pending retry: re-send the last user message on the next event-loop tick.
     pub retry_pending: bool,
+    /// Parsed function entries (mirrors tab_lines[Functions] but structured).
+    pub fn_entries: Vec<FnEntry>,
+    /// Active fuzzy-filter string for the Functions tab.
+    pub fn_filter: String,
+    /// Whether the function filter input is active (f key toggles).
+    pub fn_filter_active: bool,
+    /// Progress of the current multi-tool agent turn: (step, total, label).
+    pub progress: Option<(usize, usize, String)>,
+    /// Shared cancellation token: set to true by Ctrl+X to stop the agent.
+    pub cancel_token: Arc<AtomicBool>,
+    /// Recently opened binaries (loaded from ~/.kaiju/recent.json).
+    pub recent_files: Vec<String>,
+    /// Analyst notes for the current binary (shown in Notes tab).
+    pub notes: Vec<NoteEntry>,
 }
 
 
 impl App {
-    pub fn new(backend_name: String) -> Self {
+    pub fn new(backend_name: String, cancel_token: Arc<AtomicBool>) -> Self {
+        let recent = load_recent_files();
         let mut app = App {
             active_tab: Tab::Chat,
             tab_lines: Default::default(),
-            tab_dirty: [false; 7],
+            tab_dirty: [false; 8],
             chat: Vec::new(),
             scroll: {
-                // Start the chat panel scrolled all the way to the top so the
-                // welcome logo is the first thing the user sees.  Any incoming
-                // agent event resets this to 0 (scroll-to-bottom) automatically.
-                let mut s = [0u16; 7];
+                let mut s = [0u16; 8];
                 s[Tab::Chat as usize] = u16::MAX;
                 s
             },
@@ -208,13 +270,21 @@ impl App {
             search_hit_idx: 0,
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
-            panel_cursor: [0usize; 7],
+            panel_cursor: [0usize; 8],
             bookmarks: Vec::new(),
             popup: None,
+            popup_input: String::new(),
             binary_arch: None,
             split_pane: false,
             split_focus_right: false,
             retry_pending: false,
+            fn_entries: Vec::new(),
+            fn_filter: String::new(),
+            fn_filter_active: false,
+            progress: None,
+            cancel_token,
+            recent_files: recent,
+            notes: Vec::new(),
         };
         app.chat.push(ChatMsg::Welcome);
         app
@@ -376,6 +446,14 @@ impl App {
                     self.panel_cursor[tab as usize] = 0;
                     self.tab_dirty[tab as usize] = true;
                 }
+                // Parse structured function entries for the Functions tab
+                if name == "list_functions" {
+                    self.fn_entries = lines.iter()
+                        .filter_map(|l| FnEntry::parse(l))
+                        .collect();
+                }
+                // Clear progress after each tool result
+                self.progress = None;
                 // Sniff architecture from file_info output
                 if name == "file_info" {
                     for line in &lines {
@@ -462,8 +540,22 @@ impl App {
 
             AgentEvent::VulnScores(scores) => {
                 self.fn_vuln_scores.extend(scores);
-                // Re-mark Functions tab dirty so badges render immediately
                 self.tab_dirty[Tab::Functions as usize] = true;
+            }
+
+            AgentEvent::Progress { step, total, label } => {
+                self.progress = Some((step, total, label.clone()));
+                self.status = format!("⏺ step {}/{} — {}", step, total, label);
+                self.is_loading = true;
+            }
+
+            AgentEvent::Cancelled => {
+                self.progress = None;
+                self.is_loading = false;
+                self.status = "Cancelled".to_string();
+                self.cancel_token.store(false, Ordering::Relaxed);
+                self.chat.push(ChatMsg::Error("Turn cancelled by user".to_string()));
+                self.scroll[Tab::Chat as usize] = 0;
             }
         }
     }
@@ -601,8 +693,141 @@ impl App {
         );
     }
 
+    // ─── Popup text-input helpers ────────────────────────────────────────────
+
+    /// Handle a key while a text-entry popup (Rename / Comment / NoteEdit) is open.
+    fn handle_popup_input_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
+        match key.code {
+            KeyCode::Esc => {
+                self.popup = None;
+                self.popup_input.clear();
+                self.status = "Cancelled".to_string();
+            }
+            KeyCode::Enter => {
+                self.confirm_popup();
+            }
+            KeyCode::Backspace => {
+                self.popup_input.pop();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.popup_input.push(c);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Commit the current popup_input value for the active popup.
+    fn confirm_popup(&mut self) {
+        let input = std::mem::take(&mut self.popup_input);
+        let popup = self.popup.take();
+        match popup {
+            Some(Popup::Rename { addr, .. }) => {
+                if !input.is_empty() {
+                    if let Some(path) = self.binary_path.clone() {
+                        let args = serde_json::json!({
+                            "path": path, "vaddr": addr, "name": input
+                        });
+                        let result = crate::tools::dispatch("rename_function", &args);
+                        self.status = if result.output.starts_with("Error") {
+                            format!("Rename failed: {}", result.output)
+                        } else {
+                            format!("Renamed 0x{:x} → {}", addr, input)
+                        };
+                    }
+                } else {
+                    self.status = "Rename cancelled (empty input)".to_string();
+                }
+            }
+            Some(Popup::Comment { addr, .. }) => {
+                if !input.is_empty() {
+                    if let Some(path) = self.binary_path.clone() {
+                        let args = serde_json::json!({
+                            "path": path, "vaddr": addr, "comment": input
+                        });
+                        let result = crate::tools::dispatch("add_comment", &args);
+                        self.status = if result.output.starts_with("Error") {
+                            format!("Comment failed: {}", result.output)
+                        } else {
+                            format!("Comment added at 0x{:x}", addr)
+                        };
+                    }
+                } else {
+                    self.status = "Comment cancelled (empty input)".to_string();
+                }
+            }
+            Some(Popup::NoteEdit { addr }) => {
+                if !input.is_empty() {
+                    let id = (self.notes.len() as i64) + 1;
+                    let timestamp = {
+                        use std::time::{SystemTime, UNIX_EPOCH};
+                        let secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs()).unwrap_or(0);
+                        format!("t={}", secs)
+                    };
+                    self.notes.push(NoteEntry { id, vaddr: addr, text: input.clone(), timestamp });
+                    self.tab_dirty[Tab::Notes as usize] = true;
+                    self.status = format!("Note saved ({} total)", self.notes.len());
+                } else {
+                    self.status = "Note cancelled (empty)".to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ─── Markdown export ────────────────────────────────────────────────────────
+
+    /// Build a markdown summary of the current session and copy to clipboard.
+    fn export_markdown(&mut self) {
+        let binary = self.binary_path.as_deref().unwrap_or("unknown");
+        let mut md = format!("# KaijuLab Analysis — {}\n\n", binary);
+
+        // Append functions if available
+        if !self.tab_lines[Tab::Functions as usize].is_empty() {
+            md.push_str("## Functions\n\n```\n");
+            for l in &self.tab_lines[Tab::Functions as usize] {
+                md.push_str(l);
+                md.push('\n');
+            }
+            md.push_str("```\n\n");
+        }
+
+        // Append the last assistant message
+        for msg in self.chat.iter().rev() {
+            if let ChatMsg::Assistant(text) = msg {
+                md.push_str("## Analysis\n\n");
+                md.push_str(text);
+                md.push_str("\n\n");
+                break;
+            }
+        }
+
+        // Append notes
+        if !self.notes.is_empty() {
+            md.push_str("## Analyst Notes\n\n");
+            for note in &self.notes {
+                let addr = note.vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
+                md.push_str(&format!("- **[{}]{}** {}\n", note.id, addr, note.text));
+            }
+            md.push('\n');
+        }
+
+        self.copy_to_clipboard(md);
+        self.status = "Markdown exported to clipboard".to_string();
+    }
+
     /// Returns a user message to send to the agent, or None.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
+        // Route key to popup text-input when a text-entry popup is open
+        if matches!(
+            self.popup,
+            Some(Popup::Rename { .. }) | Some(Popup::Comment { .. }) | Some(Popup::NoteEdit { .. })
+        ) {
+            return self.handle_popup_input_key(key);
+        }
+
         match key.code {
             // Quit on Ctrl-C when input is empty
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -641,11 +866,113 @@ impl App {
             }
 
             // Number keys to jump to a tab (only when input field is empty)
-            KeyCode::Char(c @ '1'..='7') if self.input.is_empty() && key.modifiers.is_empty() => {
+            KeyCode::Char(c @ '1'..='8') if self.input.is_empty() && key.modifiers.is_empty() => {
                 let idx = (c as usize) - ('1' as usize);
                 if let Some(t) = Tab::from_index(idx) {
                     self.active_tab = t;
                     self.tab_dirty[t as usize] = false;
+                }
+                None
+            }
+
+            // Ctrl+X — cancel current agent turn
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cancel_token.store(true, Ordering::Relaxed);
+                self.status = "Cancelling…".to_string();
+                None
+            }
+
+            // Ctrl+E — export markdown summary to clipboard
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.export_markdown();
+                None
+            }
+
+            // R — rename function at cursor address
+            KeyCode::Char('R') if self.input.is_empty()
+                && key.modifiers.contains(KeyModifiers::SHIFT)
+                && !matches!(self.active_tab, Tab::Chat | Tab::Context | Tab::Notes) =>
+            {
+                let addr = self.addr_at_cursor().or(self.focused_addr);
+                if let Some(a) = addr {
+                    let current = self.fn_entries.iter()
+                        .find(|e| e.vaddr == a)
+                        .map(|e| e.name.clone())
+                        .unwrap_or_default();
+                    self.popup = Some(Popup::Rename { addr: a, current });
+                    self.popup_input.clear();
+                    self.status = format!("Rename 0x{:x} — type new name, Enter to confirm", a);
+                } else {
+                    self.status = "No address at cursor — navigate to a function first".to_string();
+                }
+                None
+            }
+
+            // c — add/edit comment at cursor address
+            KeyCode::Char('c') if self.input.is_empty()
+                && key.modifiers.is_empty()
+                && !matches!(self.active_tab, Tab::Chat | Tab::Context | Tab::Notes) =>
+            {
+                let addr = self.addr_at_cursor().or(self.focused_addr);
+                if let Some(a) = addr {
+                    self.popup = Some(Popup::Comment { addr: a, current: String::new() });
+                    self.popup_input.clear();
+                    self.status = format!("Comment at 0x{:x} — type text, Enter to save", a);
+                } else {
+                    self.status = "No address at cursor — navigate to an address first".to_string();
+                }
+                None
+            }
+
+            // a — add analyst note (optionally anchored to cursor address)
+            KeyCode::Char('a') if self.input.is_empty() && key.modifiers.is_empty() => {
+                let addr = self.addr_at_cursor().or(self.focused_addr);
+                self.popup = Some(Popup::NoteEdit { addr });
+                self.popup_input.clear();
+                let hint = addr.map(|a| format!(" anchored to 0x{:x}", a)).unwrap_or_default();
+                self.status = format!("New note{} — type text, Enter to save", hint);
+                None
+            }
+
+            // d — delete note at cursor line (Notes tab only)
+            KeyCode::Char('d') if self.input.is_empty()
+                && key.modifiers.is_empty()
+                && self.active_tab == Tab::Notes =>
+            {
+                let idx = self.panel_cursor[Tab::Notes as usize];
+                if idx < self.notes.len() {
+                    let removed = self.notes.remove(idx);
+                    // clamp cursor
+                    if self.panel_cursor[Tab::Notes as usize] > 0
+                        && self.panel_cursor[Tab::Notes as usize] >= self.notes.len()
+                    {
+                        self.panel_cursor[Tab::Notes as usize] =
+                            self.notes.len().saturating_sub(1);
+                    }
+                    self.status = format!("Deleted note [{}]", removed.id);
+                } else {
+                    self.status = "No note at cursor".to_string();
+                }
+                None
+            }
+
+            // f — toggle fuzzy filter for Functions tab
+            KeyCode::Char('f') if self.input.is_empty()
+                && key.modifiers.is_empty()
+                && self.active_tab == Tab::Functions =>
+            {
+                self.fn_filter_active = !self.fn_filter_active;
+                if self.fn_filter_active {
+                    self.fn_filter.clear();
+                    self.status = "Function filter active — type to filter, Esc to clear".to_string();
+                    // Redirect typing to fn_filter by pre-filling the input with a marker
+                    self.input = "/fn:".to_string();
+                    self.input_cursor = 4;
+                } else {
+                    self.fn_filter.clear();
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.status = "Function filter cleared".to_string();
                 }
                 None
             }
@@ -1023,6 +1350,61 @@ impl App {
         }
     }
 
+    // ─── Mouse input ────────────────────────────────────────────────────────────
+
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                let s = &mut self.scroll[self.active_tab as usize];
+                *s = s.saturating_add(3);
+            }
+            MouseEventKind::ScrollDown => {
+                let s = &mut self.scroll[self.active_tab as usize];
+                *s = s.saturating_sub(3);
+            }
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                let col = mouse.column;
+                let row = mouse.row;
+                // Row 1 is the tab bar
+                if row == 1 {
+                    let n = TAB_NAMES.len() as u16;
+                    let tab_w = (120u16 / n).max(1);
+                    let idx = (col / tab_w) as usize;
+                    if let Some(t) = Tab::from_index(idx.min(n as usize - 1)) {
+                        self.active_tab = t;
+                        self.tab_dirty[t as usize] = false;
+                    }
+                    return;
+                }
+                // Content rows: map clicked row → panel cursor line
+                let content_start_row = 2u16;
+                let tab = self.active_tab;
+                if row >= content_start_row && !matches!(tab, Tab::Chat | Tab::Context | Tab::Notes) {
+                    let clicked_line = row.saturating_sub(content_start_row) as usize;
+                    let total = self.tab_lines[tab as usize].len();
+                    if total > 0 {
+                        self.panel_cursor[tab as usize] = clicked_line.min(total - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// ─── Recent files (TUI-local helper) ─────────────────────────────────────────
+
+fn load_recent_files() -> Vec<String> {
+    let home = match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        Some(h) => h,
+        None => return vec![],
+    };
+    let path = std::path::PathBuf::from(home).join(".kaiju").join("recent.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return vec![],
+    };
+    serde_json::from_str::<Vec<String>>(&text).unwrap_or_default()
 }
 
 // ─── Address parser ──────────────────────────────────────────────────────────
@@ -1047,14 +1429,15 @@ pub async fn run_tui(
     user_tx: mpsc::Sender<String>,
     backend_name: &str,
     initial_file: Option<&std::path::Path>,
+    cancel_token: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(backend_name.to_string());
+    let mut app = App::new(backend_name.to_string(), cancel_token);
 
     // If a file was supplied, kick off the analysis immediately
     if let Some(path) = initial_file {
@@ -1070,7 +1453,7 @@ pub async fn run_tui(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original_hook(info);
     }));
 
@@ -1106,6 +1489,9 @@ pub async fn run_tui(
                             user_tx.send(msg).await?;
                         }
                     }
+                    Some(Ok(Event::Mouse(mouse))) => {
+                        app.handle_mouse(mouse);
+                    }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.autoresize()?;
                     }
@@ -1126,7 +1512,7 @@ pub async fn run_tui(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -1247,6 +1633,7 @@ fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
     match app.active_tab {
         Tab::Chat    => render_chat(f, area, app),
         Tab::Context => render_context(f, area, app),
+        Tab::Notes   => render_notes(f, area, app),
         tab          => render_panel(f, area, app, tab),
     }
 }
@@ -1456,7 +1843,29 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         match msg {
             ChatMsg::Welcome => {
                 all_lines.extend(welcome_lines());
-                all_lines.push(Line::raw(""));
+                // Show recent files if any
+                if !app.recent_files.is_empty() {
+                    all_lines.push(Line::from(vec![
+                        Span::styled(
+                            "  Recent files  (copy path and type: analyse <path>)",
+                            Style::new().fg(Color::Yellow).bold(),
+                        ),
+                    ]));
+                    all_lines.push(Line::from(Span::styled(
+                        "  ────────────────────────────────────────────────────────",
+                        Style::new().fg(Color::DarkGray),
+                    )));
+                    for (i, rf) in app.recent_files.iter().enumerate().take(10) {
+                        all_lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("    [{}] ", i + 1),
+                                Style::new().fg(Color::DarkGray),
+                            ),
+                            Span::styled(rf.clone(), Style::new().fg(Color::Cyan)),
+                        ]));
+                    }
+                    all_lines.push(Line::raw(""));
+                }
             }
 
             ChatMsg::User(text) => {
@@ -1600,7 +2009,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
             Tab::Decompile => "Say \"decompile 0x<addr>\" or \"decompile the main function\"",
             Tab::Strings   => "Say \"extract strings\" or \"show strings in .rodata\"",
             Tab::Imports   => "Say \"what does this binary import?\" or \"resolve the PLT\"",
-            Tab::Chat | Tab::Context => "",
+            Tab::Chat | Tab::Context | Tab::Notes => "",
         };
         f.render_widget(
             Paragraph::new(Span::styled(
@@ -1670,7 +2079,7 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
                 apply_search_highlight(line)
             } else { line }
         }).collect(),
-        Tab::Chat | Tab::Context => raw.iter().map(|l| Line::raw(l.clone())).collect(),
+        Tab::Chat | Tab::Context | Tab::Notes => raw.iter().map(|l| Line::raw(l.clone())).collect(),
     };
 
     // Apply cursor highlight to the panel cursor line
@@ -1799,6 +2208,93 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
             f.render_widget(Paragraph::new(Text::from(styled)), inner);
         }
 
+        Popup::Rename { addr, current } => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    format!(" Rename  0x{:x}  (Enter=confirm · Esc=cancel) ", addr),
+                    Style::new().fg(Color::Green).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Green));
+            // Smaller popup: 60% wide, 5 rows tall
+            let pw2 = (area.width * 6 / 10).max(40).min(area.width.saturating_sub(4));
+            let popup_area2 = Rect { x: area.x + (area.width.saturating_sub(pw2)) / 2,
+                                    y: area.y + (area.height / 2).saturating_sub(3),
+                                    width: pw2, height: 5 };
+            f.render_widget(ratatui::widgets::Clear, popup_area2);
+            let inner = block.inner(popup_area2);
+            f.render_widget(block, popup_area2);
+            let placeholder = if app.popup_input.is_empty() {
+                current.as_str()
+            } else {
+                app.popup_input.as_str()
+            };
+            let display = if app.popup_input.is_empty() {
+                Line::from(vec![
+                    Span::styled(format!(" {}", placeholder), Style::new().fg(Color::DarkGray).italic()),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(format!(" {}_", app.popup_input), Style::new().fg(Color::White)),
+                ])
+            };
+            f.render_widget(Paragraph::new(display), inner);
+            let _ = placeholder;
+        }
+
+        Popup::Comment { addr, current } => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    format!(" Add Comment  0x{:x}  (Enter=confirm · Esc=cancel) ", addr),
+                    Style::new().fg(Color::Yellow).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Yellow));
+            let pw2 = (area.width * 6 / 10).max(40).min(area.width.saturating_sub(4));
+            let popup_area2 = Rect { x: area.x + (area.width.saturating_sub(pw2)) / 2,
+                                    y: area.y + (area.height / 2).saturating_sub(3),
+                                    width: pw2, height: 5 };
+            f.render_widget(ratatui::widgets::Clear, popup_area2);
+            let inner = block.inner(popup_area2);
+            f.render_widget(block, popup_area2);
+            let placeholder = current.as_str();
+            let display = if app.popup_input.is_empty() {
+                Line::from(vec![
+                    Span::styled(format!(" {}", placeholder), Style::new().fg(Color::DarkGray).italic()),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(format!(" {}_", app.popup_input), Style::new().fg(Color::White)),
+                ])
+            };
+            f.render_widget(Paragraph::new(display), inner);
+            let _ = placeholder;
+        }
+
+        Popup::NoteEdit { addr } => {
+            let title = match addr {
+                Some(a) => format!(" New Note  @ 0x{:x}  (Enter=save · Esc=cancel) ", a),
+                None    => " New Note  (Enter=save · Esc=cancel) ".to_string(),
+            };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(title, Style::new().fg(Color::Magenta).bold()))
+                .border_style(Style::new().fg(Color::Magenta));
+            let pw2 = (area.width * 7 / 10).max(40).min(area.width.saturating_sub(4));
+            let popup_area2 = Rect { x: area.x + (area.width.saturating_sub(pw2)) / 2,
+                                    y: area.y + (area.height / 2).saturating_sub(3),
+                                    width: pw2, height: 5 };
+            f.render_widget(ratatui::widgets::Clear, popup_area2);
+            let inner = block.inner(popup_area2);
+            f.render_widget(block, popup_area2);
+            let display = if app.popup_input.is_empty() {
+                Line::from(Span::styled(" Type note text…", Style::new().fg(Color::DarkGray).italic()))
+            } else {
+                Line::from(Span::styled(format!(" {}_", app.popup_input), Style::new().fg(Color::White)))
+            };
+            f.render_widget(Paragraph::new(display), inner);
+        }
+
         Popup::Help => {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -1832,7 +2328,7 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
             let lines: Vec<Line<'static>> = vec![
                 sec("Navigation"),
                 div(),
-                kb("1–7",              "Switch to tab directly"),
+                kb("1–8",              "Switch to tab directly  (8=Notes)"),
                 kb("Tab / Shift+Tab",  "Cycle tabs  ·  split-pane: switch focus"),
                 kb("s",               "Toggle split-pane (Disasm | Decompile)"),
                 kb("g 0xADDR",        "Jump to address in current panel"),
@@ -1844,6 +2340,18 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
                 div(),
                 kb("/pattern",        "Search panel  ·  n=next  N=prev  Esc=clear"),
                 kb("y",               "Copy panel content to system clipboard"),
+                kb("Ctrl+E",          "Export markdown summary to clipboard"),
+                Line::raw(""),
+                sec("Annotations"),
+                div(),
+                kb("R",               "Rename function at cursor address"),
+                kb("c",               "Add/edit comment at cursor address"),
+                kb("f",               "Fuzzy filter Functions tab  (Esc to clear)"),
+                Line::raw(""),
+                sec("Notes tab (8)"),
+                div(),
+                kb("a",               "Add analyst note (optionally at cursor address)"),
+                kb("d",               "Delete note at cursor line"),
                 Line::raw(""),
                 sec("Bookmarks & Xrefs"),
                 div(),
@@ -1855,6 +2363,7 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
                 div(),
                 kb("↑  ↓",            "Browse sent-message history"),
                 kb("Ctrl+R",          "Fill input with last history entry (cycle)"),
+                kb("Ctrl+X",          "Cancel current agent turn"),
                 kb("r",               "Retry last message (when status shows Error)"),
                 kb(":",               "Command prefix  e.g.  :auto /bin/ls"),
                 kb("PgUp  PgDn",      "Scroll active panel"),
@@ -1888,8 +2397,10 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         "Esc:close  0-9:jump"
     } else if app.search_pattern.is_some() {
         "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  PgUpDn:scroll"
+    } else if app.is_loading {
+        "Ctrl+X:cancel  Tab:tab  ?:help"
     } else {
-        "Tab  1-7:tab  s:split  ?:help  r:retry  Ctrl+R:history  /:search  y:copy"
+        "Tab  1-8:tab  s:split  R:rename  c:comment  a:note  ?:help  /:search  Ctrl+E:export"
     };
 
     // Right-side info: arch · focused addr · token budget bar
@@ -1930,8 +2441,21 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         Color::Cyan
     };
 
+    // Progress bar for multi-tool turns: [■■■□□□□] step/total
+    let progress_part = if let Some((step, total, ref label)) = app.progress {
+        const PBAR_W: usize = 8;
+        let filled = if total > 0 { (step * PBAR_W) / total } else { 0 };
+        let bar = format!("{}{}",
+            "■".repeat(filled),
+            "□".repeat(PBAR_W.saturating_sub(filled)),
+        );
+        format!("  [{bar}] {step}/{total} {label}")
+    } else {
+        String::new()
+    };
+
     // Build the status line: icon + status | keybinds … info
-    let left = format!(" {} {}", icon, app.status);
+    let left = format!(" {} {}{}", icon, app.status, progress_part);
     let left_len = left.chars().count() as u16;
     let right = format!("{}  {} ", keybinds, info);
     let right_len = right.chars().count() as u16;
@@ -2093,6 +2617,102 @@ fn render_context(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let scroll = app.scroll[Tab::Context as usize];
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        inner,
+    );
+}
+
+// ─ Notes panel ────────────────────────────────────────────────────────────────
+
+fn render_notes(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " Notes  (a=add · d=delete · j/k=navigate) ",
+            Style::new().fg(Color::Magenta).bold(),
+        ))
+        .border_style(Style::new().fg(Color::DarkGray));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if app.notes.is_empty() {
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "  (no notes yet)",
+                    Style::new().fg(Color::DarkGray).italic(),
+                )),
+                Line::raw(""),
+                Line::from(vec![
+                    Span::styled("  a", Style::new().fg(Color::Cyan).bold()),
+                    Span::styled("  Add a new analyst note (optionally anchored to cursor address)", Style::new().fg(Color::Gray)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  d", Style::new().fg(Color::Cyan).bold()),
+                    Span::styled("  Delete the note at the cursor line", Style::new().fg(Color::Gray)),
+                ]),
+            ])
+            .wrap(Wrap { trim: false }),
+            inner,
+        );
+        return;
+    }
+
+    let cursor_idx = app.panel_cursor[Tab::Notes as usize];
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, note) in app.notes.iter().enumerate() {
+        let addr_part = note.vaddr
+            .map(|a| format!(" @ 0x{:x}", a))
+            .unwrap_or_default();
+
+        let header = Line::from(vec![
+            Span::styled(
+                format!("  [{:>3}]", note.id),
+                if i == cursor_idx {
+                    Style::new().fg(Color::Cyan).bold().bg(Color::Rgb(20, 20, 60))
+                } else {
+                    Style::new().fg(Color::DarkGray)
+                },
+            ),
+            Span::styled(
+                addr_part,
+                Style::new().fg(Color::Yellow),
+            ),
+            Span::styled(
+                format!("  {}", note.timestamp),
+                Style::new().fg(Color::DarkGray).italic(),
+            ),
+        ]);
+        lines.push(header);
+
+        // Note text — indent with a vertical bar
+        for text_line in note.text.lines() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "    │  ",
+                    if i == cursor_idx {
+                        Style::new().fg(Color::Magenta).bg(Color::Rgb(20, 20, 60))
+                    } else {
+                        Style::new().fg(Color::DarkGray)
+                    },
+                ),
+                Span::styled(
+                    text_line.to_string(),
+                    if i == cursor_idx {
+                        Style::new().fg(Color::White).bg(Color::Rgb(20, 20, 60))
+                    } else {
+                        Style::new().fg(Color::White)
+                    },
+                ),
+            ]));
+        }
+        lines.push(Line::raw(""));
+    }
+
+    let scroll = app.scroll[Tab::Notes as usize];
     f.render_widget(
         Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
         inner,

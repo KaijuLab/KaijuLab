@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -46,6 +48,11 @@ pub enum AgentEvent {
     /// Updated vulnerability scores from a scan_vulnerabilities / set_vuln_score run.
     /// Maps fn_vaddr → score (0–10). TUI uses these for [!] badges in Functions tab.
     VulnScores(HashMap<u64, u8>),
+    /// Progress update during a multi-tool turn (e.g. auto_analysis).
+    /// `step` is 1-based; `total` is the expected total number of tool calls.
+    Progress { step: usize, total: usize, label: String },
+    /// The current agent turn was cancelled by the user (Ctrl+X).
+    Cancelled,
 }
 
 /// Estimated character budget before we start trimming old tool-result messages.
@@ -136,6 +143,9 @@ pub struct Agent {
     tools: Vec<crate::llm::ToolDefinition>,
     history: Vec<LlmMessage>,
     event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
+    /// When set, the agent checks this flag between tool calls.
+    /// If `true`, the current turn is cancelled and `AgentEvent::Cancelled` is emitted.
+    cancel_token: Option<Arc<AtomicBool>>,
 }
 
 impl Agent {
@@ -145,6 +155,28 @@ impl Agent {
             backend,
             history: Vec::new(),
             event_tx: None,
+            cancel_token: None,
+        }
+    }
+
+    /// Attach a cancellation token.  Set the bool to `true` from the TUI to
+    /// interrupt the current agent turn between tool calls.
+    pub fn with_cancel_token(mut self, token: Arc<AtomicBool>) -> Self {
+        self.cancel_token = Some(token);
+        self
+    }
+
+    /// Returns true if the user has requested cancellation.
+    fn is_cancelled(&self) -> bool {
+        self.cancel_token
+            .as_ref()
+            .map_or(false, |t| t.load(Ordering::Relaxed))
+    }
+
+    /// Reset the cancellation flag so the next turn starts fresh.
+    fn clear_cancel(&self) {
+        if let Some(t) = &self.cancel_token {
+            t.store(false, Ordering::Relaxed);
         }
     }
 
@@ -225,7 +257,9 @@ impl Agent {
 
     /// Run one user turn through the agentic loop.
     pub async fn run(&mut self, user_input: &str) -> Result<()> {
+        self.clear_cancel();
         self.history.push(LlmMessage::user_text(user_input));
+        let mut tool_step = 0usize;
 
         loop {
             // ── Trim history to stay within context budget ──────────────────
@@ -323,8 +357,17 @@ impl Agent {
             }
 
             // ── Execute tool calls ──────────────────────────────────────────
+            let total_calls = tool_calls.len();
             let mut results: Vec<ToolResult> = Vec::new();
             for tc in &tool_calls {
+                // Check for cancellation before each tool call
+                if self.is_cancelled() {
+                    self.emit(AgentEvent::Cancelled);
+                    self.history.pop(); // remove the assistant message with tool calls
+                    return Ok(());
+                }
+
+                tool_step += 1;
                 let display = args_display(&tc.args);
 
                 // Emit a Focus event so the TUI can highlight the address
@@ -333,6 +376,11 @@ impl Agent {
                 }
 
                 if self.tui_mode() {
+                    self.emit(AgentEvent::Progress {
+                        step:  tool_step,
+                        total: total_calls,
+                        label: format!("{}({})", tc.name, display),
+                    });
                     self.emit(AgentEvent::ToolCall {
                         name: tc.name.clone(),
                         display_args: display.clone(),

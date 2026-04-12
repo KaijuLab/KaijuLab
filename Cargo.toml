@@ -68,3 +68,6 @@ arboard = "3"
 
 # Multi-architecture disassembler (ARM64, ARM, MIPS, …)
 capstone = "0.12"
+
+# Configuration file (~/.kaiju/config.toml)
+toml = "0.8"

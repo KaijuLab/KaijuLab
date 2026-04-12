@@ -83,6 +83,8 @@ pub struct Project {
     pub structs: HashMap<String, StructDef>,
     /// fn_vaddr → vulnerability suspicion score (0–10).
     pub vuln_scores: HashMap<u64, u8>,
+    /// Analyst notes (free-form text, optionally anchored to a vaddr).
+    pub notes: Vec<Note>,
 
     /// SQLite database path (not serialized — set at load time).
     #[serde(skip)]
@@ -90,6 +92,20 @@ pub struct Project {
     /// Legacy JSON sidecar path, kept for migration detection (not serialized).
     #[serde(skip)]
     pub sidecar_path: Option<PathBuf>,
+}
+
+// ─── Analyst notes ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Note {
+    /// Auto-assigned row-id from SQLite.
+    pub id: i64,
+    /// Optional virtual address the note is anchored to.
+    pub vaddr: Option<u64>,
+    /// Free-form note text.
+    pub text: String,
+    /// ISO-8601 timestamp set at insert time.
+    pub timestamp: String,
 }
 
 // ─── Helper: encode/decode vaddrs as "0x{:016x}" TEXT ─────────────────────────
@@ -131,6 +147,12 @@ CREATE TABLE IF NOT EXISTS structs (
 CREATE TABLE IF NOT EXISTS vuln_scores (
     vaddr TEXT    PRIMARY KEY,
     score INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notes (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    vaddr     TEXT,
+    text      TEXT    NOT NULL,
+    timestamp TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 ";
 
@@ -275,6 +297,25 @@ impl Project {
                 p.vuln_scores.insert(parse_vaddr(&row.0), row.1.clamp(0, 10) as u8);
             }
         }
+        // notes
+        {
+            let mut stmt = conn
+                .prepare("SELECT id, vaddr, text, timestamp FROM notes ORDER BY id")
+                .unwrap_or_else(|_| conn.prepare("SELECT 0, NULL, '', '' WHERE 0").unwrap());
+            let rows = stmt.query_map([], |row| {
+                Ok(Note {
+                    id:        row.get::<_, i64>(0)?,
+                    vaddr:     row.get::<_, Option<String>>(1)?
+                                  .as_deref()
+                                  .map(parse_vaddr),
+                    text:      row.get::<_, String>(2)?,
+                    timestamp: row.get::<_, String>(3)?,
+                })
+            });
+            if let Ok(rows) = rows {
+                p.notes = rows.flatten().collect();
+            }
+        }
 
         Ok(p)
     }
@@ -351,8 +392,47 @@ impl Project {
                 params![vaddr_key(*vaddr), *score as i64],
             )?;
         }
+        // Notes are NOT cleared/rewritten on save — they are appended individually
+        // via add_note() to preserve auto-increment IDs.
 
         Ok(())
+    }
+
+    // ── Notes ────────────────────────────────────────────────────────────────
+
+    /// Append a new analyst note and persist it to SQLite immediately.
+    /// Returns the new note (with the auto-assigned id and timestamp).
+    pub fn add_note(&mut self, vaddr: Option<u64>, text: String) -> anyhow::Result<Note> {
+        let path = self
+            .db_path_field
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No database path set"))?;
+        let conn = Connection::open(path)?;
+        Self::init_schema(&conn)?;
+        let vaddr_str = vaddr.map(|v| vaddr_key(v));
+        conn.execute(
+            "INSERT INTO notes (vaddr, text) VALUES (?1, ?2)",
+            params![vaddr_str, &text],
+        )?;
+        let id = conn.last_insert_rowid();
+        let timestamp: String = conn
+            .query_row("SELECT timestamp FROM notes WHERE id = ?1", params![id], |r| r.get(0))
+            .unwrap_or_else(|_| "unknown".to_string());
+        let note = Note { id, vaddr, text, timestamp };
+        self.notes.push(note.clone());
+        Ok(note)
+    }
+
+    /// Delete a note by its id. Returns true if a row was deleted.
+    pub fn delete_note(&mut self, id: i64) -> anyhow::Result<bool> {
+        let path = self
+            .db_path_field
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No database path set"))?;
+        let conn = Connection::open(path)?;
+        let deleted = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])? > 0;
+        self.notes.retain(|n| n.id != id);
+        Ok(deleted)
     }
 
     // ── Mutations ────────────────────────────────────────────────────────────

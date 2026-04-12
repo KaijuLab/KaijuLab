@@ -9,13 +9,16 @@ mod tools;
 mod tui;
 mod ui;
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::Parser;
 use serde_json::json;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-use config::{BackendConfig, BackendKind};
+use config::{BackendConfig, BackendKind, KaijuConfig};
 use llm::LlmBackend;
 
 #[derive(Parser)]
@@ -91,6 +94,10 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Load (or create) ~/.kaiju/config.toml
+    KaijuConfig::write_default_if_missing();
+    let _kaiju_cfg = KaijuConfig::load();
+
     let kind: BackendKind = cli.backend.parse()?;
     let cfg = BackendConfig::load(
         kind,
@@ -130,7 +137,8 @@ async fn main() -> Result<()> {
             }
         });
 
-        tui::run_tui(event_rx, user_tx, &display, None).await?;
+        let cancel_manual = Arc::new(AtomicBool::new(false));
+        tui::run_tui(event_rx, user_tx, &display, None, cancel_manual).await?;
         return Ok(());
     }
 
@@ -190,7 +198,14 @@ async fn main() -> Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel::<agent::AgentEvent>();
     let (user_tx, mut user_rx) = mpsc::channel::<String>(4);
 
-    let mut ag = agent::Agent::new(backend).with_events(event_tx);
+    // Shared cancellation token: TUI sets it true, agent loop checks it.
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let cancel_for_agent = cancel_token.clone();
+    let cancel_for_tui   = cancel_token.clone();
+
+    let mut ag = agent::Agent::new(backend)
+        .with_events(event_tx)
+        .with_cancel_token(cancel_for_agent);
 
     // Restore previous session if one exists for this binary
     if !no_session {
@@ -201,6 +216,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    }
+
+    // Save recently opened binary to ~/.kaiju/recent.json
+    if let Some(ref key) = session_key {
+        save_recent_file(key);
     }
 
     let initial_file = cli.file.as_deref();
@@ -221,7 +241,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    tui::run_tui(event_rx, user_tx, &display, initial_file).await?;
+    tui::run_tui(event_rx, user_tx, &display, initial_file, cancel_for_tui).await?;
 
     Ok(())
 }
@@ -671,6 +691,43 @@ async fn run_plain_repl(agent: &mut agent::Agent) -> Result<()> {
 
     println!("  Bye.");
     Ok(())
+}
+
+// ─── Recent files ────────────────────────────────────────────────────────────
+
+/// Path to the recent-files list.
+fn recent_files_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(std::path::PathBuf::from(home).join(".kaiju").join("recent.json"))
+}
+
+/// Load the list of recently opened binaries (most recent first).
+pub fn load_recent_files() -> Vec<String> {
+    let path = match recent_files_path() {
+        Some(p) => p,
+        None => return vec![],
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return vec![],
+    };
+    serde_json::from_str::<Vec<String>>(&text).unwrap_or_default()
+}
+
+/// Prepend `path` to the recent-files list (up to 10 entries, deduped).
+pub fn save_recent_file(path: &str) {
+    let rp = match recent_files_path() {
+        Some(p) => p,
+        None => return,
+    };
+    if let Some(parent) = rp.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut list = load_recent_files();
+    list.retain(|p| p != path);
+    list.insert(0, path.to_string());
+    list.truncate(10);
+    let _ = std::fs::write(&rp, serde_json::to_string_pretty(&list).unwrap_or_default());
 }
 
 // ─── Backend factory ──────────────────────────────────────────────────────────
