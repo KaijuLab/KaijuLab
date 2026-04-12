@@ -1,10 +1,7 @@
 use std::io;
 
 use crossterm::{
-    event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers,
-        MouseEventKind,
-    },
+    event::{Event, EventStream, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -386,23 +383,6 @@ impl App {
         );
     }
 
-    /// Handle mouse scroll events. Click/drag events are ignored so the
-    /// terminal can still perform native text selection when the user holds
-    /// Shift while dragging.
-    pub fn handle_mouse(&mut self, event: crossterm::event::MouseEvent) {
-        match event.kind {
-            MouseEventKind::ScrollUp => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_add(3);
-            }
-            MouseEventKind::ScrollDown => {
-                let s = &mut self.scroll[self.active_tab as usize];
-                *s = s.saturating_sub(3);
-            }
-            _ => {}
-        }
-    }
-
     /// Returns a user message to send to the agent, or None.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
         match key.code {
@@ -653,7 +633,7 @@ pub async fn run_tui(
 ) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -673,7 +653,7 @@ pub async fn run_tui(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(info);
     }));
 
@@ -697,9 +677,6 @@ pub async fn run_tui(
                             user_tx.send(msg).await?;
                         }
                     }
-                    Some(Ok(Event::Mouse(mouse))) => {
-                        app.handle_mouse(mouse);
-                    }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.autoresize()?;
                     }
@@ -720,7 +697,7 @@ pub async fn run_tui(
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     Ok(())
@@ -942,7 +919,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
         kb("1 – 7",      "Switch tab directly"),
         kb("Tab",        "Cycle to next tab"),
         kb("↑  ↓",       "Browse sent-message history"),
-        kb("PgUp  PgDn / scroll", "Scroll active panel  ·  Shift+drag to select text"),
+        kb("PgUp  PgDn / scroll", "Scroll active panel  ·  Ctrl+drag to select text"),
         kb("Ctrl+C",     "Clear input  ·  quit when input is empty"),
         blank(),
     ];
@@ -1206,7 +1183,7 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
     let keybinds = if app.search_pattern.is_some() {
         "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  scroll/PgUpDn:scroll"
     } else {
-        "Tab:next  1-7:tab  g:goto  /:search  y:copy  scroll/PgUpDn:scroll  Shift+drag:select  Ctrl+C:quit"
+        "Tab:next  1-7:tab  g:goto  /:search  y:copy  scroll/PgUpDn:scroll  Ctrl+drag:select  Ctrl+C:quit"
     };
     let status = format!(" {} {}", icon, app.status);
 
