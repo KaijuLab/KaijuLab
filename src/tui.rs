@@ -1038,7 +1038,15 @@ impl App {
             }
 
             // y — copy active panel content to system clipboard
-            KeyCode::Char('y') if self.input.is_empty() && key.modifiers.is_empty() => {
+            // Only fires on panel tabs (not Chat/Context/Notes) so typing "y..." still works there
+            KeyCode::Char('y')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && !matches!(
+                        self.active_tab,
+                        Tab::Chat | Tab::Context | Tab::Notes
+                    ) =>
+            {
                 let text = self.copyable_content();
                 self.copy_to_clipboard(text);
                 None
@@ -1054,24 +1062,27 @@ impl App {
                 None
             }
 
-            // j / k — line cursor down / up in panels
-            KeyCode::Char('j') if self.input.is_empty() && key.modifiers.is_empty() => {
-                self.move_panel_cursor(1);
-                None
-            }
-            KeyCode::Char('k') if self.input.is_empty() && key.modifiers.is_empty() => {
-                self.move_panel_cursor(-1);
-                None
-            }
+            // j / k — line cursor down / up in panels (removed as standalone shortcuts;
+            // use ↑/↓ arrow keys instead, which work regardless of input state)
 
-            // m — bookmark current address
-            KeyCode::Char('m') if self.input.is_empty() && key.modifiers.is_empty() => {
+            // m — bookmark current address (only when an address is actually in scope)
+            KeyCode::Char('m')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && (self.focused_addr.is_some() || self.addr_at_cursor().is_some()) =>
+            {
                 self.bookmark_current();
                 None
             }
-            // B — toggle bookmark list popup
-            KeyCode::Char('B') if self.input.is_empty()
-                && key.modifiers.contains(KeyModifiers::SHIFT) => {
+            // B — toggle bookmark list popup (only on non-text tabs so "B..." can be typed in Chat)
+            KeyCode::Char('B')
+                if self.input.is_empty()
+                    && key.modifiers.contains(KeyModifiers::SHIFT)
+                    && !matches!(
+                        self.active_tab,
+                        Tab::Chat | Tab::Context | Tab::Notes
+                    ) =>
+            {
                 if matches!(self.popup, Some(Popup::Bookmarks)) {
                     self.popup = None;
                 } else {
@@ -1080,8 +1091,12 @@ impl App {
                 None
             }
 
-            // x — xref popup for address at cursor / focused addr
-            KeyCode::Char('x') if self.input.is_empty() && key.modifiers.is_empty() => {
+            // x — xref popup (only when an address is in scope so "x..." can be typed otherwise)
+            KeyCode::Char('x')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && (self.focused_addr.is_some() || self.addr_at_cursor().is_some()) =>
+            {
                 self.show_xref_popup();
                 None
             }
@@ -1096,8 +1111,15 @@ impl App {
                 None
             }
 
-            // s — toggle split-pane view
-            KeyCode::Char('s') if self.input.is_empty() && key.modifiers.is_empty() => {
+            // s — toggle split-pane view (only on panel tabs)
+            KeyCode::Char('s')
+                if self.input.is_empty()
+                    && key.modifiers.is_empty()
+                    && !matches!(
+                        self.active_tab,
+                        Tab::Chat | Tab::Context | Tab::Notes
+                    ) =>
+            {
                 self.split_pane = !self.split_pane;
                 self.status = if self.split_pane {
                     "Split-pane: Disasm | Decompile (Tab to switch focus)".to_string()
@@ -1152,7 +1174,15 @@ impl App {
                 None
             }
 
-            // ↑↓ — command history navigation
+            // ↑↓ — panel cursor when input empty; command history when input non-empty
+            KeyCode::Up if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.move_panel_cursor(-1);
+                None
+            }
+            KeyCode::Down if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.move_panel_cursor(1);
+                None
+            }
             KeyCode::Up => {
                 if self.input_history.is_empty() {
                     return None;
