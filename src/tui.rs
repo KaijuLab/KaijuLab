@@ -239,6 +239,13 @@ pub struct App {
     /// Last decompile args so write tools can auto-refresh the Decompile tab.
     pub last_decompile_path: String,
     pub last_decompile_vaddr: u64,
+    /// Autocomplete candidates (populated on first Tab press with non-empty input).
+    pub completions: Vec<String>,
+    /// Which candidate is currently selected (cycles with Tab).
+    pub completion_idx: usize,
+    /// The part of `input` that precedes the token being completed.
+    /// Applying a completion writes `completion_prefix + completions[idx]` → `input`.
+    pub completion_prefix: String,
 }
 
 
@@ -289,6 +296,9 @@ impl App {
             notes: Vec::new(),
             last_decompile_path: String::new(),
             last_decompile_vaddr: 0,
+            completions: Vec::new(),
+            completion_idx: 0,
+            completion_prefix: String::new(),
         };
         app.chat.push(ChatMsg::Welcome);
         app
@@ -691,6 +701,190 @@ impl App {
         self.scroll_to_search_hit();
     }
 
+    // ─── Autocomplete ────────────────────────────────────────────────────────────
+
+    /// Split `input` into (prefix, token): `prefix` is everything up to the last
+    /// whitespace-delimited token that we are completing; `token` is the tail being matched.
+    /// Path-like tokens (containing `/` or starting with `~`) are completed in-place;
+    /// everything else treats the whole input as the phrase being completed.
+    fn split_completion(&self) -> (String, String) {
+        let input = &self.input;
+        // If the last space-delimited word looks like a filesystem path, split there.
+        if let Some(sp) = input.rfind(' ') {
+            let last = &input[sp + 1..];
+            if last.starts_with('/') || last.starts_with("~/") || last.starts_with("./")
+                || (last.contains('/') && !last.is_empty())
+            {
+                return (input[..sp + 1].to_string(), last.to_string());
+            }
+        }
+        // Otherwise complete the whole input as a phrase.
+        (String::new(), input.clone())
+    }
+
+    /// Build a list of completion candidates for the current input.
+    fn compute_completions(&self) -> (String, Vec<String>) {
+        let (prefix, token) = self.split_completion();
+        let token_lower = token.to_lowercase();
+        let mut cands: Vec<String> = Vec::new();
+
+        // ── 1. Filesystem path completion ──────────────────────────────────────
+        let is_path = token.starts_with('/')
+            || token.starts_with("~/")
+            || token.starts_with("./")
+            || (token.contains('/') && !token.is_empty());
+        if is_path {
+            let expanded = if token.starts_with("~/") {
+                let home = std::env::var("HOME").unwrap_or_default();
+                format!("{}{}", home, &token[1..])
+            } else {
+                token.clone()
+            };
+            let (dir, file_prefix) = if expanded.ends_with('/') {
+                (expanded.as_str().to_owned(), String::new())
+            } else {
+                match expanded.rfind('/') {
+                    Some(i) => (expanded[..i + 1].to_string(), expanded[i + 1..].to_string()),
+                    None    => ("./".to_string(), expanded.clone()),
+                }
+            };
+            let fp_lower = file_prefix.to_lowercase();
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') && name.to_lowercase().starts_with(&fp_lower) {
+                        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        let full = format!("{}{}{}", dir, name, if is_dir { "/" } else { "" });
+                        // Restore tilde form if input started with ~/
+                        let display = if token.starts_with("~/") {
+                            let home = std::env::var("HOME").unwrap_or_default();
+                            if full.starts_with(&home) {
+                                format!("~{}", &full[home.len()..])
+                            } else {
+                                full
+                            }
+                        } else {
+                            full
+                        };
+                        cands.push(display);
+                    }
+                }
+            }
+            cands.sort();
+            return (prefix, cands);
+        }
+
+        // ── 2. Function address completion ─────────────────────────────────────
+        // Trigger when the prefix (command portion) contains an RE verb, or when
+        // the token itself looks like the start of a hex address.
+        let prefix_lower = prefix.trim_end().to_lowercase();
+        let fn_verbs = [
+            "disassemble", "decompile", "explain", "rename",
+            "xref", "cfg", "call graph", "at 0x", "address",
+        ];
+        let fn_context = fn_verbs.iter().any(|v| prefix_lower.contains(v))
+            || token_lower.starts_with("0x");
+        if fn_context && !self.fn_entries.is_empty() {
+            for fe in &self.fn_entries {
+                let addr = format!("0x{:x}", fe.vaddr);
+                if token_lower.is_empty()
+                    || addr.contains(&token_lower)
+                    || fe.name.to_lowercase().contains(&token_lower)
+                {
+                    cands.push(format!("{}  ; {}", addr, fe.name));
+                }
+            }
+            if !cands.is_empty() {
+                return (prefix, cands);
+            }
+        }
+
+        // ── 3. Keyword / phrase completion ─────────────────────────────────────
+        const PHRASES: &[&str] = &[
+            "analyse ",
+            "disassemble the entry point",
+            "disassemble function at 0x",
+            "decompile the main function",
+            "decompile function at 0x",
+            "list all functions",
+            "list strings",
+            "show file info",
+            "explain function at 0x",
+            "rename function at 0x",
+            "add comment at 0x",
+            "show imports",
+            "find vulnerabilities",
+            "auto analyze",
+            "describe what you can do",
+            "search for bytes ",
+            "show call graph",
+            "show cfg for 0x",
+            "show xrefs to 0x",
+            "generate yara rule for 0x",
+            "export report",
+            "run ",
+            "plugins",
+        ];
+        for phrase in PHRASES {
+            if phrase.to_lowercase().starts_with(&token_lower) {
+                cands.push(phrase.to_string());
+            }
+        }
+
+        (prefix, cands)
+    }
+
+    /// Apply `completions[completion_idx]` to `self.input`.
+    fn apply_completion(&mut self) {
+        if let Some(c) = self.completions.get(self.completion_idx) {
+            self.input = format!("{}{}", self.completion_prefix, c);
+            self.input_cursor = self.input.len();
+        }
+    }
+
+    /// Trigger or cycle forward through completions.
+    fn complete_forward(&mut self) {
+        if self.completions.is_empty() {
+            // First Tab: compute completions.
+            let (prefix, cands) = self.compute_completions();
+            if cands.is_empty() {
+                self.status = "No completions".to_string();
+                return;
+            }
+            self.completion_prefix = prefix;
+            self.completions = cands;
+            self.completion_idx = 0;
+        } else {
+            self.completion_idx = (self.completion_idx + 1) % self.completions.len();
+        }
+        self.apply_completion();
+        self.status = format!(
+            "Tab: {}/{} completions — Shift+Tab: back — Esc: dismiss",
+            self.completion_idx + 1,
+            self.completions.len()
+        );
+    }
+
+    /// Cycle backwards through completions.
+    fn complete_backward(&mut self) {
+        if self.completions.is_empty() { return; }
+        let n = self.completions.len();
+        self.completion_idx = (self.completion_idx + n - 1) % n;
+        self.apply_completion();
+        self.status = format!(
+            "Tab: {}/{} completions — Shift+Tab: back — Esc: dismiss",
+            self.completion_idx + 1,
+            n,
+        );
+    }
+
+    /// Dismiss the completion popup without changing the input.
+    fn clear_completions(&mut self) {
+        self.completions.clear();
+        self.completion_idx = 0;
+        self.completion_prefix.clear();
+    }
+
     /// Copy `text` to the system clipboard; update status with result.
     /// Tries arboard first, then falls back to CLI tools (xclip, wl-copy, xsel, clip.exe).
     fn copy_to_clipboard(&mut self, text: String) {
@@ -929,9 +1123,16 @@ impl App {
                 None
             }
 
-            // Tab cycling
+            // Tab — autocomplete when input is non-empty, otherwise cycle panels
             KeyCode::Tab => {
-                if self.split_pane && self.input.is_empty() {
+                if !self.input.is_empty() && !self.is_loading {
+                    // Autocomplete forward
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        self.complete_backward();
+                    } else {
+                        self.complete_forward();
+                    }
+                } else if self.split_pane && self.input.is_empty() {
                     // In split-pane mode: Tab alternates focus between left and right
                     self.split_focus_right = !self.split_focus_right;
                     self.status = if self.split_focus_right {
@@ -949,8 +1150,12 @@ impl App {
                 None
             }
             KeyCode::BackTab => {
-                self.active_tab = self.active_tab.prev();
-                self.tab_dirty[self.active_tab as usize] = false;
+                if !self.input.is_empty() && !self.is_loading {
+                    self.complete_backward();
+                } else {
+                    self.active_tab = self.active_tab.prev();
+                    self.tab_dirty[self.active_tab as usize] = false;
+                }
                 None
             }
 
@@ -1098,7 +1303,12 @@ impl App {
                 None
             }
 
-            // Esc — dismiss popup first, then clear search
+            // Esc — dismiss completions first, then popup, then search
+            KeyCode::Esc if !self.completions.is_empty() => {
+                self.clear_completions();
+                self.status = "Completions dismissed".to_string();
+                None
+            }
             KeyCode::Esc if self.popup.is_some() => {
                 self.popup = None;
                 self.status = "Popup closed".to_string();
@@ -1441,8 +1651,9 @@ impl App {
                 Some(msg)
             }
 
-            // Text editing
+            // Text editing — any edit dismisses the completion popup
             KeyCode::Backspace => {
+                self.clear_completions();
                 if self.input_cursor > 0 {
                     // Step back to the previous char boundary
                     let prev = self.input[..self.input_cursor]
@@ -1453,6 +1664,7 @@ impl App {
                 None
             }
             KeyCode::Delete => {
+                self.clear_completions();
                 if self.input_cursor < self.input.len() {
                     self.input.remove(self.input_cursor);
                 }
@@ -1482,9 +1694,10 @@ impl App {
                 None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Typing a character exits history-navigation mode
+                // Typing a character exits history-navigation mode and clears completions
                 self.history_cursor = None;
                 self.input_saved = String::new();
+                self.clear_completions();
                 self.input.insert(self.input_cursor, c);
                 self.input_cursor += c.len_utf8();
                 None
@@ -1691,6 +1904,10 @@ fn render(f: &mut Frame, app: &mut App) {
     render_content(f, chunks[2], app);
     render_statusbar(f, chunks[3], app);
     render_input(f, chunks[4], app);
+    // Completion popup (drawn just above the input bar)
+    if !app.completions.is_empty() {
+        render_completions(f, area, app);
+    }
     // Popup overlay (drawn on top of everything)
     if app.popup.is_some() {
         render_popup(f, area, app);
@@ -2255,6 +2472,75 @@ fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
             .scroll((scroll, 0)),
         inner,
     );
+}
+
+// ─── Completion popup ─────────────────────────────────────────────────────────
+
+fn render_completions(f: &mut Frame, area: Rect, app: &App) {
+    const MAX_ROWS: usize = 8;
+    let total = app.completions.len();
+    let show = total.min(MAX_ROWS);
+
+    // Window of completions to display, centred around the selected index.
+    let half = show / 2;
+    let start = if app.completion_idx >= half {
+        (app.completion_idx - half).min(total.saturating_sub(show))
+    } else {
+        0
+    };
+    let window = &app.completions[start..start + show];
+
+    // Build lines
+    let lines: Vec<Line> = window
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let global_idx = start + i;
+            let is_sel = global_idx == app.completion_idx;
+            if is_sel {
+                Line::from(vec![
+                    Span::styled(" ▶ ", Style::new().fg(Color::Cyan).bold()),
+                    Span::styled(c.clone(), Style::new().fg(Color::White).bold()
+                        .bg(Color::Rgb(30, 30, 60))),
+                    Span::raw(" "),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("   ", Style::new()),
+                    Span::styled(c.clone(), Style::new().fg(Color::Rgb(180, 180, 200))),
+                ])
+            }
+        })
+        .collect();
+
+    // Position: just above the input row, right-aligned hint, fixed width
+    let popup_h = show as u16 + 2; // border top + bottom
+    let popup_w = area.width.min(70);
+    let popup_x = area.x;
+    let popup_y = area.height.saturating_sub(popup_h + 1); // 1 = input row
+
+    let popup_area = Rect {
+        x: popup_x,
+        y: popup_y,
+        width: popup_w,
+        height: popup_h,
+    };
+
+    let count_hint = if total > MAX_ROWS {
+        format!(" {}/{} — Tab/Shift+Tab to cycle · Esc to dismiss ", app.completion_idx + 1, total)
+    } else {
+        format!(" Tab/Shift+Tab to cycle · Esc to dismiss ")
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(count_hint, Style::new().fg(Color::DarkGray).italic()))
+        .border_style(Style::new().fg(Color::Cyan));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(ratatui::widgets::Clear, popup_area);
+    f.render_widget(block, popup_area);
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 // ─── Popup overlay ────────────────────────────────────────────────────────────
