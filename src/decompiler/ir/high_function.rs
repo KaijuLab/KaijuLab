@@ -11,7 +11,7 @@ use super::{
     Expression, ExpressionOp, VariableSymbol,
 };
 use crate::decompiler::{
-    ir::expression::{InstructionSize, OpIdx},
+    ir::expression::InstructionSize,
     memory::Memory,
 };
 
@@ -69,7 +69,7 @@ pub struct HighFunction {
 
 fn analysis(
     composed_block: &BasicBlock,
-    sp: VarNode,
+    _sp: VarNode,
     used_call_results: &mut HashSet<VariableSymbol>,
     memory_read: &mut HashSet<Expression>,
     memory_written: &mut HashSet<Expression>,

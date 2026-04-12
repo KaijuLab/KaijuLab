@@ -541,14 +541,14 @@ impl PCodeToBasicBlocks {
 
         for (block_id, lbl) in blocks_to_patch_jump {
             let dst = *pcode_label_map.get(&lbl).unwrap();
-            let debug_id = self.blocks[block_id].identifier;
+            let _debug_id = self.blocks[block_id].identifier;
             match &mut self.blocks[block_id].next {
                 basic_block::NextBlock::Jump {
                     true_branch,
-                    false_branch,
+                    false_branch: _,
                     ..
                 } => match true_branch {
-                    DestinationKind::Virtual(addr, idx) => *idx = dst,
+                    DestinationKind::Virtual(_addr, idx) => *idx = dst,
                     _ => panic!("Unexpected destination made it into patch block list"),
                 },
                 _ => panic!("Unexpected block pactch state."),

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use petgraph::{
     algo::dominators::Dominators,
     csr::DefaultIx,
-    visit::{IntoNeighbors, IntoNodeReferences},
+    visit::IntoNeighbors,
 };
 
 use super::{

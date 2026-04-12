@@ -252,11 +252,11 @@ impl ControlFlowGraph {
         )
         .iter()
         .map(|(k, v)| {
-            (if let Some(slot) = blocks.slot_by_identifier(backward_graph[*k]) {
+            if let Some(slot) = blocks.slot_by_identifier(backward_graph[*k]) {
                 (slot, *v)
             } else {
                 (BlockSlot::default(), u32::MAX)
-            })
+            } 
         })
         .collect::<HashMap<BlockSlot, u32>>();
 
@@ -287,9 +287,9 @@ impl ControlFlowGraph {
 }
 
 mod test {
-    use petgraph::{algo::dominators::simple_fast, csr::DefaultIx};
+    
 
-    use super::{least_common_ancestor, Address, Graph};
+    
 
     // /// Graph from [Wikipedia](https://en.wikipedia.org/wiki/Dominator_(graph_theory))
     // /// ```

@@ -14,7 +14,7 @@ use std::{
     usize,
 };
 
-use nodit::{DiscreteFinite, InclusiveInterval, Interval, NoditMap};
+use nodit::{InclusiveInterval, Interval, NoditMap};
 
 // use crate::ir::{high_function::CallingConvention, };
 use pcode::VarNode;
@@ -433,7 +433,7 @@ impl CpuState {
             space.insert(var_node, Expression::from(ExpressionOp::var_reg(var_node)));
         }
 
-        let size_to_mask = |size: u8| (1u64.unbounded_shl(size as u32 * 8).wrapping_sub(1));
+        let size_to_mask = |size: u8| 1u64.unbounded_shl(size as u32 * 8).wrapping_sub(1);
 
         // What happens when we have data in EAX, but ask for AH, or AX?
         match &space[var_node.offset] {
@@ -479,7 +479,7 @@ impl CpuState {
             SpannedItem::ItemAt(a) => match &storage[*a] {
                 SpannedItem::Item(e, _) => {
                     let size_to_mask =
-                        |size: u8| (1u64.unbounded_shl(size as u32 * 8).wrapping_sub(1));
+                        |size: u8| 1u64.unbounded_shl(size as u32 * 8).wrapping_sub(1);
 
                     let mask = size_to_mask(var_node.size) << (var_node.offset * 8);
 

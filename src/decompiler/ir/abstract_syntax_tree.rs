@@ -309,7 +309,7 @@ fn add_program_segment(
             .slot_by_destination(false_branch)
             .unwrap();
 
-        let true_branch_distance_to_return =
+        let _true_branch_distance_to_return =
             *hf.cfg.distance_to_return.get(&true_branch_slot).unwrap();
         let false_branch_distance_to_return =
             *hf.cfg.distance_to_return.get(&false_branch_slot).unwrap();
@@ -518,7 +518,7 @@ fn add_assignments<'a>(
 fn add_call(
     stmts: &mut Vec<AstStatement>,
     block: &BasicBlock,
-    hf: &HighFunction,
+    _hf: &HighFunction,
     lang: &SleighLanguage,
     destination: &DestinationKind,
     call_from: Address,

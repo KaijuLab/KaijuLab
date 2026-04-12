@@ -44,7 +44,7 @@
 
 use std::{
     borrow::Cow,
-    ops::{Index, IndexMut, RangeFrom},
+    ops::{Index, IndexMut},
 };
 
 use super::basic_block::DestinationKind;
@@ -155,8 +155,8 @@ impl FormatWithSleighLanguage for VariableSymbol {
 
     fn debug_fmt(
         &self,
-        lang: Option<&SleighLanguage>,
-        f: &mut std::fmt::Formatter<'_>,
+        _lang: Option<&SleighLanguage>,
+        _f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         todo!()
     }
@@ -1812,7 +1812,7 @@ impl Expression {
     ///
     /// # Returns
     /// An iterator yielding references to all `VariableSymbol`s in the expression
-    pub fn iter_vars<'a>(&'a self) -> impl Iterator<Item = &VariableSymbol> + 'a {
+    pub fn iter_vars<'a>(&'a self) -> impl Iterator<Item = &'a VariableSymbol> + 'a {
         self.0.iter().filter_map(|p| {
             if let ExpressionOp::Variable(v) = p {
                 Some(v)
@@ -2465,11 +2465,11 @@ impl std::fmt::Debug for Expression {
 
 mod test {
     use pcode::VarNode;
-    use smallvec::{smallvec, SmallVec};
+    
 
-    use super::OpIdx;
+    
 
-    use super::{Expression, ExpressionOp, InstructionSize::U32, VariableSymbol, SMALLVEC_SIZE};
+    use super::{ExpressionOp, VariableSymbol};
 
     #[inline]
     fn var_reg(r: VarNode) -> ExpressionOp {

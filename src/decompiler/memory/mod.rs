@@ -3,7 +3,7 @@ use nodit::interval::ie;
 use nodit::{Interval, NoditMap};
 
 use sleigh_compile::ldef::SleighLanguage;
-use sleigh_runtime::{Decoder, Instruction, Lifter as InstructionToPcode};
+use sleigh_runtime::{Decoder, Instruction};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
