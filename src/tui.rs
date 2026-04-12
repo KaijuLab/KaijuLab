@@ -93,6 +93,8 @@ pub enum Popup {
     Bookmarks,
     /// Cross-references to an address (lines from xrefs_to).
     Xref { title: String, lines: Vec<String> },
+    /// Keyboard cheat-sheet.
+    Help,
 }
 
 // ─── Context entries (mirrors agent::ContextEntry) ────────────────────────────
@@ -164,6 +166,12 @@ pub struct App {
     pub popup: Option<Popup>,
     /// Detected binary architecture string (e.g. "x86_64", "aarch64").
     pub binary_arch: Option<String>,
+    /// Split-pane mode: show Disasm (left) and Decompile (right) side-by-side.
+    pub split_pane: bool,
+    /// In split-pane mode: which half has focus (false=left/Disasm, true=right/Decompile).
+    pub split_focus_right: bool,
+    /// Pending retry: re-send the last user message on the next event-loop tick.
+    pub retry_pending: bool,
 }
 
 
@@ -203,6 +211,9 @@ impl App {
             bookmarks: Vec::new(),
             popup: None,
             binary_arch: None,
+            split_pane: false,
+            split_focus_right: false,
+            retry_pending: false,
         };
         app.chat.push(ChatMsg::Welcome);
         app
@@ -383,6 +394,16 @@ impl App {
                 self.scroll[Tab::Chat as usize] = 0;
                 self.status = format!("{} done", name);
                 self.is_loading = false;
+            }
+            AgentEvent::LlmTextChunk(chunk) => {
+                // Append to last Assistant message or start a new one
+                match self.chat.last_mut() {
+                    Some(ChatMsg::Assistant(text)) => text.push_str(&chunk),
+                    _ => self.chat.push(ChatMsg::Assistant(chunk)),
+                }
+                self.active_tab = Tab::Chat;
+                self.scroll[Tab::Chat as usize] = 0;
+                self.is_loading = true;
             }
             AgentEvent::LlmText(text) => {
                 self.chat.push(ChatMsg::Assistant(text));
@@ -594,12 +615,21 @@ impl App {
 
             // Tab cycling
             KeyCode::Tab => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if self.split_pane && self.input.is_empty() {
+                    // In split-pane mode: Tab alternates focus between left and right
+                    self.split_focus_right = !self.split_focus_right;
+                    self.status = if self.split_focus_right {
+                        "Split-pane: focus → Decompile (right)".to_string()
+                    } else {
+                        "Split-pane: focus → Disasm (left)".to_string()
+                    };
+                } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                     self.active_tab = self.active_tab.prev();
+                    self.tab_dirty[self.active_tab as usize] = false;
                 } else {
                     self.active_tab = self.active_tab.next();
+                    self.tab_dirty[self.active_tab as usize] = false;
                 }
-                self.tab_dirty[self.active_tab as usize] = false;
                 None
             }
             KeyCode::BackTab => {
@@ -703,6 +733,61 @@ impl App {
             // x — xref popup for address at cursor / focused addr
             KeyCode::Char('x') if self.input.is_empty() && key.modifiers.is_empty() => {
                 self.show_xref_popup();
+                None
+            }
+
+            // ? — toggle keyboard help popup
+            KeyCode::Char('?') if self.input.is_empty() && key.modifiers.is_empty() => {
+                if matches!(self.popup, Some(Popup::Help)) {
+                    self.popup = None;
+                } else {
+                    self.popup = Some(Popup::Help);
+                }
+                None
+            }
+
+            // s — toggle split-pane view
+            KeyCode::Char('s') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.split_pane = !self.split_pane;
+                self.status = if self.split_pane {
+                    "Split-pane: Disasm | Decompile (Tab to switch focus)".to_string()
+                } else {
+                    "Split-pane off".to_string()
+                };
+                None
+            }
+
+            // r — retry last message on error
+            KeyCode::Char('r') if self.input.is_empty()
+                && key.modifiers.is_empty()
+                && self.status.starts_with("Error") =>
+            {
+                self.retry_pending = true;
+                self.status = "Retrying…".to_string();
+                None
+            }
+
+            // Ctrl+R — fill input with last history entry (cycle on repeated press)
+            KeyCode::Char('r') if self.input.is_empty()
+                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if !self.input_history.is_empty() {
+                    let new_cursor = match self.history_cursor {
+                        None => self.input_history.len() - 1,
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                    };
+                    self.history_cursor = Some(new_cursor);
+                    self.input = self.input_history[new_cursor].clone();
+                    self.input_cursor = self.input.len();
+                }
+                None
+            }
+
+            // : — activate command palette prefix
+            KeyCode::Char(':') if self.input.is_empty() && key.modifiers.is_empty() => {
+                self.input = ":".to_string();
+                self.input_cursor = 1;
                 None
             }
 
@@ -813,6 +898,59 @@ impl App {
                     self.input_cursor = 0;
                     self.history_cursor = None;
                     return None;
+                }
+
+                // `:cmd args` — command palette shortcut: strip `:` and normalise
+                if let Some(cmd_rest) = msg.strip_prefix(':') {
+                    let cmd_rest = cmd_rest.trim();
+                    // Expand known shortcuts
+                    let expanded = match cmd_rest.split_whitespace().next().unwrap_or("") {
+                        "auto"   => Some(cmd_rest.to_string()),
+                        "report" => Some(cmd_rest.to_string()),
+                        "scan"   => Some(cmd_rest.to_string()),
+                        _        => Some(cmd_rest.to_string()),
+                    };
+                    if let Some(expanded_msg) = expanded {
+                        if !expanded_msg.is_empty() {
+                            self.input = expanded_msg;
+                            self.input_cursor = self.input.len();
+                            // Don't send yet — let the user confirm or edit
+                        }
+                    }
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.history_cursor = None;
+                    return None;
+                }
+
+                // `auto [path]` — structured auto-analysis prompt
+                let auto_path = if msg == "auto" {
+                    Some(self.binary_path.clone().unwrap_or_default())
+                } else if let Some(p) = msg.strip_prefix("auto ") {
+                    Some(p.trim().to_string())
+                } else {
+                    None
+                };
+                if let Some(path) = auto_path {
+                    let prompt = if path.is_empty() {
+                        "Run a full auto-analysis on the loaded binary: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.".to_string()
+                    } else {
+                        format!("Run a full auto-analysis on {}: (1) file_info, (2) list_functions, (3) strings_extract, (4) scan_vulnerabilities. Summarise the top findings.", path)
+                    };
+                    if self.is_loading { return None; }
+                    if self.input_history.last().map_or(true, |last| last != &prompt) {
+                        self.input_history.push(prompt.clone());
+                    }
+                    self.history_cursor = None;
+                    self.input_saved = String::new();
+                    self.chat.push(ChatMsg::User(prompt.clone()));
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.is_loading = true;
+                    self.status = "Running auto-analysis…".to_string();
+                    self.active_tab = Tab::Chat;
+                    self.scroll[Tab::Chat as usize] = 0;
+                    return Some(prompt);
                 }
 
                 if self.is_loading {
@@ -942,6 +1080,18 @@ pub async fn run_tui(
     terminal.draw(|f| render(f, &mut app))?;
 
     loop {
+        // Check for pending retry before waiting for events
+        if app.retry_pending {
+            app.retry_pending = false;
+            if let Some(msg) = app.input_history.last().cloned() {
+                app.chat.push(ChatMsg::User(format!("[retry] {}", msg)));
+                app.is_loading = true;
+                app.active_tab = Tab::Chat;
+                app.scroll[Tab::Chat as usize] = 0;
+                user_tx.send(msg).await?;
+            }
+        }
+
         tokio::select! {
             // Agent events
             maybe = event_rx.recv() => {
@@ -1081,11 +1231,82 @@ fn render_tabbar(f: &mut Frame, area: Rect, app: &App) {
 // ─── Content area ────────────────────────────────────────────────────────────
 
 fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
+    if app.split_pane {
+        let halves = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        // Left: Disasm, Right: Decompile
+        // Temporarily adjust border style based on focus
+        let _left_focused = !app.split_focus_right;
+        let _right_focused = app.split_focus_right;
+
+        render_panel_split(f, halves[0], app, Tab::Disasm, !app.split_focus_right);
+        render_panel_split(f, halves[1], app, Tab::Decompile, app.split_focus_right);
+        return;
+    }
     match app.active_tab {
         Tab::Chat    => render_chat(f, area, app),
         Tab::Context => render_context(f, area, app),
         tab          => render_panel(f, area, app, tab),
     }
+}
+
+/// Render a panel in split-pane mode, optionally highlighting border as focused.
+fn render_panel_split(f: &mut Frame, area: Rect, app: &App, tab: Tab, focused: bool) {
+    let border_color = if focused { Color::Cyan } else { Color::DarkGray };
+    let tab_name = TAB_NAMES[tab as usize];
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            format!(" {} ", tab_name),
+            Style::new().fg(if focused { Color::Cyan } else { Color::DarkGray }).bold(),
+        ))
+        .border_style(Style::new().fg(border_color));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let raw = &app.tab_lines[tab as usize];
+    if raw.is_empty() {
+        let hint = match tab {
+            Tab::Disasm    => "Say \"disassemble the entry point\"",
+            Tab::Decompile => "Say \"decompile 0x<addr>\"",
+            _ => "",
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!("  (no data yet — {})", hint),
+                Style::new().fg(Color::DarkGray).italic(),
+            )),
+            inner,
+        );
+        return;
+    }
+
+    let focused_hex = if tab == Tab::Disasm {
+        app.focused_addr.map(|a| format!("{:016x}", a))
+    } else {
+        None
+    };
+
+    let lines: Vec<Line> = match tab {
+        Tab::Disasm => raw.iter().map(|l| {
+            let line = highlight_disasm(l);
+            if focused_hex.as_deref().map_or(false, |h| l.contains(h)) {
+                apply_focus_highlight(line)
+            } else { line }
+        }).collect(),
+        Tab::Decompile => raw.iter().map(|l| highlight_decompile(l)).collect(),
+        _ => raw.iter().map(|l| Line::raw(l.clone())).collect(),
+    };
+
+    let scroll = app.scroll[tab as usize];
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        inner,
+    );
 }
 
 // ─── Welcome screen lines ────────────────────────────────────────────────────
@@ -1578,6 +1799,78 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
 
             f.render_widget(Paragraph::new(Text::from(styled)), inner);
         }
+
+        Popup::Help => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    " Keyboard Shortcuts  (Esc / ? to close) ",
+                    Style::new().fg(Color::Yellow).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Yellow));
+            let inner = block.inner(popup_area);
+            f.render_widget(block, popup_area);
+
+            let cyb = Style::new().fg(Color::Cyan).bold();
+            let wh  = Style::new().fg(Color::White);
+            let yeb = Style::new().fg(Color::Yellow).bold();
+            let dg  = Style::new().fg(Color::DarkGray);
+
+            let kb = |key: &'static str, desc: &'static str| -> Line<'static> {
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(format!("{:<18}", key), cyb),
+                    Span::styled(desc, wh),
+                ])
+            };
+            let sec = |s: &'static str| -> Line<'static> {
+                Line::from(vec![Span::raw("  "), Span::styled(s, yeb)])
+            };
+            let div = || -> Line<'static> {
+                Line::from(Span::styled("  ──────────────────────────────────────────", dg))
+            };
+
+            let lines: Vec<Line<'static>> = vec![
+                sec("Navigation"),
+                div(),
+                kb("1–7",              "Switch to tab directly"),
+                kb("Tab / Shift+Tab",  "Cycle tabs  ·  split-pane: switch focus"),
+                kb("s",               "Toggle split-pane (Disasm | Decompile)"),
+                kb("g 0xADDR",        "Jump to address in current panel"),
+                kb("[  ]",             "Navigate back / forward (address history)"),
+                kb("j  k",            "Move line cursor in panel"),
+                kb("Enter",           "Go-to-definition for address at cursor"),
+                Line::raw(""),
+                sec("Search & Copy"),
+                div(),
+                kb("/pattern",        "Search panel  ·  n=next  N=prev  Esc=clear"),
+                kb("y",               "Copy panel content to system clipboard"),
+                Line::raw(""),
+                sec("Bookmarks & Xrefs"),
+                div(),
+                kb("m",               "Bookmark current address"),
+                kb("B",               "Open bookmarks popup  (0-9 to jump)"),
+                kb("x",               "Xref popup — callers of address at cursor"),
+                Line::raw(""),
+                sec("Input & History"),
+                div(),
+                kb("↑  ↓",            "Browse sent-message history"),
+                kb("Ctrl+R",          "Fill input with last history entry (cycle)"),
+                kb("r",               "Retry last message (when status shows Error)"),
+                kb(":",               "Command prefix  e.g.  :auto /bin/ls"),
+                kb("PgUp  PgDn",      "Scroll active panel"),
+                Line::raw(""),
+                sec("Other"),
+                div(),
+                kb("?",               "Toggle this help popup"),
+                kb("Ctrl+C",          "Clear input  ·  quit when input is empty"),
+            ];
+
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+                inner,
+            );
+        }
     }
 }
 
@@ -1597,23 +1890,46 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
     } else if app.search_pattern.is_some() {
         "n:next  N:prev  Esc:clear  y:copy  Tab:tab  ↑↓:history  PgUpDn:scroll"
     } else {
-        "Tab  1-7:tab  g:goto  /:search  j/k:cursor  [/]:nav  m:mark  B:marks  x:xref  y:copy"
+        "Tab  1-7:tab  s:split  ?:help  r:retry  Ctrl+R:history  /:search  y:copy"
     };
 
-    // Right-side info: arch · focused addr · token estimate
+    // Right-side info: arch · focused addr · token budget bar
     let arch_part = app.binary_arch.as_deref()
         .map(|a| format!("{}  ·  ", a))
         .unwrap_or_default();
     let addr_part = app.focused_addr
         .map(|a| format!("@ 0x{:x}  ·  ", a))
         .unwrap_or_default();
-    let token_est = if app.context_entries.is_empty() {
-        String::new()
-    } else {
+
+    // Token budget visual: [████░░░░░░] XX%
+    const MAX_HISTORY_CHARS: usize = 80_000;
+    const BAR_BLOCKS: usize = 10;
+    let token_part = if !app.context_entries.is_empty() {
         let chars: usize = app.context_entries.iter().map(|e| e.char_count).sum();
-        format!("~{}k ctx", chars / 1000)
+        let pct = (chars * 100) / MAX_HISTORY_CHARS.max(1);
+        let pct_clamped = pct.min(100);
+        let filled = (pct_clamped * BAR_BLOCKS) / 100;
+        let bar = format!("{}{}",
+            "█".repeat(filled),
+            "░".repeat(BAR_BLOCKS.saturating_sub(filled)),
+        );
+        format!("[{}] {}%", bar, pct_clamped)
+    } else {
+        String::new()
     };
-    let info = format!("{}{}{}", arch_part, addr_part, token_est);
+
+    let info = format!("{}{}{}", arch_part, addr_part, token_part);
+
+    // Determine token bar colour
+    let token_chars: usize = app.context_entries.iter().map(|e| e.char_count).sum();
+    let token_pct = if MAX_HISTORY_CHARS > 0 { (token_chars * 100) / MAX_HISTORY_CHARS } else { 0 };
+    let info_color = if token_pct >= 80 {
+        Color::Red
+    } else if token_pct >= 50 {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
 
     // Build the status line: icon + status | keybinds … info
     let left = format!(" {} {}", icon, app.status);
@@ -1628,7 +1944,7 @@ fn render_statusbar(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(" ".repeat(pad as usize)),
         Span::styled(keybinds, Style::new().fg(Color::DarkGray)),
         Span::raw("  "),
-        Span::styled(info, Style::new().fg(Color::Cyan)),
+        Span::styled(info, Style::new().fg(info_color)),
         Span::raw(" "),
     ]);
 

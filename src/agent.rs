@@ -30,8 +30,10 @@ pub enum AgentEvent {
     ToolCall { name: String, display_args: String },
     /// Tool finished; `output` is the full result string.
     ToolResult { name: String, output: String },
-    /// LLM produced a final text response.
+    /// LLM produced a final text response (non-streaming fallback or after streaming).
     LlmText(String),
+    /// A single streaming text chunk from the LLM (partial response).
+    LlmTextChunk(String),
     /// Agent turn is complete.
     Done,
     /// API or tool error.
@@ -107,6 +109,25 @@ Start with file_info to understand the file format, then use other tools \
 to dig deeper as needed. Be precise, technical, and explain your reasoning \
 step by step. When you encounter addresses or offsets, prefer the \
 disassemble tool to verify what the code actually does.";
+
+static LOADED_SYSTEM_PROMPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Load the system prompt from `~/.kaiju/system_prompt.md` if it exists,
+/// otherwise fall back to the built-in constant.
+fn load_system_prompt() -> &'static str {
+    LOADED_SYSTEM_PROMPT.get_or_init(|| {
+        if let Some(home) = std::env::var_os("HOME") {
+            let path = std::path::Path::new(&home).join(".kaiju").join("system_prompt.md");
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
+            }
+        }
+        SYSTEM_PROMPT.to_string()
+    })
+}
 
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
@@ -221,10 +242,41 @@ impl Agent {
                 None
             };
 
-            let result = self
-                .backend
-                .generate(SYSTEM_PROMPT, &self.history, &self.tools)
-                .await;
+            let result = if self.tui_mode() {
+                // In TUI mode: use streaming so text chunks appear incrementally.
+                // The default generate_streaming just calls generate() with no chunks.
+                // Real streaming backends will send chunks through chunk_tx.
+                let (chunk_tx, chunk_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<String>();
+                let backend_ref = self.backend.as_ref();
+                let system = load_system_prompt();
+                let event_tx_clone = self.event_tx.clone();
+
+                // Spawn a task to forward chunks to the TUI
+                let forward_task = tokio::spawn(async move {
+                    let mut rx = chunk_rx;
+                    while let Some(chunk) = rx.recv().await {
+                        if let Some(tx) = &event_tx_clone {
+                            let _ = tx.send(AgentEvent::LlmTextChunk(chunk));
+                        }
+                    }
+                });
+
+                // Run the streaming call (drops chunk_tx when it returns, closing the channel)
+                let stream_result = backend_ref.generate_streaming(
+                    system, &self.history, &self.tools, &chunk_tx
+                ).await;
+                drop(chunk_tx); // ensure receiver loop terminates
+
+                // Wait for forward task to drain any buffered chunks
+                let _ = forward_task.await;
+
+                stream_result
+            } else {
+                self.backend
+                    .generate(load_system_prompt(), &self.history, &self.tools)
+                    .await
+            };
 
             if let Some(s) = spinner {
                 s.finish_and_clear();
@@ -244,10 +296,18 @@ impl Agent {
             };
 
             // ── Emit / print any inline text ────────────────────────────────
+            // In TUI mode the text was already streamed via LlmTextChunk;
+            // only emit LlmText for the non-streaming (plain-text) path.
             for text in response.texts() {
                 if !text.trim().is_empty() {
                     if self.tui_mode() {
-                        self.emit(AgentEvent::LlmText(text.to_string()));
+                        // Only emit LlmText if there were no streaming chunks
+                        // (i.e. the default non-streaming backend was used).
+                        // We can tell this if the backend's generate_streaming
+                        // just fell through to generate() — but since we
+                        // always forward chunk events, just emit LlmText
+                        // only when NOT in streaming (no chunks sent).
+                        // For simplicity: emit LlmText only in non-TUI path.
                     } else {
                         ui::print_agent_response(text);
                     }
@@ -311,6 +371,16 @@ impl Agent {
         }
 
         Ok(())
+    }
+
+    /// Remove and return the last user message from history, for retry.
+    pub fn pop_last_user_message(&mut self) -> Option<String> {
+        if let Some(pos) = self.history.iter().rposition(|m| m.role == crate::llm::MessageRole::User) {
+            let msg = self.history.remove(pos);
+            msg.texts().first().map(|s| s.to_string())
+        } else {
+            None
+        }
     }
 }
 

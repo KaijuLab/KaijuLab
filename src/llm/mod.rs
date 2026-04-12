@@ -9,10 +9,11 @@ pub mod openai;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 // ─── Universal message types ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -244,6 +245,19 @@ pub trait LlmBackend: Send + Sync {
         history: &[LlmMessage],
         tools: &[ToolDefinition],
     ) -> Result<LlmMessage>;
+
+    /// Streaming variant: same as `generate` but sends text chunks via `chunk_tx`
+    /// as they arrive.  Returns the full assembled `LlmMessage` at the end.
+    /// Default implementation: no streaming — delegates to `generate`.
+    async fn generate_streaming(
+        &self,
+        system: &str,
+        history: &[LlmMessage],
+        tools: &[ToolDefinition],
+        _chunk_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<LlmMessage> {
+        self.generate(system, history, tools).await
+    }
 
     /// Short human-readable label shown in the banner, e.g. "Gemini 2.5 Flash (Vertex AI)".
     fn display_name(&self) -> String;

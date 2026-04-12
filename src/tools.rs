@@ -24,9 +24,115 @@ impl ToolResult {
     }
 }
 
+// ─── LRU tool cache ───────────────────────────────────────────────────────────
+
+use std::sync::{Mutex, OnceLock};
+
+struct ToolCache {
+    entries: HashMap<String, String>,
+    order: Vec<String>,
+    max: usize,
+}
+
+impl ToolCache {
+    fn get(&self, key: &str) -> Option<&String> {
+        self.entries.get(key)
+    }
+    fn put(&mut self, key: String, val: String) {
+        if self.entries.contains_key(&key) {
+            return;
+        }
+        if self.entries.len() >= self.max {
+            if let Some(oldest) = self.order.first().cloned() {
+                self.order.remove(0);
+                self.entries.remove(&oldest);
+            }
+        }
+        self.order.push(key.clone());
+        self.entries.insert(key, val);
+    }
+    fn invalidate_path(&mut self, path: &str) {
+        let to_remove: Vec<String> = self.order.iter().filter(|k| k.contains(path)).cloned().collect();
+        for k in to_remove {
+            self.order.retain(|x| x != &k);
+            self.entries.remove(&k);
+        }
+    }
+}
+
+static TOOL_CACHE: OnceLock<Mutex<ToolCache>> = OnceLock::new();
+fn tool_cache() -> &'static Mutex<ToolCache> {
+    TOOL_CACHE.get_or_init(|| {
+        Mutex::new(ToolCache {
+            entries: HashMap::new(),
+            order: Vec::new(),
+            max: 50,
+        })
+    })
+}
+
+const CACHEABLE_TOOLS: &[&str] = &[
+    "disassemble", "decompile", "xrefs_to", "cfg_view", "call_graph",
+];
+
+const WRITE_TOOLS: &[&str] = &[
+    "rename_function", "add_comment", "set_vuln_score", "rename_variable",
+    "set_return_type", "set_param_type", "set_param_name", "define_struct",
+];
+
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
 
 pub fn dispatch(name: &str, args: &Value) -> ToolResult {
+    // Invalidate cache for write operations
+    if WRITE_TOOLS.contains(&name) {
+        if let Some(path) = args["path"].as_str() {
+            if let Ok(mut cache) = tool_cache().lock() {
+                cache.invalidate_path(path);
+            }
+        }
+    }
+
+    // Check cache for expensive read tools
+    if CACHEABLE_TOOLS.contains(&name) {
+        let cache_key = format!("{}:{}", name, args);
+        if let Ok(cache) = tool_cache().lock() {
+            if let Some(cached) = cache.get(&cache_key) {
+                return ToolResult::ok(cached.clone());
+            }
+        }
+        // Execute and cache
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dispatch_inner(name, args)
+        }));
+        let result = match result {
+            Ok(r) => r,
+            Err(_) => ToolResult::err(format!(
+                "Tool '{}' panicked on these inputs — likely a malformed binary",
+                name
+            )),
+        };
+        if !result.output.starts_with("Error:") {
+            if let Ok(mut cache) = tool_cache().lock() {
+                cache.put(cache_key, result.output.clone());
+            }
+        }
+        return result;
+    }
+
+    // Non-cached tools: still wrap in catch_unwind
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        dispatch_inner(name, args)
+    }));
+    match result {
+        Ok(r) => r,
+        Err(_) => ToolResult::err(format!(
+            "Tool '{}' panicked on these inputs — likely a malformed binary",
+            name
+        )),
+    }
+}
+
+fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
     match name {
         "file_info" => file_info(&str_arg(args, "path")),
         "hexdump" => hexdump(

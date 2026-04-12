@@ -77,6 +77,10 @@ struct Cli {
     /// and exit.  Lines starting with '#' and blank lines are ignored.
     #[arg(long, value_name = "SCRIPT")]
     script: Option<PathBuf>,
+
+    /// Headless mode: implies --no-tui --output-json; runs analysis and prints JSON to stdout.
+    #[arg(long)]
+    headless: bool,
 }
 
 #[tokio::main]
@@ -129,6 +133,21 @@ async fn main() -> Result<()> {
     // ── LLM mode ─────────────────────────────────────────────────────────────
     let backend: Box<dyn LlmBackend> = build_backend(&cfg)?;
     let display = backend.display_name();
+
+    // Headless mode: --headless implies --no-tui + --output-json, requires a file
+    if cli.headless {
+        if let Some(file) = &cli.file {
+            let mut agent = agent::Agent::new(backend);
+            let task = format!("Analyse this binary: {}", file.display());
+            agent.run(&task).await?;
+            let out = agent.structured_output(&file.to_string_lossy());
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            eprintln!("--headless requires a FILE argument");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     // Script mode
     if let Some(script_path) = &cli.script {
