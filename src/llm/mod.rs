@@ -10,6 +10,21 @@ pub mod openai;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// ─── Global request timeout ──────────────────────────────────────────────────
+
+static REQUEST_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(120);
+
+/// Read the current per-request HTTP timeout (default: 120 s).
+pub fn get_timeout_secs() -> u64 {
+    REQUEST_TIMEOUT_SECS.load(Ordering::Relaxed)
+}
+
+/// Update the per-request HTTP timeout.  Takes effect on the next LLM call.
+pub fn set_timeout_secs(secs: u64) {
+    REQUEST_TIMEOUT_SECS.store(secs, Ordering::Relaxed);
+}
 
 // ─── Universal message types ─────────────────────────────────────────────────
 

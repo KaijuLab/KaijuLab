@@ -824,6 +824,7 @@ impl App {
             "export report",
             "run ",
             "plugins",
+            "timeout ",
         ];
         for phrase in PHRASES {
             if phrase.to_lowercase().starts_with(&token_lower) {
@@ -1610,6 +1611,24 @@ impl App {
                     self.active_tab = Tab::Chat;
                     self.scroll[Tab::Chat as usize] = 0;
                     return Some(prompt);
+                }
+
+                // `timeout <n>` — set per-request HTTP timeout (seconds).
+                if let Some(rest) = msg.strip_prefix("timeout ") {
+                    let rest = rest.trim();
+                    match rest.parse::<u64>() {
+                        Ok(secs) if secs > 0 => {
+                            crate::llm::set_timeout_secs(secs);
+                            self.status = format!("Timeout set to {}s", secs);
+                        }
+                        _ => {
+                            self.status = format!("Invalid timeout: '{}' (must be a positive integer)", rest);
+                        }
+                    }
+                    self.input.clear();
+                    self.input_cursor = 0;
+                    self.clear_completions();
+                    return None;
                 }
 
                 // `run <name>` — plugin command: auto-inject current binary path

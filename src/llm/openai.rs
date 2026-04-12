@@ -170,7 +170,11 @@ impl LlmBackend for OpenAiBackend {
             "tool_choice": "auto",
         });
 
-        let mut req = self.http.post(&url).json(&body);
+        let mut req = self
+            .http
+            .post(&url)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(crate::llm::get_timeout_secs()));
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }

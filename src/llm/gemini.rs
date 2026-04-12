@@ -381,6 +381,7 @@ impl LlmBackend for GeminiBackend {
             .post(&url)
             .bearer_auth(&token)
             .json(&req)
+            .timeout(std::time::Duration::from_secs(crate::llm::get_timeout_secs()))
             .send()
             .await
             .context("Gemini API request failed")?;

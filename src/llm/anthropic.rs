@@ -133,6 +133,7 @@ impl LlmBackend for AnthropicBackend {
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .json(&body)
+            .timeout(std::time::Duration::from_secs(crate::llm::get_timeout_secs()))
             .send()
             .await
             .context("Anthropic API request failed")?;
