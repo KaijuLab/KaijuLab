@@ -143,6 +143,8 @@ pub enum Popup {
     Comment { addr: u64, current: String },
     /// Add analyst note, optionally anchored to a virtual address.
     NoteEdit { addr: Option<u64> },
+    /// Confirm deletion of a note (shows note preview, y/Enter=delete, n/Esc=cancel).
+    ConfirmDeleteNote { idx: usize, preview: String },
 }
 
 // ─── Context entries (mirrors agent::ContextEntry) ────────────────────────────
@@ -222,6 +224,9 @@ pub struct App {
     pub split_focus_right: bool,
     /// Pending retry: re-send the last user message on the next event-loop tick.
     pub retry_pending: bool,
+    /// Set to true when a large content change requires a full terminal clear
+    /// before the next draw to prevent stale differential-render artifacts.
+    pub needs_full_redraw: bool,
     /// Parsed function entries (mirrors tab_lines[Functions] but structured).
     pub fn_entries: Vec<FnEntry>,
     /// Active fuzzy-filter string for the Functions tab.
@@ -287,6 +292,7 @@ impl App {
             split_pane: false,
             split_focus_right: false,
             retry_pending: false,
+            needs_full_redraw: false,
             fn_entries: Vec::new(),
             fn_filter: String::new(),
             fn_filter_active: false,
@@ -534,10 +540,12 @@ impl App {
                 self.scroll[Tab::Chat as usize] = 0;
                 self.is_loading = false;
                 self.status = "Ready".to_string();
+                self.needs_full_redraw = true;
             }
             AgentEvent::Done => {
                 self.is_loading = false;
                 self.status = "Ready".to_string();
+                self.needs_full_redraw = true;
             }
             AgentEvent::Error(e) => {
                 self.chat.push(ChatMsg::Error(e.clone()));
@@ -1112,6 +1120,31 @@ impl App {
             return self.handle_popup_input_key(key);
         }
 
+        // ConfirmDeleteNote: y/Enter=confirm, n/Esc=cancel
+        if let Some(Popup::ConfirmDeleteNote { idx, .. }) = self.popup.clone() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    self.popup = None;
+                    if idx < self.notes.len() {
+                        let removed = self.notes.remove(idx);
+                        if self.panel_cursor[Tab::Notes as usize] > 0
+                            && self.panel_cursor[Tab::Notes as usize] >= self.notes.len()
+                        {
+                            self.panel_cursor[Tab::Notes as usize] =
+                                self.notes.len().saturating_sub(1);
+                        }
+                        self.status = format!("Deleted note [{}]", removed.id);
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.popup = None;
+                    self.status = "Delete cancelled".to_string();
+                }
+                _ => {}
+            }
+            return None;
+        }
+
         match key.code {
             // Quit on Ctrl-C when input is empty
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1234,22 +1267,25 @@ impl App {
                 None
             }
 
-            // d — delete note at cursor line (Notes tab only)
+            // d — confirm-delete note at cursor line (Notes tab only)
             KeyCode::Char('d') if self.input.is_empty()
                 && key.modifiers.is_empty()
                 && self.active_tab == Tab::Notes =>
             {
                 let idx = self.panel_cursor[Tab::Notes as usize];
                 if idx < self.notes.len() {
-                    let removed = self.notes.remove(idx);
-                    // clamp cursor
-                    if self.panel_cursor[Tab::Notes as usize] > 0
-                        && self.panel_cursor[Tab::Notes as usize] >= self.notes.len()
-                    {
-                        self.panel_cursor[Tab::Notes as usize] =
-                            self.notes.len().saturating_sub(1);
-                    }
-                    self.status = format!("Deleted note [{}]", removed.id);
+                    let note = &self.notes[idx];
+                    let addr_part = note.vaddr
+                        .map(|a| format!(" @ 0x{:x}", a))
+                        .unwrap_or_default();
+                    let preview: String = note.text.chars().take(60).collect();
+                    let preview = if note.text.len() > 60 {
+                        format!("[{}{}] {}…", note.id, addr_part, preview)
+                    } else {
+                        format!("[{}{}] {}", note.id, addr_part, preview)
+                    };
+                    self.popup = Some(Popup::ConfirmDeleteNote { idx, preview });
+                    self.status = "Delete note? (y/Enter=yes · n/Esc=cancel)".to_string();
                 } else {
                     self.status = "No note at cursor".to_string();
                 }
@@ -1869,6 +1905,7 @@ pub async fn run_tui(
                     }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.autoresize()?;
+                        terminal.clear()?;
                     }
                     Some(Err(e)) => {
                         app.status = format!("Input error: {}", e);
@@ -1876,6 +1913,11 @@ pub async fn run_tui(
                     _ => {}
                 }
             }
+        }
+
+        if app.needs_full_redraw {
+            app.needs_full_redraw = false;
+            terminal.clear()?;
         }
 
         terminal.draw(|f| render(f, &mut app))?;
@@ -2352,25 +2394,36 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     //
     // ratatui's Paragraph::scroll() counts *visual* rows (after word-wrap),
     // so we must derive at_bottom from the visual row total, not the logical
-    // line count.  Each logical line occupies ceil(char_count / width) visual
-    // rows (minimum 1).
-    let panel_width = inner.width.max(1) as usize;
-    let visual_total: u16 = all_lines
+    // line count.  Each logical line occupies ceil(display_width / panel_width)
+    // visual rows (minimum 1).
+    //
+    // Use u32 throughout to prevent wraparound overflow for long conversations.
+    // Unicode wide characters (CJK, emoji) count as 2 columns each.
+    let panel_width = inner.width.max(1) as u32;
+    let visual_total: u32 = all_lines
         .iter()
         .map(|line| {
-            let chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
-            ((chars.max(1) + panel_width - 1) / panel_width) as u16
+            let cols: u32 = line.spans.iter().map(|s| {
+                s.content.chars().map(|c| {
+                    // unicode_width::UnicodeWidthChar returns 0 for combining chars,
+                    // 1 for ASCII, 2 for wide chars (CJK, emoji, etc.)
+                    unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as u32
+                }).sum::<u32>()
+            }).sum();
+            (cols.max(1) + panel_width - 1) / panel_width
         })
-        .sum::<u16>()
+        .sum::<u32>()
         .max(1);
 
-    let visible = inner.height;
-    let at_bottom = visual_total.saturating_sub(visible);
+    let visible = inner.height as u32;
+    let at_bottom_u32 = visual_total.saturating_sub(visible);
+    // Clamp to u16 for ratatui's scroll interface.
+    let at_bottom = at_bottom_u32.min(u16::MAX as u32) as u16;
     // Clamp stored scroll to the real maximum so PgDn/mouse-scroll work
     // immediately even when the initial value was set to u16::MAX.
     app.scroll[Tab::Chat as usize] = app.scroll[Tab::Chat as usize].min(at_bottom);
-    let scroll_up = app.scroll[Tab::Chat as usize];
-    let from_top = at_bottom.saturating_sub(scroll_up);
+    let scroll_up = app.scroll[Tab::Chat as usize] as u32;
+    let from_top = (at_bottom_u32.saturating_sub(scroll_up)).min(u16::MAX as u32) as u16;
 
     let text = Text::from(all_lines);
     f.render_widget(
@@ -2763,6 +2816,37 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
             f.render_widget(Paragraph::new(display), inner);
         }
 
+        Popup::ConfirmDeleteNote { preview, .. } => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    " Delete Note?  (y/Enter=yes · n/Esc=cancel) ",
+                    Style::new().fg(Color::Red).bold(),
+                ))
+                .border_style(Style::new().fg(Color::Red));
+            let pw2 = (area.width * 7 / 10).max(44).min(area.width.saturating_sub(4));
+            let popup_area2 = Rect {
+                x: area.x + (area.width.saturating_sub(pw2)) / 2,
+                y: area.y + (area.height / 2).saturating_sub(3),
+                width: pw2,
+                height: 5,
+            };
+            f.render_widget(ratatui::widgets::Clear, popup_area2);
+            let inner = block.inner(popup_area2);
+            f.render_widget(block, popup_area2);
+            let lines = vec![
+                Line::from(Span::styled(preview.clone(), Style::new().fg(Color::Yellow))),
+                Line::raw(""),
+                Line::from(vec![
+                    Span::styled("  y / Enter", Style::new().fg(Color::Red).bold()),
+                    Span::styled(" = delete     ", Style::new().fg(Color::Gray)),
+                    Span::styled("n / Esc", Style::new().fg(Color::Green).bold()),
+                    Span::styled(" = cancel", Style::new().fg(Color::Gray)),
+                ]),
+            ];
+            f.render_widget(Paragraph::new(lines), inner);
+        }
+
         Popup::Help => {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -2819,7 +2903,7 @@ fn render_popup(f: &mut Frame, area: Rect, app: &App) {
                 sec("Notes tab (8)"),
                 div(),
                 kb("a",               "Add analyst note (optionally at cursor address)"),
-                kb("d",               "Delete note at cursor line"),
+                kb("d",               "Delete note at cursor (confirms before deleting)"),
                 Line::raw(""),
                 sec("Bookmarks & Xrefs"),
                 div(),
