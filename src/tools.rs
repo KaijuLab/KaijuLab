@@ -2579,9 +2579,13 @@ fn run_python(
     binary_path: Option<&str>,
     timeout_secs: u64,
 ) -> ToolResult {
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
+
+    // Cap output read per stream so a chatty script can't OOM the host.
+    // Applied at the reader level (before allocation) via .take().
+    const MAX_STREAM: u64 = 256 * 1024; // 256 KiB per stream
 
     if script.trim().is_empty() {
         return ToolResult::err("'script' must not be empty");
@@ -2599,44 +2603,46 @@ fn run_python(
     if let Err(e) = tmp.write_all(script.as_bytes()) {
         return ToolResult::err(format!("Cannot write script: {}", e));
     }
-    // Flush before handing path to child process.
     if let Err(e) = tmp.flush() {
         return ToolResult::err(format!("Cannot flush script: {}", e));
     }
     let script_path = tmp.path().to_owned();
 
-    // ── Build child process ───────────────────────────────────────────────────
+    // ── Resolve effective binary path ─────────────────────────────────────────
+    let effective_binary = match binary_path {
+        Some(bp) if !bp.is_empty() => bp.to_string(),
+        _ => std::env::var("KAIJU_BINARY").unwrap_or_default(),
+    };
+
+    // ── Build child command ───────────────────────────────────────────────────
     let mut cmd = Command::new("python3");
     cmd.arg(&script_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Stdin: either piped data or /dev/null so the script doesn't block.
     if stdin_data.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
         cmd.stdin(Stdio::null());
     }
 
-    // Inject binary path as env var so scripts can:
-    //   import os; path = os.environ.get("KAIJU_BINARY", "")
-    // Priority: explicit `binary` arg → KAIJU_BINARY env var set by main.rs at startup.
-    let effective_binary: String;
-    if let Some(bp) = binary_path {
-        if !bp.is_empty() {
-            effective_binary = bp.to_string();
-            cmd.env("KAIJU_BINARY", bp);
-        } else if let Ok(env_bp) = std::env::var("KAIJU_BINARY") {
-            effective_binary = env_bp.clone();
-            cmd.env("KAIJU_BINARY", env_bp);
-        } else {
-            effective_binary = String::new();
-        }
-    } else if let Ok(env_bp) = std::env::var("KAIJU_BINARY") {
-        effective_binary = env_bp.clone();
-        cmd.env("KAIJU_BINARY", env_bp);
-    } else {
-        effective_binary = String::new();
+    if !effective_binary.is_empty() {
+        cmd.env("KAIJU_BINARY", &effective_binary);
+    }
+
+    // ── CRITICAL: isolate the child in its own process group ─────────────────
+    //
+    // Without this, libraries like pwntools can call tcsetpgrp() to steal the
+    // terminal's foreground group, or install signal handlers that re-raise
+    // SIGINT to the group — both of which kill the TUI process.
+    //
+    // process_group(0) puts the child in a fresh group so it is unreachable
+    // by signals directed at the parent group, and cannot reach the parent
+    // via group-wide signals itself.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
 
     let mut child = match cmd.spawn() {
@@ -2651,103 +2657,131 @@ fn run_python(
         }
     };
 
-    // ── Write stdin data ──────────────────────────────────────────────────────
+    // ── Write stdin (drop handle immediately so the child sees EOF) ───────────
     if let Some(data) = stdin_data {
-        if let Some(mut stdin_handle) = child.stdin.take() {
-            // Ignore write errors (broken pipe if the script exits early).
-            let _ = stdin_handle.write_all(data.as_bytes());
+        if let Some(mut h) = child.stdin.take() {
+            let _ = h.write_all(data.as_bytes());
+            // h is dropped here → child stdin pipe closed → child sees EOF
         }
     }
 
-    // ── Wait with timeout (poll-based; avoids nightly-only wait_timeout) ──────
+    // ── Drain stdout + stderr concurrently in background threads ─────────────
+    //
+    // This prevents the classic pipe-full deadlock: if we only poll try_wait()
+    // without reading, and the script writes > ~64 KB, the child blocks on the
+    // write syscall waiting for the reader.  We'd never see it exit, burn the
+    // full timeout, and finally kill it having collected nothing useful.
+    //
+    // Each thread reads up to MAX_STREAM bytes, then stops (the child sees a
+    // broken pipe on further writes, which is benign).
+    let stdout_thread = {
+        let pipe = child.stdout.take().expect("stdout was piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.take(MAX_STREAM).read_to_end(&mut buf);
+            buf
+        })
+    };
+    let stderr_thread = {
+        let pipe = child.stderr.take().expect("stderr was piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.take(MAX_STREAM).read_to_end(&mut buf);
+            buf
+        })
+    };
+
+    // ── Wait with timeout ─────────────────────────────────────────────────────
     let deadline = Instant::now() + Duration::from_secs(timeout_secs.max(1));
-    let status = loop {
+    let timed_out = loop {
         match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
+            Ok(Some(_)) => break false,
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait(); // reap zombie
-                    break Err(format!(
-                        "Script timed out after {}s — killed. Reduce work or increase timeout_secs.",
-                        timeout_secs
-                    ))
+                    // Kill the entire process group so any child-of-child
+                    // processes also die, not just the direct python3 child.
+                    #[cfg(unix)]
+                    {
+                        // child.id() is the pgid we set with process_group(0)
+                        let pgid = child.id() as i32;
+                        unsafe { libc::killpg(pgid, libc::SIGKILL); }
+                    }
+                    #[cfg(not(unix))]
+                    { let _ = child.kill(); }
+                    let _ = child.wait();
+                    break true;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(50));
             }
-            Err(e) => break Err(format!("wait error: {}", e)),
+            Err(_) => break false,
         }
     };
 
-    // ── Collect output ────────────────────────────────────────────────────────
-    // Take stdout/stderr handles before consuming child via wait/output.
-    use std::io::Read;
-    let mut stdout_str = String::new();
-    let mut stderr_str = String::new();
+    // ── Collect output (threads finish promptly now that child is dead) ───────
+    let stdout_bytes = stdout_thread.join().unwrap_or_default();
+    let stderr_bytes = stderr_thread.join().unwrap_or_default();
 
-    if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_string(&mut stdout_str);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut stderr_str);
-    }
+    // Use from_utf8_lossy so binary output doesn't panic.
+    let stdout_str = String::from_utf8_lossy(&stdout_bytes);
+    let stderr_str = String::from_utf8_lossy(&stderr_bytes);
 
-    // ── Build result ──────────────────────────────────────────────────────────
-    const MAX_OUTPUT: usize = 32 * 1024; // 32 KiB
+    let was_truncated_out = stdout_bytes.len() as u64 >= MAX_STREAM;
+    let was_truncated_err = stderr_bytes.len() as u64 >= MAX_STREAM;
 
-    match status {
-        Err(timeout_msg) => {
-            let mut out = format!("[TIMEOUT] {}\n\n", timeout_msg);
-            if !stdout_str.is_empty() {
-                out.push_str("--- stdout (partial) ---\n");
-                out.push_str(&stdout_str);
-            }
-            ToolResult::err(out)
+    // ── Re-read exit status (already reaped above or via try_wait) ────────────
+    // We use a second try_wait here; if it returns None (child already reaped
+    // in the timeout branch) we reconstruct the status string as "killed".
+    let exit_label = if timed_out {
+        format!("killed (timeout {}s)", timeout_secs)
+    } else {
+        // try_wait one more time to get the ExitStatus for display
+        match child.try_wait() {
+            Ok(Some(s)) => s.to_string(),
+            _ => "exited".to_string(),
         }
-        Ok(exit_status) => {
-            let mut combined = String::new();
-            if !stdout_str.is_empty() {
-                combined.push_str(&stdout_str);
-            }
-            if !stderr_str.is_empty() {
-                if !combined.is_empty() && !combined.ends_with('\n') {
-                    combined.push('\n');
-                }
-                combined.push_str("--- stderr ---\n");
-                combined.push_str(&stderr_str);
-            }
+    };
 
-            let truncated = if combined.len() > MAX_OUTPUT {
-                format!(
-                    "{}\n\n[output truncated — {} bytes total, showing first {} bytes]",
-                    &combined[..MAX_OUTPUT],
-                    combined.len(),
-                    MAX_OUTPUT,
-                )
-            } else {
-                combined
-            };
+    // ── Build result string ───────────────────────────────────────────────────
+    let sep = "─".repeat(60);
+    let binary_hint = if !effective_binary.is_empty() {
+        format!("  KAIJU_BINARY={}", effective_binary)
+    } else {
+        String::new()
+    };
+    let header = format!(
+        "run_python — {}{}  timeout: {}s\n{}\n",
+        exit_label, binary_hint, timeout_secs, sep,
+    );
 
-            let exit_note = if exit_status.success() {
-                String::new()
-            } else {
-                format!("\n[exit code: {}]", exit_status)
-            };
+    let mut body = String::new();
 
-            let header = format!(
-                "run_python — exit: {}{}  timeout: {}s\n{}\n",
-                exit_status,
-                if !effective_binary.is_empty() {
-                    format!("  KAIJU_BINARY={}", effective_binary)
-                } else {
-                    String::new()
-                },
-                timeout_secs,
-                "─".repeat(60),
-            );
-
-            ToolResult::ok(format!("{}{}{}", header, truncated, exit_note))
+    if !stdout_str.is_empty() {
+        body.push_str(&stdout_str);
+        if was_truncated_out {
+            body.push_str(&format!(
+                "\n[stdout truncated at {} KiB]",
+                MAX_STREAM / 1024
+            ));
         }
+    }
+    if !stderr_str.is_empty() {
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body.push_str("--- stderr ---\n");
+        body.push_str(&stderr_str);
+        if was_truncated_err {
+            body.push_str(&format!(
+                "\n[stderr truncated at {} KiB]",
+                MAX_STREAM / 1024
+            ));
+        }
+    }
+
+    if timed_out {
+        ToolResult::err(format!("{}{}", header, body))
+    } else {
+        ToolResult::ok(format!("{}{}", header, body))
     }
 }
 

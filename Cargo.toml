@@ -77,3 +77,6 @@ rhai = { version = "1", features = ["sync"] }
 
 # Temp files (for run_python tool)
 tempfile = "3"
+
+# POSIX process group control (run_python isolation)
+libc = "0.2"

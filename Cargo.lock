@@ -1216,6 +1216,7 @@ dependencies = [
  "iced-x86",
  "indicatif",
  "jsonwebtoken",
+ "libc",
  "nodit",
  "object",
  "pcode",
