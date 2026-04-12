@@ -1661,6 +1661,19 @@ impl App {
                         return None;
                     }
 
+                    // /help — toggle keyboard help popup
+                    if rest == "help" {
+                        if matches!(self.popup, Some(Popup::Help)) {
+                            self.popup = None;
+                        } else {
+                            self.popup = Some(Popup::Help);
+                        }
+                        self.input.clear();
+                        self.input_cursor = 0;
+                        self.clear_completions();
+                        return None;
+                    }
+
                     // /plugins  and  /run <name> [path]
                     // These are intercepted in the main.rs message loop before reaching
                     // the LLM agent.  We show the user-typed form in the chat and forward
@@ -2268,24 +2281,29 @@ fn welcome_lines() -> Vec<Line<'static>> {
         // Scroll-down hint
         Line::from(vec![
             Span::styled("  ↓ scroll down for the full command reference  ·  type  ", dg),
-            Span::styled("help", grb),
+            Span::styled("/help", grb),
             Span::styled("  for all commands", dg),
         ]),
         blank(),
         div(),
         blank(),
-        // ── Commands reference ────────────────────────────────────────────────
-        sec("Quick Commands  (start with  /  — no AI, direct tool calls)"),
+        // ── Most-used commands ────────────────────────────────────────────────
+        sec("Most Used  (prefix  /  — direct tool call, no AI)"),
+        div(),
+        cmd("/disasm",    "<path> [vaddr]",         "Disassemble at address"),
+        cmd("/decompile", "<path> [vaddr]",         "Decompile a function  →  pseudo-C"),
+        cmd("/functions", "<path>",                "List all functions in the binary"),
+        cmd("/scan",      "<path>",                "Vulnerability heuristic scan"),
+        cmd("/auto",      "[path]",                "Full auto-analysis + AI summary"),
+        blank(),
+        // ── All commands reference ────────────────────────────────────────────
+        sec("All Quick Commands"),
         div(),
         cmd("/entropy",   "<path>",                "Section entropy  ·  detect packers & crypto"),
         cmd("/search",    "<path> <hex…>",         "Byte-pattern search  (e.g. E8 ?? ?? ?? ??)"),
         cmd("/patch",     "<path> <vaddr> <hex>",  "Patch bytes  →  writes  <file>.patched"),
         cmd("/yara",      "<path> <vaddr> [name]", "YARA rule for a function"),
-        cmd("/disasm",    "<path> [vaddr]",         "Disassemble at address"),
-        cmd("/functions", "<path>",                "List all functions"),
-        cmd("/decompile", "<path> [vaddr]",         "Decompile a function"),
         cmd("/imports",   "<path>",                "Resolve PLT / PE imports"),
-        cmd("/scan",      "<path>",                "Vulnerability scan"),
         cmd("/diff",      "<a> <b>",               "Diff two binaries by content"),
         cmd("/report",    "<path>",                "Export HTML analysis report"),
         cmd("/cfg",       "<path> <vaddr>",         "Control-flow graph for a function"),
@@ -2460,28 +2478,17 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Scroll: 0 = bottom. Positive = scrolled up.
     //
-    // ratatui's Paragraph::scroll() counts *visual* rows (after word-wrap),
-    // so we must derive at_bottom from the visual row total, not the logical
-    // line count.  Each logical line occupies ceil(display_width / panel_width)
-    // visual rows (minimum 1).
+    // Use Paragraph::line_count() to get the exact visual row count after
+    // word-wrap — this is the only way to be accurate (manual ceil(cols/width)
+    // underestimates at word boundaries and causes the last few lines to be
+    // hidden until the next render).
     //
     // Use u32 throughout to prevent wraparound overflow for long conversations.
-    // Unicode wide characters (CJK, emoji) count as 2 columns each.
-    let panel_width = inner.width.max(1) as u32;
-    let visual_total: u32 = all_lines
-        .iter()
-        .map(|line| {
-            let cols: u32 = line.spans.iter().map(|s| {
-                s.content.chars().map(|c| {
-                    // unicode_width::UnicodeWidthChar returns 0 for combining chars,
-                    // 1 for ASCII, 2 for wide chars (CJK, emoji, etc.)
-                    unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as u32
-                }).sum::<u32>()
-            }).sum();
-            (cols.max(1) + panel_width - 1) / panel_width
-        })
-        .sum::<u32>()
-        .max(1);
+    let text = Text::from(all_lines);
+    let visual_total = Paragraph::new(text.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(inner.width) as u32;
+    let visual_total = visual_total.max(1);
 
     let visible = inner.height as u32;
     let at_bottom_u32 = visual_total.saturating_sub(visible);
@@ -2493,7 +2500,6 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let scroll_up = app.scroll[Tab::Chat as usize] as u32;
     let from_top = (at_bottom_u32.saturating_sub(scroll_up)).min(u16::MAX as u32) as u16;
 
-    let text = Text::from(all_lines);
     f.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })

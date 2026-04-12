@@ -26,7 +26,7 @@ clap = { version = "4", features = ["derive"] }
 colored = "2"
 indicatif = "0.17"
 console = "0.15"
-ratatui = "0.29"
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-util = "0.3"
 
@@ -74,4 +74,3 @@ toml = "0.8"
 
 # Scripting / plugin engine (Rhai — pure Rust, embeds cleanly)
 rhai = { version = "1", features = ["sync"] }
-unicode-width = "=0.2.0"
