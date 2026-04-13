@@ -2614,9 +2614,13 @@ fn run_python(
         _ => std::env::var("KAIJU_BINARY").unwrap_or_default(),
     };
 
+    // ── Warn about p.interactive() ────────────────────────────────────────────
+    let has_interactive = script.contains("interactive()");
+
     // ── Persist script next to the binary ────────────────────────────────────
-    // Saved as  <binary>.kaiju_scripts/script_NNN.py  (consistent with
-    // the .kaiju.db sidecar naming convention).  Failures are non-fatal.
+    // Saved as  <binary>.kaiju_scripts/script_NNN.py  before execution so the
+    // path can be included in the result header even on timeout.
+    // After execution the file is renamed to script_NNN_ok.py or _err.py.
     let saved_script_path: Option<std::path::PathBuf> = (|| {
         if effective_binary.is_empty() {
             return None;
@@ -2626,7 +2630,7 @@ fn run_python(
         let scripts_dir = bin.parent().unwrap_or(std::path::Path::new("."))
             .join(format!("{}.kaiju_scripts", stem.to_string_lossy()));
         std::fs::create_dir_all(&scripts_dir).ok()?;
-        // Auto-increment: count existing .py files in the dir
+        // Auto-increment based on all .py files (including _ok/_err variants)
         let n = std::fs::read_dir(&scripts_dir).ok()?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("py"))
@@ -2804,10 +2808,49 @@ fn run_python(
         }
     }
 
-    if timed_out {
-        ToolResult::err(format!("{}{}", header, body))
+    // ── Rename saved script to reflect outcome ────────────────────────────────
+    let succeeded = !timed_out && stderr_bytes.is_empty();
+    if let Some(ref path) = saved_script_path {
+        let suffix = if succeeded { "_ok" } else { "_err" };
+        let new_name = path.file_stem()
+            .map(|s| format!("{}{}.py", s.to_string_lossy(), suffix));
+        if let Some(name) = new_name {
+            let new_path = path.with_file_name(name);
+            let _ = std::fs::rename(path, &new_path);
+        }
+    }
+
+    // ── Warn if script called interactive() ───────────────────────────────────
+    let interactive_warn = if has_interactive {
+        "\n[WARNING] Script called p.interactive() — stdin is /dev/null in run_python, \
+         so interactive() blocks until the timeout. Use p.recv(timeout=N) instead.]\n"
     } else {
-        ToolResult::ok(format!("{}{}", header, body))
+        ""
+    };
+
+    // ── Echo script source (first 40 lines) so failures are self-explaining ──
+    let script_echo = {
+        let lines: Vec<&str> = script.lines().collect();
+        let shown = lines.len().min(40);
+        let truncated = if lines.len() > 40 {
+            format!("\n... ({} more lines)", lines.len() - 40)
+        } else {
+            String::new()
+        };
+        format!(
+            "--- script ---\n{}{}\n{}",
+            lines[..shown].join("\n"),
+            truncated,
+            sep,
+        )
+    };
+
+    let result = format!("{}{}{}{}", header, script_echo, interactive_warn, body);
+
+    if timed_out {
+        ToolResult::err(result)
+    } else {
+        ToolResult::ok(result)
     }
 }
 

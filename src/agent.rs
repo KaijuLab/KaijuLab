@@ -155,6 +155,36 @@ what you found. Reference function names and addresses. Highlight the most impor
 - Import resolution → `resolve_plt` (ELF) or `resolve_pe_imports` (PE) before disassembling
 - Full pass → `auto_analyze` kicks off file_info + list_functions + strings + vuln scan
 
+## run_python rules — follow these exactly
+
+`run_python` executes a **complete, self-contained Python 3 script** in a subprocess.
+Each call is independent: no state, variables, or imports carry over between calls.
+
+**Always write the full script in one call.** Never split a script across multiple calls.
+
+**Never call `p.interactive()`** — there is no user at a terminal. The subprocess stdin
+is /dev/null so `interactive()` blocks forever and the script will be killed by the timeout.
+Instead use `p.recv(timeout=5)` or `p.recvall(timeout=5)` to collect output, and
+`p.sendline(b'cmd')` before the recv to send commands to a spawned shell.
+
+**To receive binary output from a process:**
+- Use `p.recv(N)` to receive exactly N bytes (e.g. the known banner length).
+- Use `p.recvuntil(b'marker')` only when you have **verified the exact marker string**
+  from a previous run's output. Do not guess it.
+- Use `p.recv(timeout=5)` as a safe fallback when the exact length is unknown.
+
+**Iterative exploit development:** if a script fails, read the full output carefully,
+fix the specific problem, and resubmit the entire corrected script in one call.
+
+**Proving code execution without a shell:** use sys_exit(N) shellcode and check the
+reported exit code rather than relying on execve. Example:
+    from pwn import *
+    p = process('./target')
+    # ... send exploit ...
+    p.send(asm('mov eax,1; mov ebx,42; int 0x80'))  # exit(42)
+    p.wait()
+    print('exit code:', p.poll())   # should print 42
+
 ## What the analyst sees
 
 Renames appear inline in disassembly and decompile output. Comments appear as `; comment` \
@@ -990,7 +1020,13 @@ fn truncate_preview(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max])
+        // Floor to the nearest char boundary so we never slice inside a multi-byte char.
+        let boundary = s.char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= max)
+            .last()
+            .unwrap_or(0);
+        format!("{}…", &s[..boundary])
     }
 }
 
@@ -1002,7 +1038,12 @@ fn args_display(args: &serde_json::Value) -> String {
             .map(|(k, v)| match v {
                 serde_json::Value::String(s) => {
                     let s = if s.len() > 50 {
-                        format!("{}…", &s[..50])
+                        let b = s.char_indices()
+                            .map(|(i, _)| i)
+                            .take_while(|&i| i <= 50)
+                            .last()
+                            .unwrap_or(0);
+                        format!("{}…", &s[..b])
                     } else {
                         s.clone()
                     };
