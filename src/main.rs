@@ -164,6 +164,12 @@ async fn main() -> Result<()> {
     if matches!(cfg, BackendConfig::None) {
         let display = "manual".to_string();
 
+        // Script mode works in manual mode too — run commands line by line
+        if let Some(script_path) = &cli.script {
+            run_script(script_path).await?;
+            return Ok(());
+        }
+
         if let Some(file) = &cli.file {
             // One-shot: just run file_info and exit
             ui::print_banner(&display);
@@ -357,6 +363,8 @@ Analysis:
 Search & patch:
   /entropy         <path>                 Section entropy — detect packers/crypto
   /search          <path> <hex pattern>   Byte-pattern search (e.g. E8 ?? ?? ?? ??)
+  /gadgets         <path> <pattern>       ROP gadget search (e.g. pop rdi; ret)
+  /dump            <path> <vaddr> [size]  Hex dump at a virtual address (vaddr→offset)
   /patch           <path> <vaddr> <hex>   Patch bytes  →  writes  <file>.patched
   /yara            <path> <vaddr> [name]  Generate a YARA rule for a function
 
@@ -379,6 +387,9 @@ Project (persistent across sessions):
   /types           <path>                 Show struct / signature definitions
 
 Scripting & execution:
+  /elf             <path>                  ELF security mitigations + special sections
+  /xdata           <path> <vaddr>         Data xrefs — all reads/writes to an address
+  /exec            <path> [args...] [< input]  Run a native binary, capture output
   /python          <script.py> [timeout]  Run a Python 3 file (LLM uses run_python tool)
   /plugins                                List available plugins (~/.kaiju/plugins/)
   /run <name> [binary]                    Run a Rhai plugin by name (or path)
@@ -583,6 +594,19 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             run_tool("search_bytes", json!({"path": path, "pattern": pattern}), tx);
         }
 
+        "gadgets" | "rop" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let pattern = parts[2..].join(" "); // e.g. "pop rdi; ret"
+            run_tool("search_gadgets", json!({"path": path, "pattern": pattern}), tx);
+        }
+
+        "dump" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let size  = parts.get(3).and_then(|s| parse_int(s)).unwrap_or(64);
+            run_tool("dump_range", json!({"path": path, "vaddr": vaddr, "size": size}), tx);
+        }
+
         "patch" => {
             let path      = parts.get(1).copied().unwrap_or("");
             let vaddr     = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
@@ -627,6 +651,31 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             let output = format_plugin_output(&name, &out);
             send(agent::AgentEvent::PluginOutput { name, output: output.clone() });
             send(agent::AgentEvent::Done);
+        }
+
+        // /elf <path>  — ELF internals (security mitigations, special sections)
+        "elf" | "elf_info" | "elf_internals" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("elf_internals", json!({"path": path}), tx);
+        }
+
+        // /xdata <path> <vaddr>  — data cross-references to an address
+        "xdata" | "xrefs_data" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("xrefs_data", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        // /exec <path> [arg1 arg2 ...] [< stdin_text]
+        // Simple form: /exec /path/to/binary arg1 arg2
+        // With stdin:  /exec /path/to/binary <<< "some input"  (use run_binary directly)
+        "exec" | "run_binary" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            let argv: Vec<serde_json::Value> = parts[2..]
+                .iter()
+                .map(|s| serde_json::Value::String(s.to_string()))
+                .collect();
+            run_tool("run_binary", json!({"path": path, "args": argv}), tx);
         }
 
         // /python <script_file> [timeout]  — run a .py file directly

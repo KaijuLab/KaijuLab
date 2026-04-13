@@ -155,6 +155,18 @@ what you found. Reference function names and addresses. Highlight the most impor
 - Import resolution → `resolve_plt` (ELF) or `resolve_pe_imports` (PE) before disassembling
 - Full pass → `auto_analyze` kicks off file_info + list_functions + strings + vuln scan
 
+## Large binary warning
+
+**Never call `auto_analyze` on a binary with more than ~100 functions.** \
+Statically linked binaries (musl, glibc-static) routinely contain 500–2000+ functions; \
+running `auto_analyze` on them causes memory exhaustion and is explicitly blocked. \
+If `list_functions` or `file_info` reveals a large function count, use the targeted workflow:\
+\n1. `file_info` — architecture, segments, sections\
+\n2. `list_functions` — browse and pick targets by address\
+\n3. `disassemble` / `decompile` — examine specific functions\
+\n4. `scan_vulnerabilities` — limited to a small `max_fns` count\
+\nNever loop over all functions automatically when there are more than 50.
+
 ## run_python rules — follow these exactly
 
 `run_python` executes a **complete, self-contained Python 3 script** in a subprocess.

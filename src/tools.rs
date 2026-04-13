@@ -258,6 +258,15 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "path"),
             &str_arg(args, "pattern"),
         ),
+        "search_gadgets" => search_gadgets(
+            &str_arg(args, "path"),
+            &str_arg(args, "pattern"),
+        ),
+        "dump_range" => dump_range(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+            args["size"].as_u64().unwrap_or(64) as usize,
+        ),
         "patch_bytes" => patch_bytes(
             &str_arg(args, "path"),
             args["offset"].as_u64().map(|v| v as usize),
@@ -307,6 +316,22 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["binary"].as_str(),
             args["timeout_secs"].as_u64().unwrap_or(30).min(120),
         ),
+        "elf_internals" => elf_internals(&str_arg(args, "path")),
+        "xrefs_data" => xrefs_data(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+        ),
+        "run_binary" => {
+            let argv: Vec<String> = args["args"].as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            run_binary(
+                &str_arg(args, "path"),
+                &argv,
+                args["stdin"].as_str(),
+                args["timeout_secs"].as_u64().unwrap_or(10).min(30),
+            )
+        }
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -442,6 +467,145 @@ fn file_info(path: &str) -> ToolResult {
         for imp in &imports {
             out.push_str(&format!("    {}\n", imp));
         }
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: elf_internals ─────────────────────────────────────────────────────
+
+fn elf_internals(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let elf = match goblin::elf::Elf::parse(&data) {
+        Ok(e) => e,
+        Err(_) => return ToolResult::err(
+            "Not a valid ELF binary — use file_info for PE/Mach-O formats"
+        ),
+    };
+
+    let mut out = String::new();
+
+    // ── Header / type ─────────────────────────────────────────────────────
+    use goblin::elf::header::{ET_EXEC, ET_DYN};
+    let pie = elf.header.e_type == ET_DYN;
+    out.push_str(&format!(
+        "ELF type    : {} ({})\n",
+        if pie { "ET_DYN" } else if elf.header.e_type == ET_EXEC { "ET_EXEC" } else { "other" },
+        if pie { "PIE — load address randomised" } else { "not PIE — fixed load address" }
+    ));
+
+    // ── Security mitigations ──────────────────────────────────────────────
+    use goblin::elf::program_header::{PT_GNU_STACK, PT_GNU_RELRO, PF_X};
+    let nx = elf.program_headers.iter()
+        .find(|ph| ph.p_type == PT_GNU_STACK)
+        .map(|ph| ph.p_flags & PF_X == 0)
+        .unwrap_or(false);
+
+    let has_relro = elf.program_headers.iter().any(|ph| ph.p_type == PT_GNU_RELRO);
+
+    use goblin::elf::dynamic::{DT_BIND_NOW, DT_FLAGS, DT_FLAGS_1};
+    const DF_BIND_NOW: u64 = 0x8;
+    const DF_1_NOW: u64 = 0x1;
+    let bind_now = elf.dynamic.as_ref()
+        .map(|dyn_| dyn_.dyns.iter().any(|d| {
+            d.d_tag == DT_BIND_NOW
+                || (d.d_tag == DT_FLAGS   && d.d_val & DF_BIND_NOW != 0)
+                || (d.d_tag == DT_FLAGS_1 && d.d_val & DF_1_NOW    != 0)
+        }))
+        .unwrap_or(false);
+
+    let relro = match (has_relro, bind_now) {
+        (false, _)    => "None",
+        (true, false) => "Partial RELRO",
+        (true, true)  => "Full RELRO",
+    };
+
+    let has_canary = elf.dynsyms.iter().any(|sym|
+        elf.dynstrtab.get_at(sym.st_name).map_or(false, |n| n.contains("__stack_chk"))
+    );
+    let has_fortify = elf.dynsyms.iter().any(|sym|
+        elf.dynstrtab.get_at(sym.st_name)
+            .map_or(false, |n| n.ends_with("_chk") && n.starts_with("__"))
+    );
+
+    out.push_str("\nSecurity mitigations:\n");
+    out.push_str(&format!("  PIE          : {}\n", if pie { "Yes" } else { "No (fixed address)" }));
+    out.push_str(&format!("  NX (DEP)     : {}\n", if nx  { "Yes" } else { "No — stack is executable!" }));
+    out.push_str(&format!("  RELRO        : {}\n", relro));
+    out.push_str(&format!("  Stack canary : {}\n", if has_canary  { "Yes (__stack_chk_fail)" } else { "No" }));
+    out.push_str(&format!("  FORTIFY      : {}\n", if has_fortify { "Yes" } else { "No" }));
+
+    // ── Special sections ──────────────────────────────────────────────────
+    out.push_str("\nSpecial sections:\n");
+    for sec_name in &[".got", ".got.plt", ".plt", ".plt.got",
+                      ".init_array", ".fini_array", ".bss", ".data"] {
+        if let Some(sh) = elf.section_headers.iter().find(|sh|
+            elf.shdr_strtab.get_at(sh.sh_name).map_or(false, |n| n == *sec_name)
+        ) {
+            if sh.sh_addr != 0 {
+                out.push_str(&format!(
+                    "  {:<15} : vaddr=0x{:016x}  size={}\n",
+                    sec_name, sh.sh_addr, sh.sh_size
+                ));
+            }
+        }
+    }
+
+    // ── init_array / fini_array pointer dump ──────────────────────────────
+    let ptr_size: usize = if elf.is_64 { 8 } else { 4 };
+    let is_le = elf.little_endian;
+    for arr_sec in &[".init_array", ".fini_array"] {
+        if let Some(sh) = elf.section_headers.iter().find(|sh|
+            elf.shdr_strtab.get_at(sh.sh_name).map_or(false, |n| n == *arr_sec)
+        ) {
+            let off = sh.sh_offset as usize;
+            let sz  = sh.sh_size  as usize;
+            if sh.sh_addr == 0 || sz < ptr_size || off + sz > data.len() { continue; }
+            out.push_str(&format!(
+                "\n{}  (0x{:x} .. 0x{:x}):\n",
+                arr_sec, sh.sh_addr, sh.sh_addr + sh.sh_size
+            ));
+            for (i, chunk) in data[off..off + sz].chunks(ptr_size).enumerate() {
+                if chunk.len() < ptr_size { break; }
+                let ptr: u64 = if elf.is_64 && is_le {
+                    u64::from_le_bytes(chunk.try_into().unwrap_or([0u8; 8]))
+                } else if elf.is_64 {
+                    u64::from_be_bytes(chunk.try_into().unwrap_or([0u8; 8]))
+                } else if is_le {
+                    u32::from_le_bytes(chunk[..4].try_into().unwrap_or([0u8; 4])) as u64
+                } else {
+                    u32::from_be_bytes(chunk[..4].try_into().unwrap_or([0u8; 4])) as u64
+                };
+                let sym_name = elf.syms.iter()
+                    .chain(elf.dynsyms.iter())
+                    .find(|s| s.st_value == ptr && !s.is_import())
+                    .and_then(|s| {
+                        elf.strtab.get_at(s.st_name)
+                            .or_else(|| elf.dynstrtab.get_at(s.st_name))
+                    })
+                    .unwrap_or("?");
+                out.push_str(&format!("  [{}] 0x{:016x}  {}\n", i, ptr, sym_name));
+            }
+        }
+    }
+
+    // ── Linked libraries ──────────────────────────────────────────────────
+    if !elf.libraries.is_empty() {
+        out.push_str("\nLinked libraries:\n");
+        for lib in &elf.libraries {
+            out.push_str(&format!("  {}\n", lib));
+        }
+    }
+
+    // ── Interpreter ───────────────────────────────────────────────────────
+    if let Some(interp) = &elf.interpreter {
+        out.push_str(&format!("\nInterpreter : {}\n", interp));
     }
 
     ToolResult::ok(out)
@@ -1224,6 +1388,157 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
     for addr in &callers {
         let fname = find_func(*addr);
         out.push_str(&format!("  0x{:016x}  {}\n", addr, fname));
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: xrefs_data ────────────────────────────────────────────────────────
+
+/// Find all instructions that read or write a given virtual address.
+/// Uses iced-x86 RIP-relative + absolute operand resolution on x86/x86-64.
+fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
+    if path.is_empty()       { return ToolResult::err("'path' is required"); }
+    if target_vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+    let obj = match object::File::parse(&*data) {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
+    };
+
+    let is_x86 = matches!(
+        obj.architecture(),
+        Architecture::X86_64 | Architecture::X86_64_X32 | Architecture::I386
+    );
+    if !is_x86 {
+        return ToolResult::err(
+            "xrefs_data currently supports x86 / x86-64 only"
+        );
+    }
+    let bitness: u32 = match obj.architecture() {
+        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+        _ => 32,
+    };
+
+    use iced_x86::{Decoder, DecoderOptions, OpKind, Register};
+    use iced_x86::IntelFormatter;
+    use iced_x86::Formatter;
+
+    let mut fmt = IntelFormatter::new();
+    fmt.options_mut().set_uppercase_mnemonics(false);
+    fmt.options_mut().set_uppercase_registers(false);
+
+    // Collect function address→name map for annotation
+    let project = Project::load_for(path);
+    let sym_map: HashMap<u64, String> = obj.symbols()
+        .filter_map(|s| {
+            let name = s.name().ok()?.trim();
+            if name.is_empty() { return None; }
+            Some((s.address(), name.to_string()))
+        })
+        .collect();
+
+    let enclosing_fn = |addr: u64| -> String {
+        if let Some(n) = project.get_name(addr) { return n; }
+        let mut best: Option<(u64, String)> = None;
+        for (fn_va, fname) in &sym_map {
+            if *fn_va <= addr {
+                match &best {
+                    None => { best = Some((*fn_va, fname.clone())); }
+                    Some((bva, _)) if fn_va > bva => { best = Some((*fn_va, fname.clone())); }
+                    _ => {}
+                }
+            }
+        }
+        best.map(|(_, n)| n).unwrap_or_else(|| "<unknown>".to_string())
+    };
+
+    // Scan all executable sections
+    let mut refs: Vec<(u64, String, &'static str)> = Vec::new();
+
+    for sec in obj.sections() {
+        // Only executable sections
+        use object::{ObjectSection, SectionFlags};
+        let is_exec = match sec.flags() {
+            SectionFlags::Elf { sh_flags } => sh_flags & 0x4 != 0, // SHF_EXECINSTR
+            SectionFlags::MachO { flags }  => flags & 0x400 != 0,  // S_ATTR_SOME_INSTRUCTIONS
+            _ => {
+                let name = sec.name().unwrap_or("");
+                name == ".text" || name == "__text" || name.ends_with(",__text")
+            }
+        };
+        if !is_exec { continue; }
+
+        let sec_vaddr = sec.address();
+        let sec_bytes = match sec.data() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let mut decoder = Decoder::with_ip(bitness, sec_bytes, sec_vaddr, DecoderOptions::NONE);
+        for instr in decoder.iter() {
+            if instr.is_invalid() { continue; }
+
+            for op_idx in 0..instr.op_count() {
+                if instr.op_kind(op_idx) != OpKind::Memory { continue; }
+
+                // Compute the effective address for this memory operand
+                let eff_addr: Option<u64> = if instr.memory_base() == Register::RIP
+                    || instr.memory_base() == Register::EIP
+                {
+                    // RIP/EIP-relative — iced computes the absolute target for us
+                    Some(instr.ip_rel_memory_address())
+                } else if instr.memory_base() == Register::None
+                    && instr.memory_index() == Register::None
+                {
+                    // Absolute address encoded directly in the displacement
+                    if bitness == 64 {
+                        Some(instr.memory_displacement64())
+                    } else {
+                        Some(instr.memory_displacement32() as u64)
+                    }
+                } else {
+                    // Register-relative — can't resolve statically
+                    None
+                };
+
+                if eff_addr == Some(target_vaddr) {
+                    // Classify: op_idx 0 = destination (write), else source (read)
+                    let access: &'static str = if op_idx == 0 { "write" } else { "read" };
+                    let mut s = String::new();
+                    fmt.format(&instr, &mut s);
+                    refs.push((instr.ip(), s, access));
+                    break; // one record per instruction
+                }
+            }
+        }
+    }
+
+    if refs.is_empty() {
+        return ToolResult::ok(format!(
+            "No data references to 0x{:x} found in executable sections", target_vaddr
+        ));
+    }
+
+    let mut out = format!(
+        "Data cross-references to 0x{:x} ({} refs):\n\n",
+        target_vaddr, refs.len()
+    );
+    out.push_str(&format!(
+        "  {:<20}  {:<8}  {:<30}  {}\n  {}\n",
+        "Site address", "Access", "Instruction", "Enclosing function",
+        "─".repeat(80)
+    ));
+    for (site, disasm, access) in &refs {
+        let fname = enclosing_fn(*site);
+        out.push_str(&format!(
+            "  0x{:016x}  {:<8}  {:<30}  {}\n",
+            site, access, disasm, fname
+        ));
     }
 
     ToolResult::ok(out)
@@ -2352,6 +2667,26 @@ fn diff_binary(path_a: &str, path_b: &str) -> ToolResult {
 fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
     if path.is_empty() { return ToolResult::err("'path' is required"); }
 
+    // ── Guard: refuse on large statically-linked binaries to prevent OOM ────
+    // Do a cheap function count (max=1) before doing anything expensive.
+    let quick = list_functions(path, 1, true);
+    let quick_total = serde_json::from_str::<serde_json::Value>(&quick.output).ok()
+        .and_then(|v| v["total"].as_u64())
+        .unwrap_or(0) as usize;
+    if quick_total > 500 {
+        return ToolResult::err(format!(
+            "auto_analyze refused: binary has {} functions (likely statically linked). \
+             Running auto_analyze on a binary this large risks OOM and produces unusable output. \
+             Use targeted analysis instead:\n\
+             1. file_info — architecture, segments, sections\n\
+             2. list_functions — browse function list, pick targets\n\
+             3. disassemble / decompile — examine specific functions\n\
+             4. scan_vulnerabilities — focused vulnerability scan\n\
+             Call auto_analyze only on small binaries (<= 500 functions).",
+            quick_total
+        ));
+    }
+
     let mut out = String::new();
 
     // 1. File info
@@ -2956,6 +3291,146 @@ fn run_python(
         ToolResult::err(result)
     } else {
         ToolResult::ok(result)
+    }
+}
+
+// ─── Tool: run_binary ────────────────────────────────────────────────────────
+
+/// Execute a native binary with optional args / stdin and capture its output.
+fn run_binary(
+    path: &str,
+    argv: &[String],
+    stdin_data: Option<&str>,
+    timeout_secs: u64,
+) -> ToolResult {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if !std::path::Path::new(path).exists() {
+        return ToolResult::err(format!("Binary '{}' not found", path));
+    }
+
+    const MAX_STREAM: u64 = 256 * 1024; // 256 KiB per stream
+    let timeout = timeout_secs.clamp(1, 30);
+
+    let mut cmd = Command::new(path);
+    for a in argv { cmd.arg(a); }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if stdin_data.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+    // Put child in its own process group so SIGKILL can target the whole tree
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return ToolResult::err(format!("Failed to execute '{}': {}", path, e)),
+    };
+
+    // Write stdin (close immediately so child sees EOF)
+    if let Some(input) = stdin_data {
+        if let Some(mut h) = child.stdin.take() {
+            let _ = h.write_all(input.as_bytes());
+        }
+    }
+
+    // Drain stdout + stderr in background threads to avoid pipe-full deadlocks
+    let stdout_thread = {
+        let pipe = child.stdout.take().expect("stdout was piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.take(MAX_STREAM).read_to_end(&mut buf);
+            buf
+        })
+    };
+    let stderr_thread = {
+        let pipe = child.stderr.take().expect("stderr was piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.take(MAX_STREAM).read_to_end(&mut buf);
+            buf
+        })
+    };
+
+    // Wait with timeout
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let timed_out = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break false,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    #[cfg(unix)]
+                    {
+                        let pgid = child.id() as i32;
+                        unsafe { libc::killpg(pgid, libc::SIGKILL); }
+                    }
+                    #[cfg(not(unix))]
+                    { let _ = child.kill(); }
+                    let _ = child.wait();
+                    break true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break false,
+        }
+    };
+
+    let exit_status = if !timed_out { child.try_wait().ok().flatten() } else { None };
+    let stdout_bytes = stdout_thread.join().unwrap_or_default();
+    let stderr_bytes = stderr_thread.join().unwrap_or_default();
+
+    let stdout_str = String::from_utf8_lossy(&stdout_bytes);
+    let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+    let trunc_out  = stdout_bytes.len() as u64 >= MAX_STREAM;
+    let trunc_err  = stderr_bytes.len() as u64 >= MAX_STREAM;
+
+    let exit_label = if timed_out {
+        format!("TIMEOUT ({}s) — process killed", timeout)
+    } else {
+        exit_status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "exited".to_string())
+    };
+
+    let sep = "─".repeat(60);
+    let cmd_str = if argv.is_empty() {
+        path.to_string()
+    } else {
+        format!("{} {}", path, argv.join(" "))
+    };
+
+    let mut out = format!("run_binary — {}\ncmd: {}\n{}\n", exit_label, cmd_str, sep);
+
+    if !stdout_str.is_empty() {
+        out.push_str(&stdout_str);
+        if trunc_out {
+            out.push_str(&format!("\n[stdout truncated at {} KiB]", MAX_STREAM / 1024));
+        }
+    }
+    if !stderr_str.is_empty() {
+        if !out.ends_with('\n') { out.push('\n'); }
+        out.push_str("--- stderr ---\n");
+        out.push_str(&stderr_str);
+        if trunc_err {
+            out.push_str(&format!("\n[stderr truncated at {} KiB]", MAX_STREAM / 1024));
+        }
+    }
+    if stdout_str.is_empty() && stderr_str.is_empty() {
+        out.push_str("(no output)\n");
+    }
+
+    if timed_out {
+        ToolResult::err(out)
+    } else {
+        ToolResult::ok(out)
     }
 }
 
@@ -3647,6 +4122,47 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "search_gadgets".into(),
+            description: "Search for ROP/JOP gadget sequences in x86 / x86-64 binaries. \
+                           The pattern is a semicolon-separated list of Intel-syntax mnemonic \
+                           tokens, e.g. 'pop rdi; ret' or 'syscall' or 'pop *; pop *; ret'. \
+                           Each token is matched by prefix against the formatted instruction \
+                           (case-insensitive), so 'pop' matches any pop variant. \
+                           Use '*' to match any single instruction. \
+                           Returns up to 50 gadget addresses with their instruction sequences. \
+                           Useful for building ROP chains during exploit development.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":    { "type": "string", "description": "Path to the binary file" },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Semicolon-separated gadget pattern, e.g. 'pop rdi; ret' \
+                                        or 'pop *; ret' or 'syscall'. Case-insensitive prefix match."
+                    }
+                },
+                "required": ["path", "pattern"]
+            }),
+        },
+        ToolDefinition {
+            name: "dump_range".into(),
+            description: "Hex-dump bytes at a virtual address, automatically translating the \
+                           vaddr to a file offset using the binary's LOAD segment table. \
+                           Unlike hexdump (which takes a raw file offset), dump_range accepts \
+                           the virtual address as shown in disassembly or file_info output. \
+                           Useful for inspecting GOT, BSS, fini_array, or any data structure \
+                           at a known virtual address. Returns up to 4096 bytes.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary file" },
+                    "vaddr": { "type": "integer", "description": "Virtual address to dump from" },
+                    "size":  { "type": "integer", "description": "Number of bytes to dump (default 64, max 4096)" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
             name: "run_python".into(),
             description: "Execute a Python 3 script and return its combined stdout+stderr output. \
                            Use this for custom analysis tasks that are awkward with the built-in tools: \
@@ -3680,6 +4196,71 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["script"]
+            }),
+        },
+        ToolDefinition {
+            name: "elf_internals".into(),
+            description: "Display ELF-specific security mitigations (PIE, NX, RELRO, stack \
+                           canary, FORTIFY), special section addresses (.got, .got.plt, .plt, \
+                           .init_array, .fini_array, .bss), the init/fini_array pointer tables \
+                           with symbol names, and the linked libraries. Only works on ELF binaries \
+                           — for PE use file_info. Indispensable for pwn/exploitation analysis.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the ELF binary" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "xrefs_data".into(),
+            description: "Find every instruction that reads or writes a given virtual address \
+                           (data cross-references). Covers RIP-relative memory operands and \
+                           absolute address operands in x86 / x86-64 code. Useful for tracking \
+                           down all sites that access a global variable, GOT entry, counter, or \
+                           function pointer table (e.g. fini_array). Complements xrefs_to, which \
+                           finds code-flow references (CALL/JMP).".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary" },
+                    "vaddr": { "type": "integer", "description": "Virtual address to find data references to" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "run_binary".into(),
+            description: "Execute a native binary and return its stdout + stderr. Useful for \
+                           running CTF challenge binaries locally, testing patched binaries, or \
+                           verifying exploit payloads without leaving KaijuLab. Stdin can be \
+                           provided as a string (supports raw bytes via Python escape sequences \
+                           in the LLM response). The process is killed after timeout_secs. \
+                           Max output: 256 KiB per stream. For interactive pwntools exploits, \
+                           use run_python with pwntools instead.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the binary to execute"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Command-line arguments to pass to the binary (optional)"
+                    },
+                    "stdin": {
+                        "type": "string",
+                        "description": "Data to pipe to the binary's stdin (optional)"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Maximum runtime in seconds before the process is killed (default 10, max 30)"
+                    }
+                },
+                "required": ["path"]
             }),
         },
     ]
@@ -3858,6 +4439,185 @@ fn search_bytes(path: &str, pattern: &str) -> ToolResult {
     if total == 0 {
         out.push_str("  (no matches found)\n");
     }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: search_gadgets ────────────────────────────────────────────────────
+
+/// Search for ROP/JOP gadget sequences in x86/x86-64 binaries.
+/// `pattern` is a semicolon-separated list of mnemonic tokens, e.g.
+/// `"pop rdi; ret"` or `"syscall"` or `"pop *; pop *; ret"`.
+/// Each token is matched against the Intel-format mnemonic+operands string of a
+/// decoded instruction.  `*` matches any single instruction.  Matching is
+/// case-insensitive and the mnemonic part is compared by prefix (so `"pop"`
+/// matches `"pop rdi"`, `"pop rbx"`, etc.).
+fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if pattern.is_empty() { return ToolResult::err("'pattern' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let obj = match object::File::parse(&*data) {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
+    };
+
+    let bitness: u32 = match obj.architecture() {
+        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+        Architecture::I386 => 32,
+        _ => return ToolResult::err(
+            "search_gadgets only supports x86 / x86-64 binaries; \
+             use search_bytes with raw hex patterns for other architectures"
+        ),
+    };
+
+    // Parse pattern: semicolon-separated tokens, each is a prefix to match
+    // against the Intel-formatted instruction (mnemonic + operands), lowercased.
+    // Token "*" matches any instruction.
+    let tokens: Vec<String> = pattern
+        .split(';')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if tokens.is_empty() {
+        return ToolResult::err("Empty gadget pattern — use '; ' to separate instructions, e.g. 'pop rdi; ret'");
+    }
+
+    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+
+    let mut all_matches: Vec<(u64, String)> = Vec::new();
+
+    for section in obj.sections() {
+        // Only scan executable sections
+        let is_exec = match section.flags() {
+            object::SectionFlags::Elf { sh_flags } => sh_flags & 0x4 != 0, // SHF_EXECINSTR
+            object::SectionFlags::Coff { characteristics } => characteristics & 0x2000_0000 != 0,
+            _ => {
+                let name = section.name().unwrap_or_default();
+                matches!(name, ".text" | ".init" | ".plt" | "__text" | ".fini")
+            }
+        };
+        if !is_exec { continue; }
+
+        let sec_data = match section.data() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let sec_vaddr = section.address();
+
+        // Scan every byte offset in the section to find gadgets that may start
+        // in the middle of a longer instruction (standard ROP gadget approach).
+        let mut fmt = IntelFormatter::new();
+        let n = tokens.len();
+
+        'offset: for start_off in 0..sec_data.len() {
+            let start_va = sec_vaddr + start_off as u64;
+            let slice = &sec_data[start_off..];
+            let mut decoder = Decoder::with_ip(bitness, slice, start_va, DecoderOptions::NONE);
+
+            // Decode exactly n instructions from this offset
+            let mut window: Vec<(u64, String)> = Vec::with_capacity(n);
+            for instr in decoder.iter() {
+                if instr.is_invalid() { continue 'offset; }
+                let vaddr = instr.ip();
+                let mut s = String::new();
+                fmt.format(&instr, &mut s);
+                window.push((vaddr, s.to_lowercase()));
+                if window.len() == n { break; }
+            }
+            if window.len() < n { continue; }
+
+            // Match each token against the corresponding instruction
+            let mut ok = true;
+            for (j, tok) in tokens.iter().enumerate() {
+                if tok == "*" { continue; }
+                // Prefix match: "pop" matches "pop rdi", "pop rdi" matches exactly "pop rdi"
+                if !window[j].1.starts_with(tok.as_str()) {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                let gadget: String = window.iter()
+                    .map(|(_, s)| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ; ");
+                all_matches.push((window[0].0, gadget));
+                if all_matches.len() >= 100 { break; }
+            }
+        }
+        if all_matches.len() >= 100 { break; }
+    }
+
+    let total = all_matches.len();
+    let show  = 50.min(total);
+    let mut out = format!(
+        "Gadget search: pattern='{}'\nFile: '{}'\nMatches: {}{}\n\n",
+        pattern, path, total,
+        if total > show { format!(" (showing first {})", show) } else { String::new() }
+    );
+    for (vaddr, gadget) in all_matches.iter().take(show) {
+        out.push_str(&format!("  0x{:016x}  {}\n", vaddr, gadget));
+    }
+    if total == 0 {
+        out.push_str("  (no gadgets found)\n");
+        out.push_str("  Tip: use semicolons to separate instructions, e.g. 'pop rdi; ret'\n");
+        out.push_str("       Use '*' to match any instruction, e.g. 'pop *; pop *; ret'\n");
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: dump_range ────────────────────────────────────────────────────────
+
+/// Hex-dump a range of bytes at a virtual address, automatically translating
+/// vaddr → file offset using the binary's LOAD segment table.
+fn dump_range(path: &str, vaddr: u64, size: usize) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+
+    let size = size.clamp(1, 4096);
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let file_off = match vaddr_to_file_offset(&data, vaddr) {
+        Some(off) => off,
+        None => return ToolResult::err(format!(
+            "Virtual address 0x{:x} is not covered by any LOAD segment — \
+             run file_info to inspect the segment layout",
+            vaddr
+        )),
+    };
+
+    let end = (file_off + size).min(data.len());
+    if file_off >= data.len() {
+        return ToolResult::err(format!("File offset 0x{:x} is beyond EOF", file_off));
+    }
+
+    let bytes = &data[file_off..end];
+    let mut out = format!(
+        "Hex dump: vaddr=0x{:x}  file_offset=0x{:x}  length={} bytes\n\n",
+        vaddr, file_off, bytes.len()
+    );
+
+    for (row, chunk) in bytes.chunks(16).enumerate() {
+        let cur_vaddr = vaddr + (row * 16) as u64;
+        let first8 = &chunk[..chunk.len().min(8)];
+        let rest   = if chunk.len() > 8 { &chunk[8..] } else { &[] };
+        let hex_a: String = first8.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        let hex_b: String = rest.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        let ascii: String = chunk.iter()
+            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+            .collect();
+        out.push_str(&format!("0x{:016x}  {:<23}  {:<23}  |{}|\n", cur_vaddr, hex_a, hex_b, ascii));
+    }
+
     ToolResult::ok(out)
 }
 

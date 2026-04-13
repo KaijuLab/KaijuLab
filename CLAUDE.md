@@ -271,6 +271,14 @@ is relocate-invariant (survives ASLR and recompilation).
 | `list_notes` | List all analyst notes for a binary |
 | `get_vuln_scores` | Read all previously set vulnerability scores for a binary |
 
+### ELF & execution
+
+| Tool | Key behaviour |
+|---|---|
+| `elf_internals` | ELF-only: security mitigations (PIE, NX, RELRO, canary, FORTIFY), special section addresses (.got, .plt, .init_array, .fini_array), pointer dump of init/fini arrays with symbol names, linked libraries |
+| `xrefs_data` | Data cross-references — every x86/x86-64 instruction that reads or writes a given virtual address (RIP-relative + absolute operands); complements `xrefs_to` which finds code-flow references |
+| `run_binary` | Execute a native binary, optionally with args and stdin, and capture stdout + stderr; process is killed after `timeout_secs` (max 30 s) |
+
 ### vaddr / file-offset distinction
 
 ELF virtual addresses ≠ file offsets.  The `disassemble` tool internally

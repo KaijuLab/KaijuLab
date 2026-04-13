@@ -2463,13 +2463,12 @@ impl std::fmt::Debug for Expression {
     }
 }
 
+#[cfg(test)]
 mod test {
     use pcode::VarNode;
-    
+    use smallvec::{smallvec, SmallVec};
 
-    
-
-    use super::{ExpressionOp, VariableSymbol};
+    use super::{Expression, ExpressionOp, InstructionSize::U32, OpIdx, VariableSymbol, SMALLVEC_SIZE};
 
     #[inline]
     fn var_reg(r: VarNode) -> ExpressionOp {
