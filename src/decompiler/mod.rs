@@ -8,7 +8,7 @@ pub mod symbol_resolver;
 use std::borrow::Cow;
 
 use goblin::Object;
-use object::Object as _;
+use object::{Object as _, ObjectSymbol};
 use ir::{
     abstract_syntax_tree::{AbstractSyntaxTree, AstStatement},
     address::Address,
@@ -178,8 +178,48 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
 
     let mut memory = Memory::new(lang);
 
-    // Pre-populate symbol table from project renames so call-site names
-    // propagate into the decompiled output (e.g. FUN_0x401234 → parse_header).
+    // Pre-populate symbol table with binary's own symbol table (ELF/PE exports,
+    // DWARF names) so call-site names appear naturally in the decompiled output.
+    // Project renames are added LAST so they always override binary symbols.
+    if let Ok(obj_file) = object::File::parse(&*data) {
+        for sym in obj_file.symbols() {
+            let addr = sym.address();
+            if addr == 0 { continue; }
+            if !matches!(sym.kind(),
+                object::SymbolKind::Text | object::SymbolKind::Unknown
+            ) { continue; }
+            let name = match sym.name() {
+                Ok(n) => n.trim(),
+                Err(_) => continue,
+            };
+            if name.is_empty() || name.starts_with('$') { continue; }
+            if project.renames.contains_key(&addr) { continue; }
+            let sz = (sym.size().min(255).max(1)) as u8;
+            memory.symbols.add(addr, sz, name.to_string());
+        }
+    }
+
+    // For ELF: register PLT stub addresses via .rela.plt so imported function
+    // names (malloc, read, write, …) appear instead of FUN_xxxxxxxx.
+    if let Ok(Object::Elf(elf)) = Object::parse(&data) {
+        let plt_base = elf.section_headers.iter()
+            .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(".plt"))
+            .map(|sh| sh.sh_addr);
+        if let Some(plt_base) = plt_base {
+            for (i, reloc) in elf.pltrelocs.iter().enumerate() {
+                let stub_addr = plt_base + 16 + (i as u64) * 16;
+                if project.renames.contains_key(&stub_addr) { continue; }
+                if reloc.r_sym == 0 { continue; }
+                if let Some(name) = elf.dynsyms.get(reloc.r_sym)
+                    .and_then(|sym| elf.dynstrtab.get_at(sym.st_name))
+                {
+                    memory.symbols.add(stub_addr, 16_u8, name.to_string());
+                }
+            }
+        }
+    }
+
+    // Project renames always take precedence — load them last.
     for (addr, name) in &project.renames {
         memory.symbols.add(*addr, 8, name.clone());
     }

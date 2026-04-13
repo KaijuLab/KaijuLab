@@ -130,11 +130,13 @@ want to read analyst observations in detail.
 `list_functions` (or `dwarf_info` for debug-info binaries) to understand scope.
 
 3. **Annotate as you go** — every finding should be persisted immediately:
-   - `rename_function(path, vaddr, name)` whenever you identify what a function does.
+   - **Prefer `batch_annotate`** over individual calls when you have multiple annotations \
+     for the same function. One `batch_annotate` call can set the function name, comment, \
+     return type, all parameter names/types, and variable renames atomically. \
+     Always re-decompile after `batch_annotate` to confirm the output looks right.
+   - `rename_function(path, vaddr, name)` for quick single renames.
    - `add_comment(path, vaddr, comment)` for important addresses, suspicious patterns, \
      or non-obvious observations at instruction level.
-   - `rename_variable(path, fn_vaddr, old, new)` after decompiling to make pseudo-C readable.
-   - `set_return_type` / `set_param_type` / `set_param_name` when you can infer a signature.
    - `add_note(path, text, vaddr?)` for high-level findings: algorithm identification, \
      vulnerability hypotheses, analysis conclusions, or anything the analyst should know.
    - `set_vuln_score(path, vaddr, score)` after reviewing any function: 0=clean, \
@@ -196,6 +198,31 @@ reported exit code rather than relying on execve. Example:
     p.send(asm('mov eax,1; mov ebx,42; int 0x80'))  # exit(42)
     p.wait()
     print('exit code:', p.poll())   # should print 42
+
+## Decompilation conventions
+
+The built-in pcode decompiler outputs pseudo-C with these naming conventions:
+
+- **`arg_1`, `arg_2`, …** — function parameters in ABI order (rdi, rsi, rdx, rcx, r8, r9 \
+  on x86-64). Rename them via `batch_annotate` params[] or `set_param_name`.
+- **`local_XX`** — stack-allocated local variables. The suffix is the hex stack offset (e.g. \
+  `local_18` = `[rbp-0x18]`). Rename with `batch_annotate` variables[] or `rename_variable`.
+- **`DAT_XXXXXXXX`** — a global/static variable or data label at that virtual address. \
+  Rename it with `rename_function` (the same rename table covers data labels too).
+- **`FUN_XXXXXXXX`** — an unresolved call target. If `load_project` or `list_functions` \
+  shows a name for that address, calling `decompile` again after renaming will show it. \
+  Run `identify_library_functions` to name common libc functions automatically.
+- **`phi(x, y)`** — SSA φ-function: the variable holds either `x` or `y` depending on \
+  which predecessor basic block was taken. It does not represent an actual function call.
+- **`int32_t`, `int64_t` widths** — inferred from instruction widths; treat them as hints, \
+  not ground truth. Signed/unsigned is often ambiguous — use context (comparisons, shifts) \
+  to decide.
+
+**Annotation workflow after decompiling a function:**
+1. Identify parameters, locals, and called functions from pseudo-C.
+2. Call `batch_annotate` with function_name, return_type, params[], variables[] all at once.
+3. Call `decompile` again to confirm the renamed output is readable.
+4. Call `set_vuln_score` to record your confidence in its safety.
 
 ## What the analyst sees
 

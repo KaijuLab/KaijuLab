@@ -78,7 +78,7 @@ const CACHEABLE_TOOLS: &[&str] = &[
 const WRITE_TOOLS: &[&str] = &[
     "rename_function", "add_comment", "set_vuln_score", "rename_variable",
     "set_return_type", "set_param_type", "set_param_name", "define_struct",
-    "add_note", "delete_note",
+    "add_note", "delete_note", "batch_annotate",
 ];
 
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
@@ -316,6 +316,7 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["binary"].as_str(),
             args["timeout_secs"].as_u64().unwrap_or(30).min(120),
         ),
+        "batch_annotate" => batch_annotate(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0), args),
         "elf_internals" => elf_internals(&str_arg(args, "path")),
         "xrefs_data" => xrefs_data(
             &str_arg(args, "path"),
@@ -1566,6 +1567,93 @@ fn dwarf_info(path: &str) -> ToolResult {
     }
 }
 
+// ─── Tool: batch_annotate ────────────────────────────────────────────────────
+
+/// Apply a complete set of annotations to a function in one atomic call.
+/// Replaces the need for 5–10 separate rename_function / set_param_* /
+/// rename_variable / add_comment calls.
+fn batch_annotate(path: &str, vaddr: u64, args: &Value) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+
+    let mut project = Project::load_for(path);
+    let mut applied: Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+
+    // ── Function rename ───────────────────────────────────────────────────────
+    if let Some(name) = args["function_name"].as_str() {
+        if !name.is_empty() {
+            project.rename(vaddr, name.to_string());
+            applied.push(format!("rename → {}", name));
+        }
+    }
+
+    // ── Comment ──────────────────────────────────────────────────────────────
+    if let Some(comment) = args["comment"].as_str() {
+        if !comment.is_empty() {
+            project.comment(vaddr, comment.to_string());
+            applied.push(format!("comment → \"{}\"", comment));
+        }
+    }
+
+    // ── Return type ───────────────────────────────────────────────────────────
+    if let Some(ret) = args["return_type"].as_str() {
+        if !ret.is_empty() {
+            project.set_return_type(vaddr, ret.to_string());
+            applied.push(format!("return_type → {}", ret));
+        }
+    }
+
+    // ── Parameters ───────────────────────────────────────────────────────────
+    if let Some(params) = args["params"].as_array() {
+        for (i, param) in params.iter().enumerate() {
+            let param_n = i + 1; // set_param_* are 1-indexed
+            if let Some(name) = param["name"].as_str() {
+                if !name.is_empty() {
+                    project.set_param_name(vaddr, param_n, name.to_string());
+                    applied.push(format!("param[{}].name → {}", param_n, name));
+                }
+            }
+            if let Some(ty) = param["type"].as_str() {
+                if !ty.is_empty() {
+                    project.set_param_type(vaddr, param_n, ty.to_string());
+                    applied.push(format!("param[{}].type → {}", param_n, ty));
+                }
+            }
+        }
+    }
+
+    // ── Variable renames ─────────────────────────────────────────────────────
+    if let Some(vars) = args["variables"].as_array() {
+        for var in vars {
+            let old = var["old"].as_str().unwrap_or("").trim().to_string();
+            let new = var["new"].as_str().unwrap_or("").trim().to_string();
+            if old.is_empty() || new.is_empty() {
+                skipped.push("variable rename: missing old or new name".to_string());
+                continue;
+            }
+            project.rename_var(vaddr, old.clone(), new.clone());
+            applied.push(format!("var {} → {}", old, new));
+        }
+    }
+
+    if let Err(e) = project.save() {
+        return ToolResult::err(format!("Failed to save project: {}", e));
+    }
+
+    let mut out = format!(
+        "batch_annotate applied to 0x{:x} in '{}': {} changes\n",
+        vaddr, path, applied.len()
+    );
+    for a in &applied { out.push_str(&format!("  + {}\n", a)); }
+    if !skipped.is_empty() {
+        out.push_str(&format!("\nSkipped ({}):\n", skipped.len()));
+        for s in &skipped { out.push_str(&format!("  - {}\n", s)); }
+    }
+    out.push_str("\nRe-decompile to see the changes applied.");
+    ToolResult::ok(out)
+}
+
 // ─── Tool: rename_function / add_comment / load_project ─────────────────────
 
 fn rename_function(path: &str, vaddr: u64, name: &str) -> ToolResult {
@@ -2422,8 +2510,38 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
     let fn_name  = project.get_name(vaddr)
         .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
 
+    // ── Gather callers ────────────────────────────────────────────────────────
+    let callers_section = {
+        let xr = xrefs_to_inner(path, vaddr);
+        if xr.is_empty() {
+            String::new()
+        } else {
+            let lines: Vec<String> = xr.iter().take(10).map(|(caller_addr, site)| {
+                let caller_name = project.get_name(*caller_addr)
+                    .unwrap_or_else(|| format!("FUN_{:x}", caller_addr));
+                format!("  0x{:x}  {}  (caller: {})", site, caller_name, caller_name)
+            }).collect();
+            format!("\nCallers ({}):\n{}\n", xr.len(), lines.join("\n"))
+        }
+    };
+
+    // ── Existing signature context ────────────────────────────────────────────
+    let sig_section = if let Some(sig) = project.get_signature(vaddr) {
+        let ret  = sig.return_type.as_deref().unwrap_or("?");
+        let params: Vec<String> = sig.param_types.iter().enumerate().map(|(i, pt)| {
+            let t = pt.as_deref().unwrap_or("?");
+            let n = sig.param_names.get(i).and_then(|x| x.as_deref()).unwrap_or("_");
+            format!("{} {}", t, n)
+        }).collect();
+        format!("\nKnown signature: {} {}({})\n", ret, fn_name, params.join(", "))
+    } else {
+        String::new()
+    };
+
     let out = format!(
-        "Function '{}' at 0x{:x}:\n\n\
+        "Function '{}' at 0x{:x} in '{}':\n\
+         {}{}\n\
+         Pseudo-C:\n\
          {}\n\n\
          ─────────────────────────────────────────────────────────────────────\n\
          INSTRUCTION FOR MODEL:\n\
@@ -2431,13 +2549,43 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
          1. A one-line summary of what this function does.\n\
          2. The likely purpose (e.g. parsing input, crypto routine, network send).\n\
          3. Notable patterns (loops, recursion, syscalls, dangerous operations).\n\
-         4. Suggested rename for the function (if currently unnamed/generic).\n\
-         5. Names for any parameters that can be inferred from usage.\n\
-         Then call add_comment(path='{}', vaddr={}, comment='<your one-line summary>').\n\
-         Then call rename_function(path='{}', vaddr={}, name='<suggested_name>') if appropriate.\n",
-        fn_name, vaddr, pseudo_c, path, vaddr, path, vaddr
+         4. Parameter names and types inferred from usage.\n\
+         5. Local variable rename suggestions (old → new).\n\
+         \n\
+         Then call batch_annotate(path='{}', vaddr={}, \
+         function_name='<name>', comment='<one-line summary>', \
+         return_type='<type>', params=[...], variables=[...]) \
+         to persist all annotations in one call.\n\
+         Then call decompile(path='{}', vaddr={}) to confirm the renamed output.\n\
+         Then call set_vuln_score(path='{}', vaddr={}, score=<0-10>).\n",
+        fn_name, vaddr, path,
+        sig_section, callers_section,
+        pseudo_c,
+        path, vaddr, path, vaddr, path, vaddr
     );
     ToolResult::ok(out)
+}
+
+/// Inner helper: returns Vec<(caller_fn_vaddr, call_site_vaddr)> for xrefs_to.
+/// Extracted so explain_function can use it without re-parsing the text output.
+fn xrefs_to_inner(path: &str, target: u64) -> Vec<(u64, u64)> {
+    // Re-use the existing xrefs_to logic to get caller sites; we parse quickly
+    // by running xrefs_to and extracting the pairs from the raw result.
+    // For now, call the full xrefs_to and parse its output lines.
+    let result = xrefs_to(path, target);
+    if result.output.starts_with("Error:") { return Vec::new(); }
+    let mut pairs = Vec::new();
+    for line in result.output.lines() {
+        // Lines look like: "  0xSITE (in FUN_ADDR / name)"
+        let line = line.trim();
+        if !line.starts_with("0x") { continue; }
+        let site_str = line.split_whitespace().next().unwrap_or("");
+        let site = u64::from_str_radix(site_str.trim_start_matches("0x"), 16).unwrap_or(0);
+        if site == 0 { continue; }
+        // caller fn vaddr — rough: we don't have it from text, use 0 as placeholder
+        pairs.push((0u64, site));
+    }
+    pairs
 }
 
 // ─── Tool: identify_library_functions ───────────────────────────────────────
@@ -4263,6 +4411,64 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                 "required": ["path"]
             }),
         },
+        ToolDefinition {
+            name: "batch_annotate".into(),
+            description: "Apply a complete set of annotations to a function in one atomic call: \
+                           rename the function, set a comment, set the return type, name and type \
+                           each parameter (1-indexed), and rename decompiler variables (old→new). \
+                           Replaces 5–10 separate rename_function / set_param_* / rename_variable \
+                           / add_comment calls. Always re-decompile after calling this tool to \
+                           see the updated output.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the binary"
+                    },
+                    "vaddr": {
+                        "type": "integer",
+                        "description": "Virtual address of the function entry point"
+                    },
+                    "function_name": {
+                        "type": "string",
+                        "description": "New name for the function (optional)"
+                    },
+                    "comment": {
+                        "type": "string",
+                        "description": "Analyst comment to attach to the function entry address (optional)"
+                    },
+                    "return_type": {
+                        "type": "string",
+                        "description": "C return type string, e.g. \"int\", \"char*\", \"void\" (optional)"
+                    },
+                    "params": {
+                        "type": "array",
+                        "description": "Array of parameter descriptors in order (param[0] = arg_1). Each entry may have \"name\" and/or \"type\" fields.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Parameter name" },
+                                "type": { "type": "string", "description": "Parameter C type, e.g. \"const char*\", \"size_t\"" }
+                            }
+                        }
+                    },
+                    "variables": {
+                        "type": "array",
+                        "description": "Array of variable rename pairs: [{\"old\": \"local_18\", \"new\": \"buf\"}]",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old": { "type": "string", "description": "Current decompiler variable name" },
+                                "new": { "type": "string", "description": "Desired variable name" }
+                            },
+                            "required": ["old", "new"]
+                        }
+                    }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
     ]
 }
 
@@ -4325,8 +4531,10 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
         }
     }
 
-    // Build signature comment header if we have one
+    // ── Build context header ──────────────────────────────────────────────────
     let mut header = String::new();
+
+    // Signature / rename line
     if let Some(sig) = project.signatures.get(&vaddr) {
         let ret = sig.return_type.as_deref().unwrap_or("?");
         let fname = project.renames.get(&vaddr).map(|s| s.as_str()).unwrap_or("fn");
@@ -4339,13 +4547,30 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
                 format!("{} {}", t, n)
             })
             .collect();
-        header = format!("/* KaijuLab: {} {}({}) */\n\n", ret, fname, params.join(", "));
+        header.push_str(&format!("/* {} {}({}) */\n", ret, fname, params.join(", ")));
     } else if let Some(fname) = project.renames.get(&vaddr) {
-        header = format!("/* KaijuLab: {} */\n\n", fname);
+        header.push_str(&format!("/* {} */\n", fname));
     }
+
+    // Comment
     if let Some(cmt) = project.comments.get(&vaddr) {
-        header.push_str(&format!("/* {} */\n\n", cmt));
+        header.push_str(&format!("/* {cmt} */\n"));
     }
+
+    // Callers summary (lightweight — just a count + first few sites)
+    let xr = xrefs_to_inner(path, vaddr);
+    if !xr.is_empty() {
+        let caller_sites: Vec<String> = xr.iter().take(5)
+            .map(|(_, site)| format!("0x{:x}", site))
+            .collect();
+        let extra = if xr.len() > 5 { format!(" +{} more", xr.len() - 5) } else { String::new() };
+        header.push_str(&format!(
+            "/* called from: {}{} */\n",
+            caller_sites.join(", "), extra
+        ));
+    }
+
+    if !header.is_empty() { header.push('\n'); }
 
     ToolResult::ok(format!(
         "Decompiled function at 0x{:x} in '{}':\n\n{}{}",

@@ -385,6 +385,7 @@ Project (persistent across sessions):
   /comment         <path> <vaddr> <text>  Attach a comment to an address
   /project         <path>                 Show all saved annotations
   /types           <path>                 Show struct / signature definitions
+  /annotate        <path> <vaddr> [name]  Quick batch annotation (rename + more via LLM)
 
 Scripting & execution:
   /elf             <path>                  ELF security mitigations + special sections
@@ -676,6 +677,14 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
                 .map(|s| serde_json::Value::String(s.to_string()))
                 .collect();
             run_tool("run_binary", json!({"path": path, "args": argv}), tx);
+        }
+
+        // /annotate <path> <vaddr> <name>  — quick batch annotation shortcut
+        "annotate" | "batch_annotate" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let name  = parts.get(3).copied().unwrap_or("");
+            run_tool("batch_annotate", json!({"path": path, "vaddr": vaddr, "function_name": name}), tx);
         }
 
         // /python <script_file> [timeout]  — run a .py file directly
