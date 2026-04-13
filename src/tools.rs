@@ -1936,11 +1936,29 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
 
+    // ── Determine .text section bounds for filtering library code ────────────
+    let (text_vaddr, text_end) = obj.sections()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".text" || n == "__text" || n.ends_with(",__text")))
+        .map(|s| (s.address(), s.address() + s.size()))
+        .unwrap_or((0, u64::MAX));
+
     // Collect function addresses (symbol table or prologue scan)
     let project = Project::load_for(path);
     let mut fn_addrs: Vec<(u64, String)> = obj
         .symbols()
-        .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
+        .filter(|s| {
+            if s.kind() != object::SymbolKind::Text || s.address() == 0 || s.size() == 0 {
+                return false;
+            }
+            // Skip obvious libc/runtime symbols in statically-linked binaries
+            let name = s.name().unwrap_or("");
+            if name.starts_with("__") || name.starts_with("_dl_") || name.starts_with("_IO_")
+                || name.starts_with("_obstack") || name.starts_with("_nss_")
+            {
+                return false;
+            }
+            true
+        })
         .map(|s| {
             let addr = s.address();
             let name = project.get_name(addr)
@@ -1950,11 +1968,72 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         })
         .collect();
     fn_addrs.sort_by_key(|(a, _)| *a);
+
+    // If the symbol table has many entries, restrict to the .text section
+    // to avoid OOM-decompiling hundreds of statically-linked library functions.
+    if fn_addrs.len() > 50 && text_vaddr != 0 {
+        fn_addrs.retain(|(a, _)| *a >= text_vaddr && *a < text_end);
+    }
     fn_addrs.truncate(max_fns);
+
+    // ── Prologue scan fallback (stripped binaries) ────────────────────────────
+    if fn_addrs.is_empty() {
+        let text_sec_opt = obj.sections().find(|s| {
+            s.name().ok().map_or(false, |n| n == ".text" || n == "__text" || n.ends_with(",__text"))
+        });
+        if let Some(ts) = text_sec_opt {
+            if let Ok(text_bytes) = ts.data() {
+                let text_bytes = text_bytes.to_vec();
+                let arch = obj.architecture();
+                let is_64 = obj.is_64();
+                let len = text_bytes.len();
+                let mut found: Vec<u64> = Vec::new();
+                let mut i = 0usize;
+                while i + 4 <= len {
+                    let b = &text_bytes[i..];
+                    let hit = match arch {
+                        Architecture::Aarch64 | Architecture::Aarch64_Ilp32 => {
+                            (b[0] == 0xfd && b[1] == 0x7b)
+                                || (b[0] == 0x7f && b[1] == 0x23 && b[2] == 0x03 && b[3] == 0xd5)
+                        }
+                        Architecture::Arm => {
+                            (b[0] == 0x00 && b[1] == 0x48 && b[2] == 0x2d && b[3] == 0xe9)
+                                || (b[0] == 0x10 && b[1] == 0x40 && b[2] == 0x2d && b[3] == 0xe9)
+                        }
+                        _ if is_64 => {
+                            (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
+                                || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
+                        }
+                        _ => b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5,
+                    };
+                    if hit {
+                        found.push(text_vaddr + i as u64);
+                    }
+                    i += if matches!(
+                        arch,
+                        Architecture::Aarch64
+                            | Architecture::Aarch64_Ilp32
+                            | Architecture::Arm
+                    ) {
+                        4
+                    } else {
+                        1
+                    };
+                }
+                found.truncate(max_fns);
+                for addr in found {
+                    let name = project.get_name(addr)
+                        .unwrap_or_else(|| format!("FUN_{:x}", addr));
+                    fn_addrs.push((addr, name));
+                }
+            }
+        }
+    }
 
     if fn_addrs.is_empty() {
         return ToolResult::ok(
-            "No functions found to scan. Run list_functions first to enumerate functions."
+            "No functions found to scan (no symbols and no recognised prologues in .text). \
+             Try running list_functions first."
         );
     }
 
@@ -1986,7 +2065,7 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         out.push_str(&format!("\n── Function: {}  (0x{:x}) ──\n", name, vaddr));
 
         // Quick static check: scan disassembly for calls to dangerous functions
-        let dis = crate::decompiler::decompile_function(path, *vaddr);
+        let dis = decompile_safe(path, *vaddr);
         let lower = dis.to_ascii_lowercase();
         let hits: Vec<&&str> = DANGEROUS.iter().filter(|&&d| lower.contains(d)).collect();
         if !hits.is_empty() {
@@ -2023,7 +2102,7 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
     if path.is_empty() { return ToolResult::err("'path' is required"); }
     if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
 
-    let pseudo_c = crate::decompiler::decompile_function(path, vaddr);
+    let pseudo_c = decompile_safe(path, vaddr);
     let project  = Project::load_for(path);
     let fn_name  = project.get_name(vaddr)
         .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
@@ -2328,7 +2407,7 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
         let name = project.get_name(*vaddr)
             .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
         out.push_str(&format!("\n── {} (0x{:x}) ──\n", name, vaddr));
-        let decomp = crate::decompiler::decompile_function(path, *vaddr);
+        let decomp = decompile_safe(path, *vaddr);
         out.push_str(&decomp);
         out.push('\n');
     }
@@ -3580,6 +3659,21 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
+// ─── Decompile helper: runs on a large stack to prevent stack overflow ────────
+
+/// Calls `decompile_function` on a dedicated thread with a 64 MiB stack.
+/// The decompiler recurses deeply over complex CFGs; the default 8 MiB thread
+/// stack overflows on stripped binaries like 3x17.
+fn decompile_safe(path: &str, vaddr: u64) -> String {
+    let path = path.to_string();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || crate::decompiler::decompile_function(&path, vaddr))
+        .ok()
+        .and_then(|h| h.join().ok())
+        .unwrap_or_else(|| format!("[decompile failed at 0x{:x}]", vaddr))
+}
+
 // ─── Tool: decompile ─────────────────────────────────────────────────────────
 
 fn decompile(path: &str, vaddr: u64) -> ToolResult {
@@ -3592,7 +3686,7 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
              (e.g. from list_functions or file_info entry point)"
         );
     }
-    let result = crate::decompiler::decompile_function(path, vaddr);
+    let result = decompile_safe(path, vaddr);
     if result.starts_with("Decompiler error:") {
         return ToolResult::err(result);
     }

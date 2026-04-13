@@ -73,10 +73,6 @@ impl ProgramTreeStructure {
             block_ownership_table: lookup_table,
         };
 
-        let mut s = Vec::new();
-        pts.pretty_print_self(&mut s).unwrap();
-        println!("PTS:\n{}", String::from_utf8(s).unwrap());
-
         pts
     }
 

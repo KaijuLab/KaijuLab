@@ -499,12 +499,7 @@ impl CpuState {
 
     pub fn set_state<E: Into<Expression>>(&mut self, var_node: VarNode, expression: E) {
         let expression = expression.into();
-        if expression.len() >= super::expression::SMALLVEC_SIZE {
-            println!(
-                "Heads up, expression {expression} has {} elements",
-                expression.len()
-            )
-        }
+        // Large expressions are silently allowed; no diagnostic needed.
         let space = self.state.entry(var_node.id).or_default();
         space.insert(var_node, expression);
     }

@@ -123,7 +123,7 @@ impl AbstractSyntaxTree {
                     };
                     scope.add(section, key, value);
                 } else {
-                    println!("Can't map call from {call_from} to an SESE");
+                    // Ignore unmappable calls (e.g. tail calls into unseen blocks).
                 }
             }
         }
