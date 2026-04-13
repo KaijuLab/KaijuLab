@@ -1,73 +1,29 @@
 # KaijuLab
 
-**LLM-native Reverse Engineering Lab**
+> **AI-Powered Reverse Engineering Lab**
 
-KaijuLab is a terminal-based reverse-engineering environment where an LLM acts as the analyst, not merely a chatbot sidebar. It exposes a rich set of binary-analysis primitives — disassembly, decompilation, cross-references, call graphs, YARA generation, vulnerability scoring, and more — and lets the model drive the investigation autonomously: forming hypotheses, calling tools, interpreting results, and reporting findings in plain language. A no-LLM manual mode lets you use every tool directly without any API keys.
+<p align="center">
+  <a href="https://github.com/Koukyosyumei/" target="_blank">
+      <img src="https://github.com/KaijuLab/KaijuLab.github.io/blob/main/static/images/logo.png" alt="h5i Logo" height="126">
+  </a>
+</p>
 
-```
- KaijuLab v0.1.0  ·  gemini-2.5-flash  ·  x86_64 · 0x00401a50 · 1234 tok
- [1] Functions  [2] Disasm  [3] Decompile  [4] Strings  [5] Imports  [6] Chat  [7] Context
-┌───────────────────────────────────────────────────────────────────────────────┐
-│  0x00401a50  f3 0f 1e fa              endbr64                                 │
-│  0x00401a54  31 ed                    xor       ebp, ebp                      │
-│  0x00401a56  49 89 d1                 mov       r9, rdx                       │
-│  0x00401a59  5e                       pop       rsi                           │
-│  …                                                                            │
-└───────────────────────────────────────────────────────────────────────────────┘
- ● Ready                                          Tab:next  1-7:tab  ↑↓:scroll
- > _
-```
-
-## How it works
-
-```
-User prompt
-    │
-    ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  Agent loop (src/agent.rs)                                       │
-│                                                                  │
-│  1. Append user message to conversation history                  │
-│  2. POST history + tool schemas → LLM backend (streaming)       │
-│  3. If response contains tool call(s):                          │
-│       execute each tool locally (with LRU cache)                │
-│       append tool results to history                             │
-│       goto 2                                                     │
-│  4. Emit final text response; save session to disk              │
-└──────────────────────────────────────────────────────────────────┘
-         │                         ▲
-         │  tool call              │  result string
-         ▼                         │
-┌──────────────────────────────────────────────────────────────────┐
-│  Tool dispatcher (src/tools.rs)                                  │
-│  file_info · disassemble · decompile · list_functions           │
-│  xrefs_to · callgraph · cfg · strings_extract · hexdump         │
-│  generate_yara_rule · patch_bytes · vuln_scan · …               │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-LLM responses stream to the Chat tab in real time. Tool results auto-populate the matching panel tab (Functions, Disasm, Decompile, Strings, or Imports). Session history is persisted to `~/.kaiju/sessions/` so context survives between runs.
+KaijuLab is a terminal-based reverse-engineering environment where an AI agent acts as the analyst, using tools like disassembly, decompilation, cross-references, call graphs, YARA generation, and vulnerability scoring to autonomously investigate binaries and report findings in natural language.
 
 ## Prerequisites
 
 - Rust toolchain (stable, 1.75+)
-- Credentials for at least one supported LLM backend — **or none** (no-LLM manual mode works without any API key)
+- Credentials for at least one supported LLM backend　**or none** (no-LLM manual mode works without any API key)
 
 ## Setup
 
-### 1. Clone
+### 1. Install
 
 ```bash
-git clone https://github.com/Koukyosyumei/KaijuLab
-cd KaijuLab
+cargo install --git https://github.com/KaijuLab/KaijuLab kaijulab
 ```
 
 ### 2. Choose a backend and set credentials
-
-**No LLM** (default — full manual tool access, no key needed):
-```bash
-cargo run --release                       # opens TUI in manual mode
-```
 
 **Gemini** — Vertex AI service account:
 ```bash
@@ -75,7 +31,7 @@ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json   # never commit this
 export GOOGLE_PROJECT_ID=my-gcp-project
 # optional: GOOGLE_LOCATION (default: us-central1)
 # optional: KAIJULAB_MODEL  (default: gemini-2.5-flash)
-cargo run --release -- --backend gemini
+kaijulab -- --backend gemini
 ```
 
 **OpenAI**:
@@ -83,14 +39,14 @@ cargo run --release -- --backend gemini
 export OPENAI_API_KEY=sk-...
 # optional: OPENAI_BASE_URL (default: https://api.openai.com/v1)
 # optional: KAIJULAB_MODEL  (default: gpt-4o)
-cargo run --release -- --backend openai
+kaijulab -- --backend openai
 ```
 
 **Anthropic**:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 # optional: KAIJULAB_MODEL (default: claude-opus-4-5)
-cargo run --release -- --backend anthropic
+kaijulab -- --backend anthropic
 ```
 
 **Ollama** (local, no key needed):
@@ -98,45 +54,20 @@ cargo run --release -- --backend anthropic
 # optional: OLLAMA_BASE_URL (default: http://localhost:11434/v1)
 # optional: KAIJULAB_MODEL  (default: llama3.2)
 ollama serve   # in another terminal
-cargo run --release -- --backend ollama --model llama3.2
+kaijulab -- --backend ollama --model llama3.2
 ```
-
-### 3. Build
-
-```bash
-cargo build --release
-```
-
-Always use `--release`. `iced-x86` (the disassembler/normaliser) is substantially slower in debug mode.
 
 ## Usage
 
 ### Interactive TUI (default)
 
 ```bash
-cargo run --release                                         # no LLM (manual mode)
-cargo run --release -- --backend gemini                    # Gemini via Vertex AI
-cargo run --release -- --backend openai                    # OpenAI
-cargo run --release -- --backend anthropic                 # Anthropic Claude
-cargo run --release -- --backend ollama --model llama3.2   # local Ollama
+kaijulab                                        # no LLM (manual mode)
+kaijulab -- --backend gemini                    # Gemini via Vertex AI
+kaijulab -- --backend openai                    # OpenAI
+kaijulab -- --backend anthropic                 # Anthropic Claude
+kaijulab -- --backend ollama --model llama3.2   # local Ollama
 ```
-
-KaijuLab opens a full-screen terminal UI with seven tabs:
-
-```
- KaijuLab v0.1.0  ·  gemini-2.5-flash  ·  x86_64 · 0x00401a50 · 1234 tok
- [1] Functions  [2] Disasm  [3] Decompile  [4] Strings  [5] Imports  [6] Chat  [7] Context
-┌───────────────────────────────────────────────────────────────────────────────┐
-│  (scrollable content of active tab)                                           │
-│                                                                               │
-│  Disasm:  address=yellow  bytes=gray  mnemonic=cyan                           │
-│           registers=green  immediates=magenta  labels=bold-white              │
-└───────────────────────────────────────────────────────────────────────────────┘
- ● Ready                                          Tab:next  1-7:tab  ↑↓:scroll
- > _
-```
-
-Tool results auto-populate their tab: `list_functions` → **Functions**, `disassemble` → **Disasm**, `decompile` → **Decompile**, `strings_extract` → **Strings**, `resolve_plt`/`resolve_pe_imports` → **Imports**. A `●` dot on the tab label indicates new unseen content.
 
 ### Key bindings
 
@@ -168,9 +99,9 @@ Tool results auto-populate their tab: `list_functions` → **Functions**, `disas
 Pass a binary as a positional argument. KaijuLab analyses it and exits:
 
 ```bash
-cargo run --release -- /path/to/binary
-cargo run --release -- --backend openai /path/to/binary
-cargo run --release -- --backend gemini /path/to/binary --output-json   # structured JSON to stdout
+kaijulab -- /path/to/binary
+kaijulab -- --backend openai /path/to/binary
+kaijulab -- --backend gemini /path/to/binary --output-json   # structured JSON to stdout
 ```
 
 ### Script / batch mode
@@ -178,7 +109,7 @@ cargo run --release -- --backend gemini /path/to/binary --output-json   # struct
 Run a file of tool commands (one per line, `#` comments and blank lines ignored) and exit:
 
 ```bash
-cargo run --release -- --script analysis.txt
+kaijulab -- --script analysis.txt
 ```
 
 ```
@@ -194,7 +125,7 @@ entropy /path/to/binary
 Implies `--no-tui --output-json`. Useful in CI or automated pipelines:
 
 ```bash
-cargo run --release -- --headless --backend gemini /path/to/binary
+kaijulab -- --headless --backend gemini /path/to/binary
 ```
 
 ### Plain-text REPL (`--no-tui`)
@@ -202,7 +133,7 @@ cargo run --release -- --headless --backend gemini /path/to/binary
 For piping output or minimal environments:
 
 ```bash
-cargo run --release -- --no-tui
+kaijulab -- --no-tui
 ```
 
 ### Session persistence
@@ -210,7 +141,7 @@ cargo run --release -- --no-tui
 By default, conversation history is saved to `~/.kaiju/sessions/` keyed by binary path. On restart with the same binary, the previous session is restored automatically. Use `--no-session` to opt out:
 
 ```bash
-cargo run --release -- --no-session /path/to/binary
+kaijulab -- --no-session /path/to/binary
 ```
 
 ### CLI flags reference
@@ -292,58 +223,6 @@ cargo run --release -- --no-session /path/to/binary
 | `list_annotations` | Show all saved names and comments for a binary |
 | `list_types` | Show saved struct and function-signature definitions |
 
-## Project layout
-
-```
-src/
-├── main.rs           CLI entry point (clap), mode dispatch, backend factory,
-│                     manual tool dispatcher, script/headless runner
-├── config.rs         BackendKind / BackendConfig — env vars → CLI flags → defaults
-├── agent.rs          Agentic loop — streaming LLM calls; emits AgentEvent for TUI;
-│                     LRU tool-result cache; conversation history trimming;
-│                     session save / load (~/.kaiju/sessions/)
-├── tools.rs          All RE tool implementations + ToolDefinition list
-├── tui.rs            ratatui TUI — 7-tab layout, async event loop,
-│                     disasm syntax highlighting, split-pane, xref popup,
-│                     clipboard copy, incremental search, command palette
-├── ui.rs             Plain-text helpers for one-shot / --no-tui mode
-├── hashdb.rs         Cross-binary function hash DB (SQLite at ~/.kaiju/fn_hashes.db);
-│                     normalised FNV-1a hash — zeroes CALL/JMP rel32 and RIP-relative
-│                     offsets so hashes are relocate-invariant
-├── project.rs        Persistent project store — function names, comments, types
-├── decompiler/       p-code lifter (ported from icicle-emu / Ouroboros)
-├── dwarf.rs          DWARF debug-info parsing (gimli)
-└── llm/
-    ├── mod.rs        LlmBackend trait + universal types
-    │                 (LlmMessage, MessageContent, ToolCall, ToolResult)
-    ├── gemini.rs     Gemini / Vertex AI — JWT auth, uppercase schema, streaming
-    ├── openai.rs     OpenAI + Ollama — OpenAI-compatible /chat/completions
-    └── anthropic.rs  Anthropic Claude — x-api-key, tool_use content blocks
-```
-
-## Key dependencies
-
-| Crate | Purpose |
-|---|---|
-| `tokio` | Async runtime |
-| `reqwest` | Async HTTP (rustls, no OpenSSL dep) |
-| `ratatui` + `crossterm` | Full-screen terminal UI |
-| `clap` | CLI argument parsing |
-| `serde` + `serde_json` | Serialisation |
-| `object` | ELF / PE / Mach-O parser |
-| `goblin` | ELF dynamic symbol + relocation parsing |
-| `iced-x86` | x86 / x86-64 disassembler and instruction decoder |
-| `capstone` | Multi-architecture disassembler (ARM64, ARM, MIPS, …) |
-| `gimli` | DWARF debug-information parsing |
-| `pdb` | Windows PDB symbol loading |
-| `petgraph` | Call graph and CFG data structures |
-| `rusqlite` | SQLite (bundled) — function hash DB and project store |
-| `arboard` | System clipboard (copy panel content with `y`) |
-| `jsonwebtoken` | RS256 JWT signing for Gemini service-account auth |
-| `indicatif` | Spinner in plain-text mode |
-| `colored` | ANSI colour output |
-| `anyhow` | Error handling |
-
 ## Environment variables
 
 | Variable | Backend | Purpose | Default |
@@ -357,16 +236,6 @@ src/
 | `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
 | `KAIJULAB_MODEL` | All | Model ID override | backend-specific |
 | `VIRUSTOTAL_API_KEY` | — | VirusTotal hash lookup | — (optional) |
-
-All of the above can also be supplied with the corresponding CLI flags (see `--help`).
-
-## Security notes
-
-- No credentials of any kind are stored in source code or tracked config files.
-- All secrets are read from environment variables or CLI flags at runtime only.
-- Gemini OAuth2 access tokens are cached in-process and never written to disk.
-- `CRED/` and `*.json` are in `.gitignore` to prevent accidental commits of key files.
-- `patch_bytes` always writes to `<file>.patched`; the original binary is never modified.
 
 ## License
 
