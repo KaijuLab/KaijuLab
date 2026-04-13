@@ -1507,12 +1507,12 @@ impl App {
                 None
             }
 
-            // ↑↓ — panel cursor when input empty; command history when input non-empty
-            KeyCode::Up if self.input.is_empty() && key.modifiers.is_empty() => {
+            // ↑↓ — panel cursor when input empty and no history; command history otherwise
+            KeyCode::Up if self.input.is_empty() && self.input_history.is_empty() && key.modifiers.is_empty() => {
                 self.move_panel_cursor(-1);
                 None
             }
-            KeyCode::Down if self.input.is_empty() && key.modifiers.is_empty() => {
+            KeyCode::Down if self.input.is_empty() && self.history_cursor.is_none() && key.modifiers.is_empty() => {
                 self.move_panel_cursor(1);
                 None
             }
