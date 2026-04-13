@@ -2360,13 +2360,18 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
     out.push_str(&info.output);
     out.push_str("\n\n");
 
-    // 2. Function list
-    let fns = list_functions(path, top_n, true);
-    out.push_str(&format!("═══ FUNCTIONS (top {}) ═══\n", top_n));
+    // 2. Function list (small cap to avoid OOM on statically-linked binaries)
+    let fn_list_cap = top_n.max(10);
+    let fns = list_functions(path, fn_list_cap, true);
+    out.push_str(&format!("═══ FUNCTIONS (top {}) ═══\n", fn_list_cap));
 
-    // Parse JSON to get vaddrs
-    let fn_addrs: Vec<u64> = serde_json::from_str::<serde_json::Value>(&fns.output)
-        .ok()
+    // Parse JSON to get vaddrs and total function count
+    let fn_json: Option<serde_json::Value> = serde_json::from_str(&fns.output).ok();
+    let total_fns = fn_json.as_ref()
+        .and_then(|v| v["total"].as_u64())
+        .unwrap_or(0) as usize;
+    let fn_addrs: Vec<u64> = fn_json
+        .as_ref()
         .and_then(|v| v["functions"].as_array().cloned())
         .unwrap_or_default()
         .iter()
@@ -2375,18 +2380,32 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
 
     if fn_addrs.is_empty() {
         // Fallback: plain listing
-        let plain = list_functions(path, top_n, false);
+        let plain = list_functions(path, fn_list_cap, false);
         out.push_str(&plain.output);
     } else {
         out.push_str(&fns.output);
     }
+    if total_fns > 50 {
+        out.push_str(&format!(
+            "\n[Note: binary has {} total functions (likely statically linked). \
+             Only top {} shown. Use list_functions with a higher max if needed.]\n",
+            total_fns, fn_list_cap
+        ));
+    }
     out.push_str("\n\n");
 
-    // 3. Call graph
-    let cg = call_graph(path, 1);
-    out.push_str("═══ CALL GRAPH ═══\n");
-    out.push_str(&cg.output);
-    out.push_str("\n\n");
+    // 3. Call graph — skip for large binaries to avoid OOM
+    if total_fns <= 200 {
+        let cg = call_graph(path, 1);
+        out.push_str("═══ CALL GRAPH ═══\n");
+        out.push_str(&cg.output);
+        out.push_str("\n\n");
+    } else {
+        out.push_str(&format!(
+            "═══ CALL GRAPH ═══\n[Skipped: {} functions — call_graph on its own for specific targets]\n\n",
+            total_fns
+        ));
+    }
 
     // 4. Strings (high-value section)
     let strs = strings_extract(path, 5, 30, Some(".rodata"));
@@ -2394,22 +2413,29 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
     out.push_str(&strs.output);
     out.push_str("\n\n");
 
-    // 5. Decompile top functions
+    // 5. Decompile top functions — skip for large binaries to avoid OOM
     out.push_str("═══ DECOMPILED FUNCTIONS ═══\n");
-    let addrs_to_decompile: Vec<u64> = if fn_addrs.is_empty() {
-        Vec::new()
+    if total_fns > 100 {
+        out.push_str(&format!(
+            "[Skipped: {} functions detected (likely statically linked). \
+             Call decompile(path, vaddr) on specific functions of interest.]\n",
+            total_fns
+        ));
     } else {
-        fn_addrs.into_iter().take(top_n).collect()
-    };
-
-    for vaddr in &addrs_to_decompile {
-        let project = Project::load_for(path);
-        let name = project.get_name(*vaddr)
-            .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
-        out.push_str(&format!("\n── {} (0x{:x}) ──\n", name, vaddr));
-        let decomp = decompile_safe(path, *vaddr);
-        out.push_str(&decomp);
-        out.push('\n');
+        let addrs_to_decompile: Vec<u64> = if fn_addrs.is_empty() {
+            Vec::new()
+        } else {
+            fn_addrs.into_iter().take(top_n).collect()
+        };
+        for vaddr in &addrs_to_decompile {
+            let project = Project::load_for(path);
+            let name = project.get_name(*vaddr)
+                .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
+            out.push_str(&format!("\n── {} (0x{:x}) ──\n", name, vaddr));
+            let decomp = decompile_safe(path, *vaddr);
+            out.push_str(&decomp);
+            out.push('\n');
+        }
     }
 
     out.push_str("\n\n═══ NEXT STEPS ═══\n");
