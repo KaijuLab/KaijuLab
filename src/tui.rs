@@ -2160,7 +2160,7 @@ fn render_panel_split(f: &mut Frame, area: Rect, app: &App, tab: Tab, focused: b
     let border_color = if focused { Color::Cyan } else { Color::DarkGray };
     let tab_name = TAB_NAMES[tab as usize];
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::BOTTOM)
         .title(Span::styled(
             format!(" {} ", tab_name),
             Style::new().fg(if focused { Color::Cyan } else { Color::DarkGray }).bold(),
@@ -2420,7 +2420,7 @@ fn welcome_lines() -> Vec<Line<'static>> {
 
 fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::BOTTOM)
         .title(Span::styled(" Chat ", Style::new().fg(Color::Cyan).bold()))
         .border_style(Style::new().fg(Color::DarkGray));
 
@@ -2594,7 +2594,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
 fn render_panel(f: &mut Frame, area: Rect, app: &App, tab: Tab) {
     let tab_name = TAB_NAMES[tab as usize];
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::BOTTOM)
         .title(Span::styled(
             format!(" {} ", tab_name),
             Style::new().fg(Color::Cyan).bold(),
@@ -3265,7 +3265,7 @@ fn render_input(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_context(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::BOTTOM)
         .title(Span::styled(
             " Context ",
             Style::new().fg(Color::Cyan).bold(),
@@ -3372,7 +3372,7 @@ fn render_context(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_notes(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::BOTTOM)
         .title(Span::styled(
             " Notes  (a=add · d=delete · j/k=navigate) ",
             Style::new().fg(Color::Magenta).bold(),
