@@ -2269,14 +2269,13 @@ fn welcome_lines() -> Vec<Line<'static>> {
 
     let lines: Vec<Line<'static>> = vec![
         blank(),
-        lo(vec![("       ██   ██                 ", mgb)]),
-        lo(vec![("    ███████████                ", mgb)]),
-        lo(vec![("████ ", mgb), ("▀", yeb), ("   ", mgb), ("▀", yeb), (" ███████           ", mgb)]),
-        lo(vec![("████   ", mgb), ("▄", yeb), ("   ███████████          ", mgb)]),
-        lo(vec![("██████████████████████         ", mgb)]),
-        lo(vec![("   ███████████████████         ", mgb)]),
-        lo(vec![("       █████████████           ", mgb)]),
-        lo(vec![("           ██████              ", mgb)]),
+        lo(vec![(" ██████    ██████            ", mgb)]),
+        lo(vec![(" ██████   █████              ", mgb)]),
+        lo(vec![(" ██████  █████               ", mgb)]),
+        lo(vec![(" ████████████                ", mgb)]),
+        lo(vec![(" ██████  █████               ", mgb)]),
+        lo(vec![(" ██████   █████              ", mgb)]),
+        lo(vec![(" ██████    ██████            ", mgb)]),
         blank(),
         // Title
         Line::from(vec![
