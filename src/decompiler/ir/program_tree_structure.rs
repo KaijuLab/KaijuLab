@@ -113,62 +113,80 @@ impl ProgramTreeStructure {
     }
 }
 
-fn compute_sese_address_ranges(
+fn assign_path_to_sese(
     block_ownership_table: &mut HashMap<BlockSlot, SingleEntrySingleExit<BlockSlot>>,
     ctx: PTSContext,
     start: BlockSlot,
     root: SingleEntrySingleExit<BlockSlot>,
-) {
-    fn assign_path_to_sese(
-        block_ownership_table: &mut HashMap<BlockSlot, SingleEntrySingleExit<BlockSlot>>,
-        ctx: PTSContext,
-        start: BlockSlot,
-        root: SingleEntrySingleExit<BlockSlot>,
-    ) -> BlockSlot {
-        if start == root.1 {
-            return start;
-        }
-        block_ownership_table.insert(start, root);
-        let mut last_block = start;
-        for node in ctx.blocks.iter_path(start) {
-            if node == root.1 {
-                break;
-            }
-            block_ownership_table.insert(node, root);
-            last_block = node;
-        }
-        last_block
+) -> BlockSlot {
+    if start == root.1 {
+        return start;
     }
+    block_ownership_table.insert(start, root);
+    let mut last_block = start;
+    for node in ctx.blocks.iter_path(start) {
+        if node == root.1 {
+            break;
+        }
+        block_ownership_table.insert(node, root);
+        last_block = node;
+    }
+    last_block
+}
 
-    let mut branch_block = assign_path_to_sese(block_ownership_table, ctx, start, root);
+/// Iterative replacement for the formerly-recursive `compute_sese_address_ranges`.
+///
+/// The old version was a tree walk whose depth equalled the CFG nesting depth.
+/// On large AArch64 PE binaries that can exceed the OS thread stack, causing an
+/// unrecoverable `abort()`.  Using an explicit work-stack is semantically
+/// identical: the two recursive sub-calls for the true/false branches are pushed
+/// and processed later, and every block on each linear path is still marked with
+/// its enclosing SESE root before we look for the next child.
+fn compute_sese_address_ranges(
+    block_ownership_table: &mut HashMap<BlockSlot, SingleEntrySingleExit<BlockSlot>>,
+    ctx: PTSContext,
+    initial_start: BlockSlot,
+    initial_root: SingleEntrySingleExit<BlockSlot>,
+) {
+    // Each item is (start, root) — identical to the old recursive parameters.
+    let mut work: Vec<(BlockSlot, SingleEntrySingleExit<BlockSlot>)> =
+        vec![(initial_start, initial_root)];
 
-    if let Some(children) = ctx.pts_tree.get(&root) {
-        while let Some(c_pts) = children.iter().find(|p| p.0 == branch_block) {
-            if let NextBlock::Jump {
-                true_branch,
-                false_branch,
-                ..
-            } = &ctx.blocks[branch_block].next
-            {
-                let true_branch_block = ctx
-                    .blocks
-                    .slot_by_destination(true_branch)
-                    .expect("TODO:Handle symbolic branches");
-                let false_branch_block = ctx
-                    .blocks
-                    .slot_by_destination(false_branch)
-                    .expect("TODO:Handle symbolic branches");
-                compute_sese_address_ranges(block_ownership_table, ctx, true_branch_block, *c_pts);
-                compute_sese_address_ranges(block_ownership_table, ctx, false_branch_block, *c_pts);
-            } else {
-                panic!("Unexpected start of a program segment")
-            }
+    while let Some((start, root)) = work.pop() {
+        let mut branch_block = assign_path_to_sese(block_ownership_table, ctx, start, root);
 
-            if c_pts.1 != ctx.cfg.single_end() {
-                branch_block = assign_path_to_sese(block_ownership_table, ctx, c_pts.1, root)
-            }
-            if c_pts.1 == root.1 {
-                break;
+        if let Some(children) = ctx.pts_tree.get(&root) {
+            while let Some(c_pts) = children.iter().find(|p| p.0 == branch_block) {
+                if let NextBlock::Jump {
+                    true_branch,
+                    false_branch,
+                    ..
+                } = &ctx.blocks[branch_block].next
+                {
+                    let true_branch_block = ctx
+                        .blocks
+                        .slot_by_destination(true_branch)
+                        .expect("TODO:Handle symbolic branches");
+                    let false_branch_block = ctx
+                        .blocks
+                        .slot_by_destination(false_branch)
+                        .expect("TODO:Handle symbolic branches");
+                    // Push sub-trees instead of recursing; order doesn't matter
+                    // because each sub-tree writes entries for its own root (c_pts),
+                    // which never conflicts with the current root's entries.
+                    work.push((true_branch_block, *c_pts));
+                    work.push((false_branch_block, *c_pts));
+                } else {
+                    panic!("Unexpected start of a program segment")
+                }
+
+                if c_pts.1 != ctx.cfg.single_end() {
+                    branch_block =
+                        assign_path_to_sese(block_ownership_table, ctx, c_pts.1, root);
+                }
+                if c_pts.1 == root.1 {
+                    break;
+                }
             }
         }
     }

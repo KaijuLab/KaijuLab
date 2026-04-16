@@ -389,6 +389,7 @@ Project (persistent across sessions):
 
 Scripting & execution:
   /elf             <path>                  ELF security mitigations + special sections
+  /pe              <path>                  PE mitigations, imports, .pdata count, TLS
   /xdata           <path> <vaddr>         Data xrefs — all reads/writes to an address
   /exec            <path> [args...] [< input]  Run a native binary, capture output
   /python          <script.py> [timeout]  Run a Python 3 file (LLM uses run_python tool)
@@ -658,6 +659,12 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         "elf" | "elf_info" | "elf_internals" => {
             let path = parts.get(1).copied().unwrap_or("");
             run_tool("elf_internals", json!({"path": path}), tx);
+        }
+
+        // /pe <path>  — PE internals (DLL characteristics, imports, .pdata count, TLS)
+        "pe" | "pe_info" | "pe_internals" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("pe_internals", json!({"path": path}), tx);
         }
 
         // /xdata <path> <vaddr>  — data cross-references to an address

@@ -318,6 +318,7 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
         ),
         "batch_annotate" => batch_annotate(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0), args),
         "elf_internals" => elf_internals(&str_arg(args, "path")),
+        "pe_internals"  => pe_internals(&str_arg(args, "path")),
         "xrefs_data" => xrefs_data(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
@@ -607,6 +608,153 @@ fn elf_internals(path: &str) -> ToolResult {
     // ── Interpreter ───────────────────────────────────────────────────────
     if let Some(interp) = &elf.interpreter {
         out.push_str(&format!("\nInterpreter : {}\n", interp));
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: pe_internals ──────────────────────────────────────────────────────
+
+fn pe_internals(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        Ok(_)  => return ToolResult::err("Not a PE binary — use elf_internals for ELF"),
+        Err(e) => return ToolResult::err(format!("Cannot parse PE: {}", e)),
+    };
+
+    let mut out = String::new();
+
+    // ── Header ────────────────────────────────────────────────────────────
+    let image_base = pe.image_base as u64;
+    let is_dll  = pe.header.coff_header.characteristics & 0x2000 != 0;
+    let is_64   = pe.is_64;
+    out.push_str(&format!("Type        : {} ({})\n",
+        if is_dll { "DLL" } else { "EXE" },
+        if is_64 { "PE32+" } else { "PE32" }
+    ));
+    out.push_str(&format!("Image base  : 0x{:016x}\n", image_base));
+
+    // ── DLL Characteristics (security mitigations) ────────────────────────
+    let dll_chars = pe.header.optional_header
+        .map(|oh| oh.windows_fields.dll_characteristics)
+        .unwrap_or(0);
+
+    const DYNBASE     : u16 = 0x0040; // ASLR
+    const FORCE_INTEG : u16 = 0x0080; // Force integrity / signed
+    const NX_COMPAT   : u16 = 0x0100; // DEP
+    const NO_ISOLATION: u16 = 0x0200;
+    const NO_SEH      : u16 = 0x0400;
+    const NO_BIND     : u16 = 0x0800;
+    const APPCONTAINER: u16 = 0x1000;
+    const WDM_DRIVER  : u16 = 0x2000;
+    const GUARD_CF    : u16 = 0x4000; // Control Flow Guard
+    const TERM_SRV    : u16 = 0x8000;
+    const HIGH_ENTROPY: u16 = 0x0020; // 64-bit ASLR
+
+    let flag = |f: u16| if dll_chars & f != 0 { "Yes" } else { "No" };
+    out.push_str("\nSecurity mitigations (DllCharacteristics):\n");
+    out.push_str(&format!("  ASLR (DYNAMIC_BASE)    : {}\n", flag(DYNBASE)));
+    out.push_str(&format!("  High-entropy ASLR      : {}\n", flag(HIGH_ENTROPY)));
+    out.push_str(&format!("  DEP/NX (NX_COMPAT)     : {}\n", flag(NX_COMPAT)));
+    out.push_str(&format!("  CFG (GUARD_CF)         : {}\n", flag(GUARD_CF)));
+    out.push_str(&format!("  Force integrity        : {}\n", flag(FORCE_INTEG)));
+    out.push_str(&format!("  No SEH                 : {}\n", flag(NO_SEH)));
+    out.push_str(&format!("  AppContainer           : {}\n", flag(APPCONTAINER)));
+    out.push_str(&format!("  Terminal server aware  : {}\n", flag(TERM_SRV)));
+    let _ = (NO_ISOLATION, NO_BIND, WDM_DRIVER); // suppress unused warnings
+
+    // ── Sections ──────────────────────────────────────────────────────────
+    out.push_str("\nSections:\n");
+    for sec in &pe.sections {
+        let name = sec.name().unwrap_or("?");
+        let vaddr = image_base + sec.virtual_address as u64;
+        let vsize = sec.virtual_size;
+        let chars = sec.characteristics;
+        let mut perms = String::new();
+        if chars & 0x20000000 != 0 { perms.push('X'); }
+        if chars & 0x40000000 != 0 { perms.push('R'); }
+        if chars & 0x80000000 != 0 { perms.push('W'); }
+        if perms.is_empty() { perms.push('-'); }
+        out.push_str(&format!(
+            "  {:<12} vaddr=0x{:016x}  vsize=0x{:08x}  [{}]\n",
+            name, vaddr, vsize, perms
+        ));
+    }
+
+    // ── Exception directory (.pdata) ──────────────────────────────────────
+    let pdata_count = pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+        .map(|s| s.size_of_raw_data as usize / 8)
+        .unwrap_or(0);
+    if pdata_count > 0 {
+        out.push_str(&format!("\nException directory (.pdata): {} function entries\n", pdata_count));
+    }
+
+    // ── TLS directory ─────────────────────────────────────────────────────
+    // Presence of .tls indicates use of Thread Local Storage (can execute code at startup)
+    let has_tls = pe.sections.iter().any(|s| s.name().ok().map_or(false, |n| n == ".tls"));
+    out.push_str(&format!("\nTLS (.tls section) : {}\n",
+        if has_tls { "Present — may contain TLS callbacks (code run before entry point)" }
+        else { "Not present" }
+    ));
+
+    // ── Imports summary ───────────────────────────────────────────────────
+    if !pe.imports.is_empty() {
+        let mut by_dll: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for imp in &pe.imports {
+            by_dll.entry(imp.dll.to_string()).or_default().push(imp.name.to_string());
+        }
+        out.push_str(&format!("\nImports ({} DLLs, {} symbols):\n",
+            by_dll.len(), pe.imports.len()));
+        for (dll, syms) in &by_dll {
+            let preview: Vec<&str> = syms.iter().map(|s| s.as_str()).take(5).collect();
+            let extra = if syms.len() > 5 { format!(" …+{}", syms.len()-5) } else { String::new() };
+            out.push_str(&format!("  {:<35} {}{}\n",
+                dll, preview.join(", "), extra));
+        }
+
+        // Flag high-interest imports
+        let interesting: Vec<String> = pe.imports.iter()
+            .map(|i| i.name.to_string())
+            .filter(|n| {
+                let l = n.to_ascii_lowercase();
+                l.contains("createremotethread") || l.contains("virtualalloc")
+                    || l.contains("writeprocessmemory") || l.contains("createprocess")
+                    || l.contains("loadlibrary") || l.contains("getprocaddress")
+                    || l.contains("namedpipe") || l.contains("winsock")
+                    || l.contains("wsastartup") || l.contains("connect")
+                    || l.contains("cryptencrypt") || l.contains("cryptdecrypt")
+                    || l.contains("regopen") || l.contains("regset")
+                    || l.contains("shellexecute") || l.contains("winexec")
+            })
+            .collect();
+        if !interesting.is_empty() {
+            out.push_str("\nHigh-interest imports:\n");
+            for name in &interesting {
+                out.push_str(&format!("  ⚠  {}\n", name));
+            }
+        }
+    }
+
+    // ── Exports ───────────────────────────────────────────────────────────
+    if !pe.exports.is_empty() {
+        out.push_str(&format!("\nExports ({}):\n", pe.exports.len()));
+        for exp in pe.exports.iter().take(20) {
+            let name = exp.name.unwrap_or("<ordinal>");
+            let va   = image_base + exp.rva as u64;
+            out.push_str(&format!("  0x{:016x}  {}\n", va, name));
+        }
+        if pe.exports.len() > 20 {
+            out.push_str(&format!("  … and {} more\n", pe.exports.len() - 20));
+        }
     }
 
     ToolResult::ok(out)
@@ -1181,7 +1329,104 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
         return ToolResult::ok(out);
     }
 
-    // ── Strategy 2: prologue scan (stripped binary) ─────────────────────────
+    // ── Strategy 2: PE .pdata (ARM64/x64 exception directory) ───────────────
+    // ARM64 and x64 PE files store a RUNTIME_FUNCTION entry for every function
+    // in the .pdata section.  Each entry is 8 bytes:
+    //   [0..4]  BeginAddress  — RVA of function start
+    //   [4..8]  UnwindData    — RVA of UNWIND_INFO, or packed unwind word
+    //
+    // ARM64 UNWIND_INFO first DWORD:
+    //   bits  0:17  FunctionLength (in 4-byte units)
+    //   bits 18:19  Version
+    //   bit  20     X (exception handler present)
+    //   bit  21     E (epilog in header)
+    //   bits 22:31  CodeWords
+    //
+    // Packed unwind (flag bits 0-1 ≠ 0):
+    //   bits  2:12  FunctionLength (in 4-byte units)
+    if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
+        // Find .pdata section by name
+        let pdata_bytes: Option<Vec<u8>> = pe.sections.iter()
+            .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+            .and_then(|s| s.data(&data).ok().flatten())
+            .map(|b| b.to_vec());
+
+        if let Some(pdata) = pdata_bytes {
+            let image_base = pe.image_base as u64;
+
+            // Locate .rdata for resolving UNWIND_INFO pointers
+            let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+                .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
+                .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
+
+            let num_entries = pdata.len() / 8;
+            let project = Project::load_for(path);
+            let mut fns: Vec<(u64, u64, String)> = Vec::with_capacity(num_entries);
+
+            for i in 0..num_entries {
+                let off = i * 8;
+                let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
+                let unwind_raw = u32::from_le_bytes(pdata[off+4..off+8].try_into().unwrap_or([0;4]));
+
+                if begin_rva == 0 { continue; }
+
+                let begin_va = image_base + begin_rva;
+                let flag = unwind_raw & 0x3;
+                let fn_size: u64 = if flag != 0 {
+                    // Packed: bits 2-12 = FunctionLength in 4-byte units
+                    ((unwind_raw >> 2) & 0x7FF) as u64 * 4
+                } else if let Some((rdata_va, rdata_file_off)) = rdata_range {
+                    // Pointer to UNWIND_INFO in .rdata
+                    let ui_rva = unwind_raw as u64;
+                    if ui_rva >= rdata_va {
+                        let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
+                        if ui_off + 4 <= data.len() {
+                            let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                            (ui_word & 0x3_FFFF) as u64 * 4
+                        } else { 0 }
+                    } else { 0 }
+                } else { 0 };
+
+                let name = project.get_name(begin_va)
+                    .unwrap_or_else(|| format!("FUN_{:016x}", begin_va));
+                fns.push((begin_va, fn_size, name));
+            }
+
+            // Deduplicate by VA (multiple entries can share a start for tail-call stubs)
+            fns.sort_by_key(|(va, _, _)| *va);
+            fns.dedup_by_key(|(va, _, _)| *va);
+            let total = fns.len();
+
+            if total > 0 {
+                if as_json {
+                    let arr: Vec<serde_json::Value> = fns.iter()
+                        .take(max_results)
+                        .map(|(addr, size, name)| json!({"address": addr, "size": size, "name": name}))
+                        .collect();
+                    let val = json!({
+                        "source": "pe_pdata",
+                        "total": total,
+                        "functions": arr
+                    });
+                    return ToolResult::ok(val.to_string());
+                }
+
+                let mut out = format!(
+                    "Functions from PE .pdata exception directory ({} total):\n\n  {:<20}  {:<8}  {}\n  {}\n",
+                    total, "Address", "Size", "Name", "─".repeat(55)
+                );
+                for (addr, size, name) in fns.iter().take(max_results) {
+                    out.push_str(&format!("  0x{:016x}  {:<8}  {}\n", addr, size, name));
+                }
+                if total > max_results {
+                    out.push_str(&format!("  … and {} more", total - max_results));
+                }
+                return ToolResult::ok(out);
+            }
+        }
+    }
+
+    // ── Strategy 3: prologue scan (stripped binary) ─────────────────────────
     // Mach-O uses "__text"; ELF uses ".text".  Accept both.
     let text_sec = obj.sections().find(|s| {
         s.name().ok().map_or(false, |n| {
@@ -2379,7 +2624,38 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
     }
     fn_addrs.truncate(max_fns);
 
-    // ── Prologue scan fallback (stripped binaries) ────────────────────────────
+    // ── PE .pdata fallback (stripped PE, no symbols) ─────────────────────────
+    if fn_addrs.is_empty() {
+        if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
+            let image_base = pe.image_base as u64;
+            let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+                .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
+                .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
+            if let Some(pdata_bytes) = pe.sections.iter()
+                .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+                .and_then(|s| s.data(&data).ok().flatten())
+            {
+                let num = pdata_bytes.len() / 8;
+                let mut pdata_fns: Vec<u64> = Vec::with_capacity(num);
+                for i in 0..num {
+                    let off = i * 8;
+                    let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().unwrap_or([0;4])) as u64;
+                    if begin_rva == 0 { continue; }
+                    pdata_fns.push(image_base + begin_rva);
+                }
+                pdata_fns.dedup();
+                pdata_fns.truncate(max_fns);
+                let _ = rdata_range; // used in list_functions path
+                for addr in pdata_fns {
+                    let name = project.get_name(addr)
+                        .unwrap_or_else(|| format!("FUN_{:016x}", addr));
+                    fn_addrs.push((addr, name));
+                }
+            }
+        }
+    }
+
+    // ── Prologue scan fallback (stripped ELF / Mach-O) ────────────────────────
     if fn_addrs.is_empty() {
         let text_sec_opt = obj.sections().find(|s| {
             s.name().ok().map_or(false, |n| n == ".text" || n == "__text" || n.ends_with(",__text"))
@@ -2464,20 +2740,45 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         path, fn_addrs.len(), "═".repeat(72)
     );
 
+    // Windows API danger patterns (function name substrings, case-insensitive)
+    const DANGEROUS_WIN: &[&str] = &[
+        "createremotethread", "virtualalloc", "writeprocessmemory", "readprocessmemory",
+        "createprocess", "shellexecute", "winexec", "loadlibrary", "getprocaddress",
+        "connectnamedpipe", "createnamedpipe", "wsastartup", "connect",
+        "regsetvalue", "regopenkey", "cryptencrypt", "cryptdecrypt",
+    ];
+
     for (vaddr, name) in &fn_addrs {
         out.push_str(&format!("\n── Function: {}  (0x{:x}) ──\n", name, vaddr));
 
-        // Quick static check: scan disassembly for calls to dangerous functions
-        let dis = decompile_safe(path, *vaddr);
-        let lower = dis.to_ascii_lowercase();
-        let hits: Vec<&&str> = DANGEROUS.iter().filter(|&&d| lower.contains(d)).collect();
-        if !hits.is_empty() {
-            out.push_str(&format!(
-                "  ⚠ Static flags: calls to [{}]\n",
-                hits.iter().map(|s| **s).collect::<Vec<_>>().join(", ")
-            ));
+        // Try decompilation first; fall back to disassembly if too complex
+        let body = decompile_safe(path, *vaddr);
+        let (analysis_text, source) = if body.starts_with("Decompiler error:") {
+            // Decompile failed — fall back to raw disassembly for pattern scanning.
+            // 512 instructions covers even large functions at reasonable output size.
+            let asm = disassemble(path, None, 512, Some(*vaddr)).output;
+            (asm, "disassembly (decompile too complex)")
+        } else {
+            (body, "decompiled pseudo-C")
+        };
+
+        let lower = analysis_text.to_ascii_lowercase();
+
+        // Scan for C-library dangerous functions
+        let c_hits: Vec<&&str> = DANGEROUS.iter().filter(|&&d| lower.contains(d)).collect();
+        // Scan for Windows API dangerous functions
+        let win_hits: Vec<&&str> = DANGEROUS_WIN.iter().filter(|&&d| lower.contains(d)).collect();
+
+        if !c_hits.is_empty() || !win_hits.is_empty() {
+            let all: Vec<&str> = c_hits.iter().map(|s| **s)
+                .chain(win_hits.iter().map(|s| **s))
+                .collect();
+            out.push_str(&format!("  ⚠ Static flags (from {}): [{}]\n",
+                source, all.join(", ")));
+        } else {
+            out.push_str(&format!("  [source: {}]\n", source));
         }
-        out.push_str(&dis);
+        out.push_str(&analysis_text);
         out.push_str("\n\n");
     }
 
@@ -4352,11 +4653,29 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                            canary, FORTIFY), special section addresses (.got, .got.plt, .plt, \
                            .init_array, .fini_array, .bss), the init/fini_array pointer tables \
                            with symbol names, and the linked libraries. Only works on ELF binaries \
-                           — for PE use file_info. Indispensable for pwn/exploitation analysis.".into(),
+                           — for PE use pe_internals. Indispensable for pwn/exploitation analysis.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Path to the ELF binary" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "pe_internals".into(),
+            description: "Display PE-specific security mitigations (ASLR, high-entropy ASLR, \
+                           DEP/NX, CFG, Force Integrity, No SEH, AppContainer), section layout \
+                           with permissions, exception directory (.pdata) function count, TLS \
+                           presence, imports grouped by DLL with high-interest API highlights \
+                           (CreateRemoteThread, VirtualAlloc, WriteProcessMemory, named pipes, \
+                           network, crypto, registry), and exports. Only works on PE binaries \
+                           — for ELF use elf_internals. Essential first step for Windows malware \
+                           triage and security auditing.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the PE binary" }
                 },
                 "required": ["path"]
             }),
@@ -4474,13 +4793,15 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
 
 // ─── Decompile helper: runs on a large stack to prevent stack overflow ────────
 
-/// Calls `decompile_function` on a dedicated thread with a 64 MiB stack.
-/// The decompiler recurses deeply over complex CFGs; the default 8 MiB thread
-/// stack overflows on stripped binaries like 3x17.
+/// Calls `decompile_function` on a dedicated thread with a 256 MiB stack.
+/// The decompiler's `build_block`/`add_program_segment` mutual recursion and
+/// `compute_sese_address_ranges` recursion can exceed 64 MiB on complex CFGs
+/// (e.g. large AArch64 PE binaries).  A hard complexity cap in `decompile_inner`
+/// kicks in before the AST walk when a function has > 400 basic blocks.
 fn decompile_safe(path: &str, vaddr: u64) -> String {
     let path = path.to_string();
     std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(256 * 1024 * 1024)
         .spawn(move || crate::decompiler::decompile_function(&path, vaddr))
         .ok()
         .and_then(|h| h.join().ok())

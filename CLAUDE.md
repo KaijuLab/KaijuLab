@@ -209,7 +209,7 @@ impl LlmBackend for MyBackend {
 | `read_section` | Hex dump of a named section |
 | `strings_extract` | Optional `section` param (e.g. `.rodata`) narrows scan |
 | `disassemble` | Accepts `vaddr` — auto-translates via LOAD segments; or raw `offset`; stops at `ret` |
-| `list_functions` | Symbol table if available; prologue scan for stripped binaries; optional `json:true` |
+| `list_functions` | Symbol table if available; PE `.pdata` exception directory for ARM64/x64 PE (exact function boundaries); prologue scan as final fallback; optional `json:true` |
 | `resolve_plt` | `.rela.plt` + `.dynsym` → stub address → symbol name (ELF) |
 | `resolve_pe_imports` | PE import table → DLL + function name per thunk |
 | `dwarf_info` | Function names/addresses/sizes from DWARF debug info |
@@ -271,11 +271,12 @@ is relocate-invariant (survives ASLR and recompilation).
 | `list_notes` | List all analyst notes for a binary |
 | `get_vuln_scores` | Read all previously set vulnerability scores for a binary |
 
-### ELF & execution
+### ELF & PE internals
 
 | Tool | Key behaviour |
 |---|---|
 | `elf_internals` | ELF-only: security mitigations (PIE, NX, RELRO, canary, FORTIFY), special section addresses (.got, .plt, .init_array, .fini_array), pointer dump of init/fini arrays with symbol names, linked libraries |
+| `pe_internals` | PE-only: DLL characteristics (ASLR, high-entropy ASLR, DEP/NX, CFG, Force Integrity, No SEH, AppContainer), section layout with permissions, `.pdata` exception-directory function count, TLS presence, imports grouped by DLL with high-interest API highlights (process injection, network, crypto, registry), exports |
 | `xrefs_data` | Data cross-references — every x86/x86-64 instruction that reads or writes a given virtual address (RIP-relative + absolute operands); complements `xrefs_to` which finds code-flow references |
 | `run_binary` | Execute a native binary, optionally with args and stdin, and capture stdout + stderr; process is killed after `timeout_secs` (max 30 s) |
 

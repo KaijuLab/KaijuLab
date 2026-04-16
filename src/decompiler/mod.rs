@@ -105,12 +105,28 @@ fn decompile_flat_inner(
     lift_function(addr, &mut memory)
         .map_err(|e| anyhow::anyhow!("Lift failed at 0x{:x}: {e}", vaddr))?;
 
+    let ir_block_count = memory.ir.len();
+    if ir_block_count > 500 {
+        return Err(anyhow::anyhow!(
+            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 500). \
+             Use `disassemble` for raw instruction listing instead."
+        ));
+    }
+
     let hf = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         HighFunction::from_mem(addr, &memory)
     }))
     .map_err(|e| anyhow::anyhow!("HighFunction panicked: {:?}", panic_msg(e)))?;
 
     hf.fill_global_symbols(&mut memory);
+
+    let block_count = hf.composed_blocks.len();
+    if block_count > 400 {
+        return Err(anyhow::anyhow!(
+            "Function too complex to decompile ({block_count} basic blocks > limit of 400). \
+             Use `disassemble` for raw instruction listing instead."
+        ));
+    }
 
     let ast = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hf.build_ast(&memory)))
         .map_err(|e| anyhow::anyhow!("AST build panicked: {:?}", panic_msg(e)))?;
@@ -233,6 +249,20 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     lift_function(addr, &mut memory)
         .map_err(|e| anyhow::anyhow!("Lift failed at 0x{:x}: {e}", vaddr))?;
 
+    // Early complexity guard: bail before entering any recursive pass.
+    // `ProgramTreeStructure::new` calls `compute_sese_address_ranges` recursively
+    // (proportional to CFG nesting depth), and `build_ast` recurses through
+    // `build_block`/`add_program_segment`.  Both can abort the process via
+    // stack overflow on large AArch64/PE functions.  500 IR blocks is a
+    // conservative upper bound; typical non-trivial functions stay below 200.
+    let ir_block_count = memory.ir.len();
+    if ir_block_count > 500 {
+        return Err(anyhow::anyhow!(
+            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 500). \
+             Use `disassemble` for raw instruction listing instead."
+        ));
+    }
+
     // Build HighFunction (CFG + symbolic analysis)
     let hf = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         HighFunction::from_mem(addr, &memory)
@@ -240,6 +270,18 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     .map_err(|e| anyhow::anyhow!("HighFunction panicked: {:?}", panic_msg(e)))?;
 
     hf.fill_global_symbols(&mut memory);
+
+    // Guard against runaway recursion in the AST builder.
+    // `build_block` and `add_program_segment` are mutually recursive; on a
+    // function with hundreds of nested branches they can exhaust any stack.
+    // 400 blocks is well above what the AST builder handles reliably.
+    let block_count = hf.composed_blocks.len();
+    if block_count > 400 {
+        return Err(anyhow::anyhow!(
+            "Function too complex to decompile ({block_count} basic blocks > limit of 400). \
+             Use `disassemble` for raw instruction listing instead."
+        ));
+    }
 
     // Build AST
     let ast = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hf.build_ast(&memory)))
