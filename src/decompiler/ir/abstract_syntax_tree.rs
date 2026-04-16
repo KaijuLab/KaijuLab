@@ -101,9 +101,10 @@ impl AbstractSyntaxTree {
 
         for call_result in &hf.used_call_results {
             if let VariableSymbol::CallResult { call_from, call_to } = call_result {
+                let Some(call_from_slot) = hf.composed_blocks.slot_by_address(*call_from) else { continue };
                 if let Some(section) = hf
                     .pts
-                    .get_section(hf.composed_blocks.slot_by_address(*call_from).unwrap())
+                    .get_section(call_from_slot)
                 {
                     let key = VariableSymbol::CallResult {
                         call_from: *call_from,
@@ -304,16 +305,13 @@ fn add_program_segment(
         false_branch,
     } = &branch_block.next
     {
-        let true_branch_slot = hf.composed_blocks.slot_by_destination(true_branch).unwrap();
-        let false_branch_slot = hf
-            .composed_blocks
-            .slot_by_destination(false_branch)
-            .unwrap();
+        let Some(true_branch_slot) = hf.composed_blocks.slot_by_destination(true_branch) else { return };
+        let Some(false_branch_slot) = hf.composed_blocks.slot_by_destination(false_branch) else { return };
 
         let _true_branch_distance_to_return =
-            *hf.cfg.distance_to_return.get(&true_branch_slot).unwrap();
+            hf.cfg.distance_to_return.get(&true_branch_slot).copied().unwrap_or(u32::MAX);
         let false_branch_distance_to_return =
-            *hf.cfg.distance_to_return.get(&false_branch_slot).unwrap();
+            hf.cfg.distance_to_return.get(&false_branch_slot).copied().unwrap_or(u32::MAX);
 
         // (true_branch_distance_to_return == 0 && *true_branch != pts.1) ||
         // (false_branch_distance_to_return == 0  && *false_branch != pts.1) ||
@@ -466,8 +464,14 @@ fn add_assignments<'a>(
     lang: &SleighLanguage,
     sese: SingleEntrySingleExit<BlockSlot>,
 ) -> BlockSlot {
-    if block_slot != sese.1 {
-        let block = &hf.composed_blocks[block_slot];
+    // Iterative version of what was tail-recursive to avoid stack overflow on
+    // long Follow-chains (e.g. large switch-dispatch functions).
+    let mut current = block_slot;
+    loop {
+        if current == sese.1 {
+            return current;
+        }
+        let block = &hf.composed_blocks[current];
         for addr in &block.memory_writes {
             if addr
                 .iter()
@@ -477,7 +481,7 @@ fn add_assignments<'a>(
             {
                 let mut destination = addr.clone();
                 destination.dereference();
-                let state = block.memory.get(addr).unwrap();
+                let Some(state) = block.memory.get(addr) else { continue };
                 stmts.push(AstStatement::Assignment {
                     sese,
                     destination,
@@ -493,26 +497,24 @@ fn add_assignments<'a>(
             } => {
                 add_call(stmts, block, hf, lang, destination, *origin, sese);
                 if let Some(next_block) = hf.composed_blocks.slot_by_address(*default_return) {
-                    add_assignments(stmts, next_block, hf, lang, sese)
+                    current = next_block;
                 } else {
-                    block_slot
+                    return current;
                 }
             }
             NextBlock::Return { .. } => {
                 add_return(stmts, block, hf, lang, sese);
-                hf.cfg.single_end()
+                return hf.cfg.single_end();
             }
-            NextBlock::Follow(dst) => add_assignments(
-                stmts,
-                hf.composed_blocks.slot_by_destination(dst).unwrap(),
-                hf,
-                lang,
-                sese,
-            ),
-            NextBlock::Jump { .. } => block_slot,
+            NextBlock::Follow(dst) => {
+                if let Some(next_slot) = hf.composed_blocks.slot_by_destination(dst) {
+                    current = next_slot;
+                } else {
+                    return current;
+                }
+            }
+            NextBlock::Jump { .. } => return current,
         }
-    } else {
-        block_slot
     }
 }
 

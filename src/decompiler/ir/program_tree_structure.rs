@@ -299,15 +299,11 @@ where
                 (false, false) => _ = stack.pop(),
 
                 (true, false) => {
-                    if !is_ancestor(sese.1, top.1, &pdom) && sese.0 != top.0 {
-                        todo!("Cross-over (irreducible) segment detected: {top:?} and {sese:?}");
-                    }
+                    // Cross-over / irreducible segment: pop and continue rather than panic
                     stack.pop();
                 }
                 (false, true) => {
-                    if is_ancestor(sese.0, top.0, &pdom) && sese.0 != top.0 {
-                        todo!("Cross-over (irreducible) segment detected: {top:?} and {sese:?}");
-                    }
+                    // Cross-over / irreducible segment: pop and continue rather than panic
                     stack.pop();
                 }
             }

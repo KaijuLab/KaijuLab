@@ -195,6 +195,23 @@ patterns) before spending tool budget on individual functions\
 \n5. `disassemble` / `decompile` on the small set of targets identified above\
 \n6. `scan_vulnerabilities` — limited to a small `max_fns` count
 
+## Decompile-failure protocol — MANDATORY
+
+When `decompile` returns an error (too complex, AST panic, irreducible CFG, or any other \
+error), follow this **ordered fallback chain** without stopping at step 1:
+
+1. **`disassemble(path, vaddr=<addr>)`** — for PE binaries this auto-sizes to the full \
+   function body from .pdata, giving you every instruction even for 20k-IR-block functions. \
+   Read the disassembly carefully: identify callers (`bl`/`call`), loops, and memory accesses.
+2. **`function_context(path, vaddr=<addr>)`** — get callers, callees, and annotations without \
+   running the decompiler.
+3. **`run_python` with capstone** (see Trigger 1 below) — scan the function bytes for \
+   dangerous call targets, crypto constants, and loop signatures.
+
+**Never say 'decompilation failed, further analysis requires dynamic tools' without first \
+completing all three steps above.** The function is often the most important one; skipping it \
+is not an option.
+
 ## run_python — when and how
 
 `run_python` executes a **complete, self-contained Python 3 script** in a subprocess. \
@@ -206,23 +223,31 @@ resubmit the entire corrected script — never give up after one failure.
 ### Trigger 1 — decompile fails (function too complex)
 
 The function is often the most important one in the binary. Do NOT skip it. \
-Use capstone to scan it for dangerous call targets, crypto constants, and loop structures.
+Use capstone to scan it for dangerous call targets, crypto constants, and loop structures. \
+**First use the `disassemble` tool** (it auto-sizes from .pdata for PE), then use this script \
+for deeper pattern scanning or if you need to filter thousands of instructions.
 
   import capstone, pefile, os, struct
   pe    = pefile.PE(os.environ['KAIJU_BINARY'])
   base  = pe.OPTIONAL_HEADER.ImageBase
-  # locate the function bytes
-  va_start = 0x140027EE0  # replace with actual vaddr
+  # detect arch: check PE machine type
+  machine = pe.FILE_HEADER.Machine  # 0xAA64=ARM64, 0x8664=x64
+  if machine == 0xAA64:
+      cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+  else:
+      cs = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+  cs.detail = True
+  # locate the function bytes; get size from .pdata if available
+  va_start = 0x140001000  # replace with actual vaddr
   rva      = va_start - base
   raw_off  = pe.get_offset_from_rva(rva)
+  fn_size  = 4096  # conservative default; override with .pdata size if known
   data     = open(os.environ['KAIJU_BINARY'], 'rb').read()
-  code     = data[raw_off : raw_off + 4096]
-  cs = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-  cs.detail = True
+  code     = data[raw_off : raw_off + fn_size]
   for insn in cs.disasm(code, va_start):
-      if insn.mnemonic in ('call', 'jmp'):
+      if insn.mnemonic in ('bl', 'blr', 'call', 'jmp'):
           print('0x%x  %-6s %s' % (insn.address, insn.mnemonic, insn.op_str))
-      if insn.mnemonic == 'ret':
+      if insn.mnemonic in ('ret', 'retn'):
           break
 
 ### Trigger 2 — large binary, goal is 'find all X'

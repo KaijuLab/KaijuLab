@@ -417,6 +417,53 @@ fn vaddr_to_file_offset(data: &[u8], vaddr: u64) -> Option<usize> {
     None
 }
 
+/// Look up a function's byte-size from the PE .pdata exception directory.
+/// Returns None if this is not a PE, .pdata is absent, or `va` has no entry.
+fn pe_pdata_fn_size(data: &[u8], va: u64) -> Option<usize> {
+    let pe = match goblin::Object::parse(data).ok()? {
+        goblin::Object::PE(p) => p,
+        _ => return None,
+    };
+    let image_base = pe.image_base as u64;
+
+    let pdata = pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))?;
+    let pdata_bytes = pdata.data(data).ok()??;
+
+    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
+        .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
+
+    let num_entries = pdata_bytes.len() / 8;
+    let target_rva = (va.saturating_sub(image_base)) as u32;
+
+    for i in 0..num_entries {
+        let off = i * 8;
+        let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().ok()?);
+        if begin_rva != target_rva { continue; }
+
+        let unwind_raw = u32::from_le_bytes(pdata_bytes[off+4..off+8].try_into().ok()?);
+        let flag = unwind_raw & 0x3;
+        let fn_size: u64 = if flag != 0 {
+            ((unwind_raw >> 2) & 0x7FF) as u64 * 4
+        } else if let Some((rdata_va, rdata_file_off)) = rdata_range {
+            let ui_rva = unwind_raw as u64;
+            if ui_rva >= rdata_va {
+                let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
+                if ui_off + 4 <= data.len() {
+                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().ok()?);
+                    (ui_word & 0x3_FFFF) as u64 * 4
+                } else { 0 }
+            } else { 0 }
+        } else { 0 };
+
+        if fn_size > 0 {
+            return Some(fn_size as usize);
+        }
+    }
+    None
+}
+
 /// Translate a file offset back to a virtual address using the LOAD segment table.
 fn file_offset_to_vaddr(data: &[u8], offset: usize) -> Option<u64> {
     let obj = object::File::parse(data).ok()?;
@@ -1541,9 +1588,32 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
         Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) | Some(Architecture::I386) | None
     );
 
+    // Auto-size: when targeting a specific vaddr with no explicit raw offset,
+    // look up the function's byte-length from PE .pdata so the full function
+    // body is disassembled even with the default length=128.
+    let auto_length = if offset.is_none() {
+        if let Some(va) = vaddr_hint {
+            pe_pdata_fn_size(&data, va)
+                .map(|s| s.max(length))
+                .or_else(|| {
+                    // ELF / COFF: check the symbol table
+                    object::File::parse(&*data).ok().and_then(|obj| {
+                        obj.symbols()
+                            .find(|s| s.address() == va && s.size() > 0)
+                            .map(|s| (s.size() as usize).max(length))
+                    })
+                })
+                .unwrap_or(length)
+        } else {
+            length
+        }
+    } else {
+        length
+    };
+
     if !is_x86 {
         let proj = Project::load_for(path);
-        return disassemble_capstone_with_project(&data, obj_arch.unwrap(), offset, length, vaddr_hint, Some(&proj));
+        return disassemble_capstone_with_project(&data, obj_arch.unwrap(), offset, auto_length, vaddr_hint, Some(&proj));
     }
 
     let bitness: u32 = match obj_arch {
@@ -1574,21 +1644,7 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
         ));
     }
 
-    // If we have a vaddr and the binary has a symbol at that address, cap length to symbol size.
-    let effective_length = if let Some(va) = vaddr_hint {
-        if let Ok(obj) = object::File::parse(&*data) {
-            obj.symbols()
-                .find(|s| s.address() == va && s.size() > 0)
-                .map(|s| (s.size() as usize).max(length))
-                .unwrap_or(length)
-        } else {
-            length
-        }
-    } else {
-        length
-    };
-
-    let end   = (file_offset + effective_length).min(data.len());
+    let end   = (file_offset + auto_length).min(data.len());
     let slice = &data[file_offset..end];
     let ip: u64 = vaddr_hint.unwrap_or(file_offset as u64);
 
@@ -2307,28 +2363,43 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
             }
         }
 
-    // ── AArch64: Capstone BL scan + raw ADRP+LDR indirect scan ──────────────
+    // ── AArch64: raw BL/B pattern scan + ADRP+LDR indirect scan ─────────────
     } else if matches!(arch_class, crate::arch::ArchClass::Arm64) {
 
-        // Pass 1 — direct BL / B <target_vaddr> via Capstone
-        if let Ok(cs) = crate::arch::build_capstone(arch_class) {
-            for sec in obj.sections() {
-                let sec_name = sec.name().unwrap_or("");
-                if !crate::arch::is_code_section(sec_name) { continue; }
-                let sec_vaddr = sec.address();
-                let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
-                if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
-                    for insn in insns.as_ref() {
-                        let m = insn.mnemonic().unwrap_or("");
-                        let o = insn.op_str().unwrap_or("");
-                        if crate::arch::is_direct_call(arch_class, m, o)
-                            || crate::arch::is_direct_branch(arch_class, m, o)
-                        {
-                            if crate::arch::parse_branch_target(o) == Some(target_vaddr) {
-                                callers.push((insn.address(), "direct BL"));
-                            }
-                        }
-                    }
+        // Pass 1 — direct BL / B <target_vaddr> via raw 4-byte word scan.
+        //
+        // Capstone full-section scan loses decode sync on large binaries when
+        // jump tables or aligned data are embedded in .text, causing it to miss
+        // instructions.  AArch64 uses fixed-width 4-byte instructions, so we
+        // can scan in strict 4-byte strides and decode BL / B targets directly:
+        //
+        //   BL:  bits 31-26 = 100101 → (word >> 26) == 0x25
+        //   B:   bits 31-26 = 000101 → (word >> 26) == 0x05
+        //   imm26 target = PC + sign_extend(word & 0x3FFFFFF, 26) * 4
+        for sec in obj.sections() {
+            let sec_name = sec.name().unwrap_or("");
+            if !crate::arch::is_code_section(sec_name) { continue; }
+            let sec_vaddr = sec.address();
+            let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+            if sec_bytes.len() < 4 { continue; }
+            let n = sec_bytes.len() & !3; // align to 4-byte boundary
+            for i in (0..n).step_by(4) {
+                let word = u32::from_le_bytes([
+                    sec_bytes[i], sec_bytes[i+1], sec_bytes[i+2], sec_bytes[i+3]
+                ]);
+                let op = word >> 26;
+                if op != 0x25 && op != 0x05 { continue; } // not BL or B
+                let imm26 = word & 0x3FF_FFFF;
+                let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
+                    (imm26 as i64) | (-1i64 << 26)
+                } else {
+                    imm26 as i64
+                };
+                let pc = sec_vaddr + i as u64;
+                let tgt = pc.wrapping_add((signed_off * 4) as u64);
+                if tgt == target_vaddr {
+                    let label = if op == 0x25 { "direct BL" } else { "direct B (tail call)" };
+                    callers.push((pc, label));
                 }
             }
         }
@@ -2342,35 +2413,35 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
 
         // Pass 3 — if the ADRP+LDR site looks like a shared import stub
         //          (ADRP at the very start of a function, followed by LDR then BR),
-        //          scan for BL <stub_addr> callers.
-        //
-        // Heuristic: treat every ADRP+LDR+BLR hit as a potential stub entry-point
-        // and do a second Capstone sweep for direct BL to it.
+        //          scan for BL <stub_addr> callers using the same raw-word scan.
         let stub_candidates: Vec<u64> = iat_hits.iter()
             .filter(|(_, _, is_blr)| *is_blr)
             .map(|(adrp_pc, _, _)| *adrp_pc)
             .collect();
 
         if !stub_candidates.is_empty() {
-            if let Ok(cs2) = crate::arch::build_capstone(arch_class) {
-                for sec in obj.sections() {
-                    let sec_name = sec.name().unwrap_or("");
-                    if !crate::arch::is_code_section(sec_name) { continue; }
-                    let sec_vaddr = sec.address();
-                    let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
-                    if let Ok(insns) = cs2.disasm_all(sec_bytes, sec_vaddr) {
-                        for insn in insns.as_ref() {
-                            let m = insn.mnemonic().unwrap_or("");
-                            let o = insn.op_str().unwrap_or("");
-                            if crate::arch::is_direct_call(arch_class, m, o) {
-                                if let Some(tgt) = crate::arch::parse_branch_target(o) {
-                                    if stub_candidates.contains(&tgt) {
-                                        // Caller of the import stub — this is the real indirect call site
-                                        callers.push((insn.address(), "BL → import stub"));
-                                    }
-                                }
-                            }
-                        }
+            for sec in obj.sections() {
+                let sec_name = sec.name().unwrap_or("");
+                if !crate::arch::is_code_section(sec_name) { continue; }
+                let sec_vaddr = sec.address();
+                let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+                if sec_bytes.len() < 4 { continue; }
+                let n = sec_bytes.len() & !3;
+                for i in (0..n).step_by(4) {
+                    let word = u32::from_le_bytes([
+                        sec_bytes[i], sec_bytes[i+1], sec_bytes[i+2], sec_bytes[i+3]
+                    ]);
+                    if word >> 26 != 0x25 { continue; } // only BL
+                    let imm26 = word & 0x3FF_FFFF;
+                    let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
+                        (imm26 as i64) | (-1i64 << 26)
+                    } else {
+                        imm26 as i64
+                    };
+                    let pc = sec_vaddr + i as u64;
+                    let tgt = pc.wrapping_add((signed_off * 4) as u64);
+                    if stub_candidates.contains(&tgt) {
+                        callers.push((pc, "BL → import stub"));
                     }
                 }
             }
@@ -3080,6 +3151,41 @@ fn get_vuln_scores_tool(path: &str) -> ToolResult {
     ToolResult::ok(out)
 }
 
+// ─── Helper: PE IAT address → import name map ───────────────────────────────
+
+/// Returns a map from IAT slot VA → "DLL!FunctionName" for a PE binary.
+fn build_pe_iat_map(data: &[u8]) -> std::collections::HashMap<u64, String> {
+    let mut map = std::collections::HashMap::new();
+    let pe = match goblin::Object::parse(data) {
+        Ok(goblin::Object::PE(p)) => p,
+        _ => return map,
+    };
+    let image_base = pe.image_base as u64;
+    let ptr_size: u64 = if pe.is_64 { 8 } else { 4 };
+    if let Some(import_data) = &pe.import_data {
+        for dll_entry in &import_data.import_data {
+            let iat_base_rva =
+                dll_entry.import_directory_entry.import_address_table_rva as u64;
+            let dll = dll_entry.name.to_ascii_lowercase();
+            let dll_stem = dll.trim_end_matches(".dll");
+            let lut = match &dll_entry.import_lookup_table {
+                Some(l) => l,
+                None => continue,
+            };
+            for (idx, entry) in lut.iter().enumerate() {
+                use goblin::pe::import::SyntheticImportLookupTableEntry::*;
+                let fn_name = match entry {
+                    HintNameTableRVA((_rva, hint)) => hint.name.to_string(),
+                    OrdinalNumber(ord) => format!("#{}", ord),
+                };
+                let slot_va = image_base + iat_base_rva + idx as u64 * ptr_size;
+                map.insert(slot_va, format!("{}!{}", dll_stem, fn_name));
+            }
+        }
+    }
+    map
+}
+
 // ─── Tool: resolve_pe_imports ────────────────────────────────────────────────
 
 fn resolve_pe_imports(path: &str) -> ToolResult {
@@ -3763,21 +3869,24 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
 /// Inner helper: returns Vec<(caller_fn_vaddr, call_site_vaddr)> for xrefs_to.
 /// Extracted so explain_function can use it without re-parsing the text output.
 fn xrefs_to_inner(path: &str, target: u64) -> Vec<(u64, u64)> {
-    // Re-use the existing xrefs_to logic to get caller sites; we parse quickly
-    // by running xrefs_to and extracting the pairs from the raw result.
-    // For now, call the full xrefs_to and parse its output lines.
     let result = xrefs_to(path, target);
     if result.output.starts_with("Error:") { return Vec::new(); }
     let mut pairs = Vec::new();
     for line in result.output.lines() {
-        // Lines look like: "  0xSITE (in FUN_ADDR / name)"
+        // Lines look like: "  0xSITE  FUN_XXXXXXXXXXXXXXXX  direct BL"
         let line = line.trim();
         if !line.starts_with("0x") { continue; }
-        let site_str = line.split_whitespace().next().unwrap_or("");
+        let mut tokens = line.split_whitespace();
+        let site_str  = tokens.next().unwrap_or("");
+        let fn_token  = tokens.next().unwrap_or("");
         let site = u64::from_str_radix(site_str.trim_start_matches("0x"), 16).unwrap_or(0);
         if site == 0 { continue; }
-        // caller fn vaddr — rough: we don't have it from text, use 0 as placeholder
-        pairs.push((0u64, site));
+        let fn_vaddr = if fn_token.to_ascii_uppercase().starts_with("FUN_") {
+            u64::from_str_radix(&fn_token[4..], 16).unwrap_or(0)
+        } else {
+            0
+        };
+        pairs.push((fn_vaddr, site));
     }
     pairs
 }
@@ -4612,39 +4721,151 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
 
     // ── 3. Callees (parse CALL/BL/BLR from disassembly) ───────────────────
     out.push_str(&format!("{}\n[3] Callees (functions this function calls)\n{}\n", sep, sep));
-    let asm_result = disassemble(path, None, 1024, Some(vaddr));
+    // Use auto-sized disassembly (pe_pdata_fn_size resolves full function body)
+    let asm_result = disassemble(path, None, 256, Some(vaddr));
     let mut callees: Vec<(u64, String)> = Vec::new();
-    for line in asm_result.output.lines() {
-        // Look for call/bl instructions with a resolved address
-        let low = line.to_ascii_lowercase();
-        let is_call = low.contains(" call ") || low.contains("\tcall ")
-            || low.contains(" bl ")   || low.contains("\tbl ")
-            || low.contains(" blx ")  || low.contains("\tblx ");
-        if !is_call { continue; }
+    let mut indirect_calls: usize = 0;
 
-        // Extract last token that looks like a hex address
-        for token in line.split_whitespace().rev() {
-            let s = token.trim_matches(|c: char| !c.is_ascii_hexdigit());
-            if s.len() >= 4 {
-                if let Ok(addr) = u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16) {
-                    if addr > 0 && !callees.iter().any(|(a, _)| *a == addr) {
-                        let name = project.get_name(addr)
-                            .unwrap_or_else(|| format!("FUN_{:016x}", addr));
-                        callees.push((addr, name));
+    // Build IAT map once for ADRP+LDR+BLR resolution (AArch64 PE pattern)
+    let iat_map: std::collections::HashMap<u64, String> = std::fs::read(path)
+        .map(|d| build_pe_iat_map(&d))
+        .unwrap_or_default();
+
+    // Track ADRP page per register: reg_name → page_addr
+    let mut adrp_pages: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    // Track IAT slot per register after ADRP+LDR: reg_name → iat_va
+    let mut reg_iat: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut iat_callees: Vec<String> = Vec::new();
+
+    // Helper: extract mnemonic + operands from a disasm display line.
+    // Lines look like: "│   ADDR  HH HH HH HH    mnemonic operands ; comment"
+    // Strategy: skip the leading │, find the first letter-starting word (the mnemonic)
+    // after the address and byte tokens, then extract operands from the raw string.
+    fn parse_mnemonic_operands(line: &str) -> Option<(String, String)> {
+        let stripped = line.trim_start_matches('│').trim();
+        let mut saw_addr = false;
+        let mut mnemonic_in_str: Option<(usize, usize)> = None; // byte range in `stripped`
+        let mut byte_offset = 0usize;
+        for tok in stripped.split_whitespace() {
+            let tok_start = stripped[byte_offset..].find(tok)? + byte_offset;
+            let tok_end = tok_start + tok.len();
+            let all_hex = tok.chars().all(|c| c.is_ascii_hexdigit());
+            let starts_letter = tok.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+            if !saw_addr {
+                if all_hex { saw_addr = true; }
+                byte_offset = tok_end;
+                continue;
+            }
+            // skip instruction byte tokens (exactly 2 hex chars)
+            if all_hex && tok.len() == 2 { byte_offset = tok_end; continue; }
+            // first non-byte non-address token starting with a letter = mnemonic
+            if starts_letter {
+                mnemonic_in_str = Some((tok_start, tok_end));
+                break;
+            }
+            byte_offset = tok_end;
+        }
+        let (mnm_start, mnm_end) = mnemonic_in_str?;
+        let mnm = stripped[mnm_start..mnm_end].to_ascii_lowercase();
+        // Operands: everything after mnemonic (trimmed), up to '; ' comment marker
+        let rest = stripped[mnm_end..].trim();
+        let ops = rest.splitn(2, " ; ").next().unwrap_or("").trim().to_ascii_lowercase();
+        Some((mnm, ops))
+    }
+
+    for line in asm_result.output.lines() {
+        let Some((mnemonic, operands)) = parse_mnemonic_operands(line) else { continue };
+
+        // Track ADRP: "adrp xN, #0xPAGE"
+        if mnemonic == "adrp" {
+            let parts: Vec<&str> = operands.splitn(2, ',').collect();
+            if parts.len() >= 2 {
+                let reg = parts[0].trim().to_string();
+                let page_s = parts[1].trim().trim_start_matches('#');
+                if let Ok(page) = u64::from_str_radix(page_s.trim_start_matches("0x"), 16) {
+                    adrp_pages.insert(reg, page);
+                }
+            }
+        }
+        // Track LDR/LDRB/LDRH from [xN, #offset] — check ADRP page + offset vs IAT
+        else if mnemonic == "ldr" || mnemonic == "ldrb" || mnemonic == "ldrh" || mnemonic == "ldrw" {
+            let parts: Vec<&str> = operands.splitn(2, ',').collect();
+            if parts.len() >= 2 {
+                let dst_reg = parts[0].trim().to_string();
+                let src = parts[1].trim();
+                if src.starts_with('[') {
+                    // "[ xB, #offset ]" or "[xB, #offset]!"
+                    let inner = src.trim_start_matches('[').trim_end_matches('!')
+                        .trim_end_matches(']').trim();
+                    let src_parts: Vec<&str> = inner.splitn(2, ',').collect();
+                    if src_parts.len() >= 2 {
+                        let base_reg = src_parts[0].trim().to_string();
+                        let off_s = src_parts[1].trim().trim_start_matches('#');
+                        if let Ok(off) = u64::from_str_radix(off_s.trim_start_matches("0x"), 16) {
+                            if let Some(&page) = adrp_pages.get(&base_reg) {
+                                let iat_va = page + off;
+                                if iat_map.contains_key(&iat_va) {
+                                    reg_iat.insert(dst_reg, iat_va);
+                                }
+                            }
+                        }
                     }
-                    break;
+                } else {
+                    // PC-relative literal: "ldr xD, #0xADDR"
+                    let addr_s = src.trim_start_matches('#');
+                    if let Ok(lit_addr) = u64::from_str_radix(addr_s.trim_start_matches("0x"), 16) {
+                        if iat_map.contains_key(&lit_addr) {
+                            reg_iat.insert(dst_reg, lit_addr);
+                        }
+                    }
+                }
+            }
+        }
+        // BLR: indirect call via register
+        else if mnemonic == "blr" {
+            let reg = operands.trim().to_string();
+            if let Some(&iat_va) = reg_iat.get(&reg) {
+                if let Some(imp_name) = iat_map.get(&iat_va) {
+                    if !iat_callees.contains(imp_name) {
+                        iat_callees.push(imp_name.clone());
+                    }
+                    continue;
+                }
+            }
+            indirect_calls += 1;
+        }
+        // Direct call/bl/blx
+        else if mnemonic == "call" || mnemonic == "bl" || mnemonic == "blx" {
+            // Operand is the target address
+            let tgt_s = operands.trim().trim_start_matches('#');
+            if let Ok(addr) = u64::from_str_radix(tgt_s.trim_start_matches("0x"), 16) {
+                if addr > 0 && !callees.iter().any(|(a, _)| *a == addr) {
+                    let name = project.get_name(addr)
+                        .unwrap_or_else(|| format!("FUN_{:016x}", addr));
+                    callees.push((addr, name));
                 }
             }
         }
     }
-    if callees.is_empty() {
-        out.push_str("  (no direct callees resolved from disassembly)\n");
+
+    if callees.is_empty() && indirect_calls == 0 && iat_callees.is_empty() {
+        out.push_str("  (no callees resolved from disassembly)\n");
     } else {
         for (addr, name) in callees.iter().take(15) {
             out.push_str(&format!("  0x{:016x}  {}\n", addr, name));
         }
         if callees.len() > 15 {
-            out.push_str(&format!("  ... and {} more\n", callees.len() - 15));
+            out.push_str(&format!("  ... and {} more direct callees\n", callees.len() - 15));
+        }
+        for imp in &iat_callees {
+            out.push_str(&format!("  [IAT] {}\n", imp));
+        }
+        if indirect_calls > 0 {
+            out.push_str(&format!(
+                "  + {} indirect call(s) via register (blr/call reg) — \
+                 targets unresolved (not a simple ADRP+LDR+BLR pattern)\n",
+                indirect_calls
+            ));
         }
     }
     out.push('\n');
@@ -5870,19 +6091,23 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "disassemble".into(),
-            description: "Disassemble x86/x86-64 machine code from a binary file. \
-                           Pass `vaddr` (a virtual address, e.g. the entry point or a function address \
-                           from file_info/list_functions) — the tool automatically translates it to a \
-                           file offset using the LOAD segment table, no manual calculation needed. \
-                           Alternatively pass `offset` for a raw file byte offset. \
-                           If both are given, `offset` takes precedence.".into(),
+            description: "Disassemble machine code from a binary file. \
+                           Pass `vaddr` (virtual address, e.g. entry point or a function address from \
+                           list_functions) — the tool automatically translates it to a file offset via \
+                           the LOAD/section table. \
+                           For PE binaries, if `vaddr` matches a .pdata function entry the full function \
+                           body is disassembled automatically regardless of `length`. \
+                           For ELF, function size is read from the symbol table when available. \
+                           Use `disassemble` as the primary fallback when `decompile` fails — it works \
+                           on all functions regardless of complexity. \
+                           Alternatively pass `offset` for a raw file byte offset (overrides vaddr).".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path":   { "type": "string",  "description": "Path to the binary file" },
-                    "vaddr":  { "type": "integer", "description": "Virtual address of first instruction (auto-translated to file offset)" },
+                    "vaddr":  { "type": "integer", "description": "Virtual address (auto-sized from .pdata for PE, symbol table for ELF)" },
                     "offset": { "type": "integer", "description": "Raw file byte offset (overrides vaddr)" },
-                    "length": { "type": "integer", "description": "Number of bytes to disassemble (default 128)" }
+                    "length": { "type": "integer", "description": "Minimum bytes to disassemble (default 128; auto-expanded to full function when vaddr matches a known function)" }
                 },
                 "required": ["path"]
             }),
