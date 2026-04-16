@@ -74,6 +74,7 @@ fn tool_cache() -> &'static Mutex<ToolCache> {
 const CACHEABLE_TOOLS: &[&str] = &[
     "disassemble", "decompile", "xrefs_to", "cfg_view", "call_graph",
     "pe_security_audit", "pe_internals", "elf_internals",
+    "crypto_identify", "function_context",
 ];
 
 const WRITE_TOOLS: &[&str] = &[
@@ -322,6 +323,19 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
         "pe_internals"      => pe_internals(&str_arg(args, "path")),
         "pe_security_audit" => pe_security_audit(&str_arg(args, "path")),
         "python_env"        => python_env(),
+        "crypto_identify"   => crypto_identify(&str_arg(args, "path")),
+        "function_context"  => function_context(
+            &str_arg(args, "path"),
+            args["vaddr"].as_u64().unwrap_or(0),
+        ),
+        "angr_find" => angr_find(
+            &str_arg(args, "path"),
+            args["find_addr"].as_u64().unwrap_or(0),
+            args["avoid_addr"].as_u64().unwrap_or(0),
+            args["start_addr"].as_u64().unwrap_or(0),
+            args["stdin_bytes"].as_u64().unwrap_or(32),
+            args["timeout_secs"].as_u64().unwrap_or(60),
+        ),
         "xrefs_data" => xrefs_data(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
@@ -3975,6 +3989,480 @@ fn decompile_flat(path: &str, base_addr: u64, vaddr: u64, arch: &str) -> ToolRes
     }
 }
 
+// ─── Tool: crypto_identify ───────────────────────────────────────────────────
+//
+// Scan a binary for byte signatures of well-known cryptographic algorithms.
+// Covers constant tables (AES S-boxes, SHA init vectors, ChaCha20 "expand"
+// string, CRC32 polynomials, Blowfish P-array start, MD5/SHA-1/SHA-512 IVs).
+// O(file_size * num_patterns) — fast even on large PE/ELF files.
+
+struct CryptoSig {
+    algorithm:   &'static str,
+    detail:      &'static str,
+    /// Byte sequence to search for (first N bytes of constant table)
+    pattern:     &'static [u8],
+    /// Optional second sequence that must appear immediately after `pattern`
+    /// (extra bytes used for disambiguation)
+    confirm:     &'static [u8],
+}
+
+const CRYPTO_SIGS: &[CryptoSig] = &[
+    // AES forward S-box (first 16 bytes)
+    CryptoSig {
+        algorithm: "AES",
+        detail:    "Forward S-box (63 7c 77 7b f2 6b 6f c5 ...)",
+        pattern:   &[0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,
+                     0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76],
+        confirm:   &[],
+    },
+    // AES inverse S-box (first 8 bytes)
+    CryptoSig {
+        algorithm: "AES",
+        detail:    "Inverse S-box (52 09 6a d5 30 36 a5 38 ...)",
+        pattern:   &[0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38],
+        confirm:   &[],
+    },
+    // ChaCha20 / Salsa20 "expand 32-byte k"
+    CryptoSig {
+        algorithm: "ChaCha20 / Salsa20",
+        detail:    "\"expand 32-byte k\" sigma constant",
+        pattern:   b"expand 32-byte k",
+        confirm:   &[],
+    },
+    // ChaCha20 / Salsa20 "expand 16-byte k"
+    CryptoSig {
+        algorithm: "ChaCha20 / Salsa20",
+        detail:    "\"expand 16-byte k\" tau constant",
+        pattern:   b"expand 16-byte k",
+        confirm:   &[],
+    },
+    // SHA-256 init hash H0-H1 (LE): 6a09e667 bb67ae85
+    CryptoSig {
+        algorithm: "SHA-256",
+        detail:    "Init hash values H0=0x6a09e667, H1=0xbb67ae85, ...",
+        pattern:   &[0x67,0xe6,0x09,0x6a],
+        confirm:   &[0x85,0xae,0x67,0xbb],
+    },
+    // SHA-512 init hash H0 (LE): 6a09e667f3bcc908
+    CryptoSig {
+        algorithm: "SHA-512 / SHA-384",
+        detail:    "Init hash H0=0x6a09e667f3bcc908",
+        pattern:   &[0x08,0xc9,0xbc,0xf3,0x67,0xe6,0x09,0x6a],
+        confirm:   &[],
+    },
+    // SHA-1 init H0-H1 (LE): 67452301 efcdab89
+    CryptoSig {
+        algorithm: "SHA-1",
+        detail:    "Init hash H0=0x67452301, H1=0xEFCDAB89, ...",
+        pattern:   &[0x01,0x23,0x45,0x67],
+        confirm:   &[0x89,0xab,0xcd,0xef],
+    },
+    // MD5 round constant T[1-2] (LE): d76aa478 e8c7b756
+    CryptoSig {
+        algorithm: "MD5",
+        detail:    "Round constants T[1]=0xd76aa478, T[2]=0xe8c7b756",
+        pattern:   &[0x78,0xa4,0x6a,0xd7],
+        confirm:   &[0x56,0xb7,0xc7,0xe8],
+    },
+    // CRC32 reflected polynomial
+    CryptoSig {
+        algorithm: "CRC32",
+        detail:    "Reflected polynomial 0xEDB88320",
+        pattern:   &[0x20,0x83,0xb8,0xed],
+        confirm:   &[],
+    },
+    // CRC32 normal polynomial
+    CryptoSig {
+        algorithm: "CRC32",
+        detail:    "Normal polynomial 0x04C11DB7",
+        pattern:   &[0x04,0xc1,0x1d,0xb7],
+        confirm:   &[],
+    },
+    // Blowfish P-array (from digits of pi): 243f6a88 85a308d3
+    CryptoSig {
+        algorithm: "Blowfish",
+        detail:    "P-array start 0x243F6A88, 0x85A308D3 (from pi)",
+        pattern:   &[0x24,0x3f,0x6a,0x88],
+        confirm:   &[0x85,0xa3,0x08,0xd3],
+    },
+    // RC4 identity permutation start (00 01 02 03 ... in .data)
+    CryptoSig {
+        algorithm: "RC4 (possible)",
+        detail:    "Identity permutation S[0..15] = 00 01 02 03 ... 0f",
+        pattern:   &[0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                     0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f],
+        confirm:   &[0x10,0x11,0x12,0x13], // next 4 must also be sequential
+    },
+    // TEA/XTEA magic constant 0x9E3779B9 (golden ratio)
+    CryptoSig {
+        algorithm: "TEA / XTEA",
+        detail:    "Delta constant 0x9E3779B9 (golden ratio)",
+        pattern:   &[0xb9,0x79,0x37,0x9e],
+        confirm:   &[],
+    },
+    // Keccak/SHA-3 round constant RC[0] = 0x0000000000000001
+    CryptoSig {
+        algorithm: "SHA-3 / Keccak",
+        detail:    "Round constant RC[0]=1 followed by RC[1]=0x8082",
+        pattern:   &[0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+        confirm:   &[0x82,0x80,0x00,0x00,0x00,0x00,0x00,0x00],
+    },
+];
+
+fn crypto_identify(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    // Build offset→VA mapping from PE/ELF section table
+    let sections: Vec<(u64, usize, usize)> = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(pe)) => {
+            let base = pe.image_base as u64;
+            pe.sections.iter().map(|s| {
+                let va     = base + s.virtual_address as u64;
+                let foff   = s.pointer_to_raw_data as usize;
+                let fsize  = s.size_of_raw_data as usize;
+                (va, foff, fsize)
+            }).collect()
+        }
+        Ok(goblin::Object::Elf(elf)) => {
+            elf.section_headers.iter().map(|s| {
+                (s.sh_addr, s.sh_offset as usize, s.sh_size as usize)
+            }).collect()
+        }
+        _ => vec![],
+    };
+
+    let offset_to_va = |off: usize| -> u64 {
+        for &(va, foff, fsize) in &sections {
+            if foff > 0 && off >= foff && off < foff + fsize {
+                return va + (off - foff) as u64;
+            }
+        }
+        off as u64 // fallback: treat as raw offset
+    };
+
+    // Search for each signature
+    struct Hit { algo: &'static str, detail: &'static str, vas: Vec<u64> }
+    let mut hits: Vec<Hit> = Vec::new();
+
+    for sig in CRYPTO_SIGS {
+        let pat = sig.pattern;
+        let pat_len = pat.len();
+        if pat_len == 0 || pat_len > data.len() { continue; }
+
+        let mut found_vas: Vec<u64> = Vec::new();
+        'scan: for i in 0..=(data.len() - pat_len) {
+            if data[i..i + pat_len] != *pat { continue; }
+            // Check confirm sequence if present
+            if !sig.confirm.is_empty() {
+                let c = sig.confirm;
+                let end = i + pat_len + c.len();
+                if end > data.len() { continue; }
+                for (j, &b) in c.iter().enumerate() {
+                    if data[i + pat_len + j] != b { continue 'scan; }
+                }
+            }
+            found_vas.push(offset_to_va(i));
+            if found_vas.len() >= 8 { break; } // cap per-sig matches
+        }
+
+        if !found_vas.is_empty() {
+            // Deduplicate into prior hit for same algorithm if exists
+            if let Some(existing) = hits.iter_mut().find(|h| {
+                h.algo == sig.algorithm && h.detail == sig.detail
+            }) {
+                existing.vas.extend_from_slice(&found_vas);
+            } else {
+                hits.push(Hit { algo: sig.algorithm, detail: sig.detail, vas: found_vas });
+            }
+        }
+    }
+
+    let mut out = format!("Cryptographic constant scan: '{}'\n{}\n\n", path, "═".repeat(60));
+
+    if hits.is_empty() {
+        out.push_str("No known cryptographic constants found.\n");
+        out.push_str("(Scanned for: AES, ChaCha20/Salsa20, SHA-256/512, SHA-1, SHA-3, MD5,\n");
+        out.push_str(" CRC32, Blowfish, TEA/XTEA, RC4 identity permutation)\n");
+        out.push_str("\nNote: custom or obfuscated crypto will not be detected by constant scanning.\n");
+        out.push_str("Use section_entropy to find high-entropy regions that may be custom crypto.\n");
+    } else {
+        out.push_str(&format!("{} signature(s) found:\n\n", hits.len()));
+        for h in &hits {
+            out.push_str(&format!("  [+] {}\n", h.algo));
+            out.push_str(&format!("      {}\n", h.detail));
+            let va_list: Vec<String> = h.vas.iter().take(5)
+                .map(|v| format!("0x{:x}", v)).collect();
+            out.push_str(&format!("      Location(s): {}", va_list.join("  ")));
+            if h.vas.len() > 5 {
+                out.push_str(&format!("  (+{} more)", h.vas.len() - 5));
+            }
+            out.push_str("\n\n");
+        }
+        out.push_str("Tip: use decompile(path, va) at each location to see how the algorithm\n");
+        out.push_str("is invoked and what data flows through it.\n");
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: function_context ──────────────────────────────────────────────────
+//
+// Assemble rich analysis context for a single function in one tool call:
+// decompiled pseudo-C + direct callers + direct callees + project annotations.
+// This replaces the common pattern of calling decompile + xrefs_to + disassemble
+// separately and lets the LLM reason about a function holistically.
+
+fn function_context(path: &str, vaddr: u64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+
+    let project = Project::load_for(path);
+    let fn_name = project.get_name(vaddr)
+        .unwrap_or_else(|| format!("FUN_{:016x}", vaddr));
+
+    let sep = "─".repeat(60);
+    let mut out = format!(
+        "Function context: {} @ 0x{:x}\n{}\n\n",
+        fn_name, vaddr, "═".repeat(60)
+    );
+
+    // ── 1. Decompilation ────────────────────────────────────────────────────
+    out.push_str(&format!("{}\n[1] Decompiled pseudo-C\n{}\n", sep, sep));
+    let decomp = decompile_safe(path, vaddr);
+    out.push_str(&decomp);
+    out.push_str("\n\n");
+
+    // ── 2. Callers ──────────────────────────────────────────────────────────
+    out.push_str(&format!("{}\n[2] Callers (who calls this function)\n{}\n", sep, sep));
+    let caller_pairs = xrefs_to_inner(path, vaddr);
+    if caller_pairs.is_empty() {
+        out.push_str("  (no callers found — may be an entry point or exported function)\n");
+    } else {
+        for (caller_va, call_site) in caller_pairs.iter().take(10) {
+            let caller_name = project.get_name(*caller_va)
+                .unwrap_or_else(|| format!("FUN_{:016x}", caller_va));
+            out.push_str(&format!("  0x{:016x}  {}  (call site: 0x{:x})\n",
+                caller_va, caller_name, call_site));
+        }
+        if caller_pairs.len() > 10 {
+            out.push_str(&format!("  ... and {} more callers\n", caller_pairs.len() - 10));
+        }
+    }
+    out.push('\n');
+
+    // ── 3. Callees (parse CALL/BL/BLR from disassembly) ───────────────────
+    out.push_str(&format!("{}\n[3] Callees (functions this function calls)\n{}\n", sep, sep));
+    let asm_result = disassemble(path, None, 1024, Some(vaddr));
+    let mut callees: Vec<(u64, String)> = Vec::new();
+    for line in asm_result.output.lines() {
+        // Look for call/bl instructions with a resolved address
+        let low = line.to_ascii_lowercase();
+        let is_call = low.contains(" call ") || low.contains("\tcall ")
+            || low.contains(" bl ")   || low.contains("\tbl ")
+            || low.contains(" blx ")  || low.contains("\tblx ");
+        if !is_call { continue; }
+
+        // Extract last token that looks like a hex address
+        for token in line.split_whitespace().rev() {
+            let s = token.trim_matches(|c: char| !c.is_ascii_hexdigit());
+            if s.len() >= 4 {
+                if let Ok(addr) = u64::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16) {
+                    if addr > 0 && !callees.iter().any(|(a, _)| *a == addr) {
+                        let name = project.get_name(addr)
+                            .unwrap_or_else(|| format!("FUN_{:016x}", addr));
+                        callees.push((addr, name));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if callees.is_empty() {
+        out.push_str("  (no direct callees resolved from disassembly)\n");
+    } else {
+        for (addr, name) in callees.iter().take(15) {
+            out.push_str(&format!("  0x{:016x}  {}\n", addr, name));
+        }
+        if callees.len() > 15 {
+            out.push_str(&format!("  ... and {} more\n", callees.len() - 15));
+        }
+    }
+    out.push('\n');
+
+    // ── 4. Project annotations ──────────────────────────────────────────────
+    out.push_str(&format!("{}\n[4] Annotations\n{}\n", sep, sep));
+    let mut has_annotations = false;
+
+    if let Some(comment) = project.get_comment(vaddr) {
+        out.push_str(&format!("  comment: {}\n", comment));
+        has_annotations = true;
+    }
+    if let Some(score) = project.get_vuln_score(vaddr) {
+        out.push_str(&format!("  vuln_score: {}/10\n", score));
+        has_annotations = true;
+    }
+    if let Some(sig) = project.get_signature(vaddr) {
+        if let Some(ref rt) = sig.return_type {
+            out.push_str(&format!("  return_type: {}\n", rt));
+            has_annotations = true;
+        }
+        for (n, (pt, pn)) in sig.param_types.iter().zip(sig.param_names.iter()).enumerate() {
+            let ty   = pt.as_deref().unwrap_or("");
+            let name = pn.as_deref().unwrap_or("");
+            if !ty.is_empty() || !name.is_empty() {
+                out.push_str(&format!("  param[{}]: {} {}\n", n + 1, ty, name));
+                has_annotations = true;
+            }
+        }
+    }
+    if !has_annotations {
+        out.push_str("  (no annotations yet — use batch_annotate to add names, types, and comments)\n");
+    }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: angr_find ─────────────────────────────────────────────────────────
+//
+// Use angr symbolic execution to find input (stdin bytes) that drives execution
+// to a target address.  Generates a complete Python script using angr's
+// SimulationManager.explore() and runs it via run_python.  angr must be
+// installed (check with python_env).
+//
+// Limitations:
+//  - Works best for small, self-contained functions or paths <= ~100 basic blocks
+//  - Large binaries with many indirect calls may need auto_load_libs=False
+//  - Returns up to 3 satisfying inputs; complex constraints may time out
+
+fn angr_find(
+    path: &str,
+    find_addr: u64,
+    avoid_addr: u64,
+    start_addr: u64,
+    stdin_bytes: u64,
+    timeout_secs: u64,
+) -> ToolResult {
+    if path.is_empty()    { return ToolResult::err("'path' is required"); }
+    if find_addr == 0     { return ToolResult::err("'find_addr' is required"); }
+
+    let timeout = timeout_secs.clamp(10, 120);
+    let stdin_n = stdin_bytes.clamp(1, 256);
+
+    // We build the Python script as a plain string (no Rust string escaping
+    // issues since we control all content).
+    let avoid_line = if avoid_addr != 0 {
+        format!("AVOID = [0x{:x}]", avoid_addr)
+    } else {
+        "AVOID = []".to_string()
+    };
+
+    let start_line = if start_addr != 0 {
+        format!("START = 0x{:x}  # override entry", start_addr)
+    } else {
+        "START = None  # use binary entry point".to_string()
+    };
+
+    let script = format!(
+r###"import angr, claripy, os, sys, signal, time
+
+binary = os.environ.get('KAIJU_BINARY', '')
+if not binary:
+    sys.exit('KAIJU_BINARY not set')
+
+FIND  = 0x{find_addr:x}
+{avoid_line}
+{start_line}
+STDIN_BYTES = {stdin_n}
+
+print('angr_find: binary =', binary)
+print('  find  = 0x{find_addr:x}')
+print('  avoid =', ['0x%x' % a for a in AVOID])
+print('  stdin_bytes =', STDIN_BYTES)
+print()
+
+proj = angr.Project(binary, auto_load_libs=False)
+
+# Symbolic stdin of fixed length
+stdin_sym = claripy.BVS('stdin', STDIN_BYTES * 8)
+
+# Constrain to printable ASCII (common for CTF/format-string bugs)
+# Remove or relax if you need arbitrary bytes
+for byte in stdin_sym.chop(8):
+    pass  # no constraint — allow all bytes for maximum reachability
+
+# Build initial state
+if START is not None:
+    state = proj.factory.blank_state(
+        addr=START,
+        stdin=angr.SimFile('<stdin>', content=stdin_sym, size=STDIN_BYTES),
+    )
+else:
+    state = proj.factory.entry_state(
+        stdin=angr.SimFile('<stdin>', content=stdin_sym, size=STDIN_BYTES),
+    )
+
+simgr = proj.factory.simulation_manager(state)
+
+# Explore with timeout guard
+deadline = time.time() + {timeout}
+def step_func(smgr):
+    if time.time() > deadline:
+        print('[timeout] stopping exploration after {timeout}s')
+        smgr.move(from_stash='active', to_stash='timeout')
+    return smgr
+
+if AVOID:
+    simgr.explore(find=FIND, avoid=AVOID, step_func=step_func, num_find=3)
+else:
+    simgr.explore(find=FIND, step_func=step_func, num_find=3)
+
+print('Simulation manager:', simgr)
+print()
+
+if simgr.found:
+    print('[+] Found', len(simgr.found), 'path(s) reaching 0x{find_addr:x}:')
+    for i, s in enumerate(simgr.found[:3]):
+        print()
+        print('  --- Solution', i + 1, '---')
+        try:
+            stdin_val = s.solver.eval(stdin_sym, cast_to=bytes)
+            print('  stdin (raw bytes):', repr(stdin_val))
+            printable = ''.join(chr(b) if 32 <= b < 127 else '.' for b in stdin_val)
+            print('  stdin (printable):', printable)
+        except Exception as e:
+            print('  could not concretize stdin:', e)
+        try:
+            pc = s.solver.eval(s.regs.pc)
+            print('  PC at find:', hex(pc))
+        except Exception:
+            pass
+else:
+    print('[-] No path found to 0x{find_addr:x}')
+    for stash, states in simgr.stashes.items():
+        if states:
+            print('  stash %-12s: %d states' % (stash, len(states)))
+    print()
+    print('Suggestions:')
+    print('  1. Try a larger stdin_bytes value')
+    print('  2. Remove avoid addresses if any')
+    print('  3. Use start_addr to start from a function instead of entry')
+    print('  4. The target may be unreachable from entry with symbolic input')
+"###,
+        find_addr = find_addr,
+        avoid_line = avoid_line,
+        start_line = start_line,
+        stdin_n = stdin_n,
+        timeout = timeout,
+    );
+
+    run_python(&script, None, Some(path), timeout + 10)
+}
+
 // ─── Tool: python_env ────────────────────────────────────────────────────────
 
 /// Return the Python version and installed binary-analysis packages.
@@ -5190,6 +5678,73 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     "size":  { "type": "integer", "description": "Number of bytes to dump (default 64, max 4096)" }
                 },
                 "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "crypto_identify".into(),
+            description: "Scan a binary for byte-level signatures of well-known cryptographic \
+                           algorithms: AES forward/inverse S-boxes, ChaCha20/Salsa20 'expand' \
+                           constants, SHA-256/512/1, MD5, CRC32, Blowfish P-array, TEA/XTEA \
+                           delta, SHA-3/Keccak round constants, RC4 identity permutation. \
+                           Runs in O(file_size) — no decompilation or symbol table needed. \
+                           Returns the algorithm name, which constant matched, and every virtual \
+                           address where the signature was found. Use this to quickly map which \
+                           crypto primitives a binary uses before diving into decompilation. \
+                           Does NOT detect custom or obfuscated crypto — pair with \
+                           section_entropy for those.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the binary to scan" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "function_context".into(),
+            description: "Assemble rich, one-shot analysis context for a single function: \
+                           (1) full decompiled pseudo-C, (2) every caller with call-site address, \
+                           (3) all direct callees resolved from disassembly, (4) existing project \
+                           annotations (comments, vuln score, parameter types). \
+                           This replaces the common multi-call pattern of decompile + xrefs_to + \
+                           disassemble and lets you reason about a function holistically in one \
+                           turn. Use this as your first step when analysing any function of \
+                           interest — it gives everything needed to understand purpose, data flow, \
+                           and call hierarchy without follow-up tool calls.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":  { "type": "string",  "description": "Path to the binary" },
+                    "vaddr": { "type": "integer", "description": "Virtual address of the function entry point" }
+                },
+                "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "angr_find".into(),
+            description: "Use angr symbolic execution to find concrete stdin input(s) that drive \
+                           program execution to a target address. This is the one thing a static \
+                           analysis LLM cannot do: actually solve path constraints to reach a \
+                           specific code location. Use cases: finding the magic password that \
+                           reaches a 'win' function, inputs that trigger a specific crash or \
+                           check, license key format validation bypass, finding what input causes \
+                           a conditional branch to be taken. angr must be installed — verify with \
+                           python_env. Starts from the binary entry point by default; use \
+                           start_addr to begin from a specific function. add avoid_addr to steer \
+                           away from error/exit paths. Expects symbolic stdin; increase \
+                           stdin_bytes if the input is longer than 32 bytes. May time out on \
+                           large binaries — use start_addr to scope the exploration.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":         { "type": "string",  "description": "Path to the binary" },
+                    "find_addr":    { "type": "integer", "description": "Virtual address to reach (e.g. win function, crash site)" },
+                    "avoid_addr":   { "type": "integer", "description": "Optional address to avoid (e.g. 'wrong password' path). Default 0 = no avoid." },
+                    "start_addr":   { "type": "integer", "description": "Optional address to start exploration from instead of entry. Default 0 = entry point." },
+                    "stdin_bytes":  { "type": "integer", "description": "Number of symbolic stdin bytes to generate (default 32, max 256)" },
+                    "timeout_secs": { "type": "integer", "description": "Max seconds for angr to run (default 60, max 120)" }
+                },
+                "required": ["path", "find_addr"]
             }),
         },
         ToolDefinition {

@@ -392,6 +392,9 @@ Scripting & execution:
   /pe              <path>                  PE mitigations, imports, .pdata count, TLS
   /audit           <path>                  O(file_size) PE hardening audit (CFG, canaries, writable .rodata)
   /pyenv                                  Python version + installed analysis packages (pefile, capstone, …)
+  /crypto          <path>                 Scan for crypto algorithm constants (AES, SHA, ChaCha20, …)
+  /ctx             <path> <vaddr>         Rich function context: decompile + callers + callees + annotations
+  /angr            <path> <find> [avoid] [start] [stdin_n]  Symbolic execution to find input reaching <find>
   /xdata           <path> <vaddr>         Data xrefs — all reads/writes to an address
   /exec            <path> [args...] [< input]  Run a native binary, capture output
   /python          <script.py> [timeout]  Run a Python 3 file (LLM uses run_python tool)
@@ -678,6 +681,32 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         // /pyenv  — show Python version + installed binary-analysis packages
         "pyenv" | "python_env" => {
             run_tool("python_env", json!({}), tx);
+        }
+
+        // /crypto <path>  — scan for crypto algorithm constants
+        "crypto" | "crypto_identify" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("crypto_identify", json!({"path": path}), tx);
+        }
+
+        // /ctx <path> <vaddr>  — rich function context (decompile + callers + callees)
+        "ctx" | "context" | "function_context" => {
+            let path  = parts.get(1).copied().unwrap_or("");
+            let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            run_tool("function_context", json!({"path": path, "vaddr": vaddr}), tx);
+        }
+
+        // /angr <path> <find_addr> [avoid_addr] [start_addr] [stdin_bytes]
+        "angr" | "angr_find" => {
+            let path      = parts.get(1).copied().unwrap_or("");
+            let find_addr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
+            let avoid     = parts.get(3).and_then(|s| parse_int(s)).unwrap_or(0);
+            let start     = parts.get(4).and_then(|s| parse_int(s)).unwrap_or(0);
+            let stdin_n   = parts.get(5).and_then(|s| s.parse::<u64>().ok()).unwrap_or(32);
+            run_tool("angr_find", json!({
+                "path": path, "find_addr": find_addr,
+                "avoid_addr": avoid, "start_addr": start, "stdin_bytes": stdin_n
+            }), tx);
         }
 
         // /xdata <path> <vaddr>  — data cross-references to an address

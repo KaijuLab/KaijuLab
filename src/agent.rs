@@ -153,6 +153,16 @@ what you found. Reference function names and addresses. Highlight the most impor
 - Strings → `strings_extract` (pass `section='.rodata'` to avoid .text noise)
 - Vulnerability hunting → `scan_vulnerabilities`, then `decompile` suspicious functions, \
   then `set_vuln_score`
+- **Crypto identification** → `crypto_identify` before decompiling — instantly maps which \
+  algorithms (AES, SHA-256, ChaCha20, MD5, CRC32, ...) are present and at which addresses. \
+  Follow up with `decompile` at the returned VA to see how the algorithm is called.
+- **Deep single-function analysis** → `function_context` instead of separate decompile + \
+  xrefs_to + disassemble calls. Returns decompiled pseudo-C, all callers with call-sites, \
+  all direct callees, and existing annotations in one response.
+- **Finding crash/bypass inputs** → `angr_find(path, find_addr)` uses angr symbolic execution \
+  to find concrete stdin bytes that reach a target address. This is the one capability a \
+  pure static LLM cannot replicate. Use it for: CTF win-condition paths, license checks, \
+  password validation bypass. Run `python_env` first to confirm angr is installed.
 - **PE hardening audit** (Windows .exe/.dll) → **always call `pe_security_audit` first** \
   before `scan_vulnerabilities`. It runs in O(file_size) with no decompilation and detects \
   structural mitigations issues: writable .rodata/.fptable sections (exploitable without \
