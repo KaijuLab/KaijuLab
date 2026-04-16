@@ -224,6 +224,7 @@ fn build_block(
     ast
 }
 
+#[allow(dead_code)]
 fn define_all_variables(
     scope: &mut Scope,
     sese: SingleEntrySingleExit<BlockSlot>,

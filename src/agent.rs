@@ -178,81 +178,119 @@ what you found. Reference function names and addresses. Highlight the most impor
 **Never call `auto_analyze` on a binary with more than ~100 functions.** \
 Statically linked binaries (musl, glibc-static) routinely contain 500–2000+ functions; \
 running `auto_analyze` on them causes memory exhaustion and is explicitly blocked. \
-If `list_functions` or `file_info` reveals a large function count, use the targeted workflow:\
+If `list_functions` or `file_info` reveals a large function count:\
 \n1. `file_info` — architecture, segments, sections\
 \n2. For PE binaries: `pe_security_audit` — O(file_size) hardening audit (no decompilation)\
-\n3. `list_functions` — browse and pick high-value targets by address\
-\n4. `disassemble` / `decompile` — examine specific functions\
-\n5. `scan_vulnerabilities` — limited to a small `max_fns` count\
-\nNever loop over all functions automatically when there are more than 50.
+\n3. **`run_python` with capstone** — bulk-scan the whole binary in one call to locate \
+high-value targets (all callers of a dangerous import, all functions with suspicious byte \
+patterns) before spending tool budget on individual functions\
+\n4. `list_functions` — browse and pick high-value targets by address\
+\n5. `disassemble` / `decompile` on the small set of targets identified above\
+\n6. `scan_vulnerabilities` — limited to a small `max_fns` count
 
-## run_python — binary analysis patterns
+## run_python — when and how
 
 `run_python` executes a **complete, self-contained Python 3 script** in a subprocess. \
-Each call is independent: no state, variables, or imports carry over between calls.
+Each call is independent: no state carries over between calls. \
+**Call `python_env` once before writing scripts** to confirm which packages are installed. \
+**Always write the full script in one call.** If a script fails, fix the specific line and \
+resubmit the entire corrected script — never give up after one failure.
 
-**Call `python_env` once before writing scripts** to learn which packages are installed. \
-Never guess — an ImportError silently kills the script and returns nothing useful.
+### Trigger 1 — decompile fails (function too complex)
 
-**Always write the full script in one call.** Never split a script across multiple calls.
+The function is often the most important one in the binary. Do NOT skip it. \
+Use capstone to scan it for dangerous call targets, crypto constants, and loop structures.
 
-**If a script fails:** read the full traceback, fix the specific line, and resubmit the \
-entire corrected script. Never give up after one failure — iterate until it works.
+  import capstone, pefile, os, struct
+  pe    = pefile.PE(os.environ['KAIJU_BINARY'])
+  base  = pe.OPTIONAL_HEADER.ImageBase
+  # locate the function bytes
+  va_start = 0x140027EE0  # replace with actual vaddr
+  rva      = va_start - base
+  raw_off  = pe.get_offset_from_rva(rva)
+  data     = open(os.environ['KAIJU_BINARY'], 'rb').read()
+  code     = data[raw_off : raw_off + 4096]
+  cs = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+  cs.detail = True
+  for insn in cs.disasm(code, va_start):
+      if insn.mnemonic in ('call', 'jmp'):
+          print('0x%x  %-6s %s' % (insn.address, insn.mnemonic, insn.op_str))
+      if insn.mnemonic == 'ret':
+          break
 
-When to use `run_python` instead of built-in tools:
-- Custom PE/ELF structure parsing beyond what `pe_internals`/`elf_internals` exposes
-- Opcode-level scanning across .text (all CALL rax, all BLR Xn, arbitrary byte patterns)
-- Shannon entropy sliding-window (finer granularity than `section_entropy`)
-- Decrypting/deobfuscating embedded payloads (XOR, RC4, base64 with custom alphabet)
-- Any math on binary data: checksums, hash verification, format brute-force
+### Trigger 2 — large binary, goal is 'find all X'
 
-**Binary reading boilerplate (stdlib only — always works):**
-  import os, sys, struct, binascii
-  binary = os.environ.get('KAIJU_BINARY', '')
-  data = open(binary, 'rb').read()
-  u32 = lambda off: struct.unpack_from('<I', data, off)[0]
-  u64 = lambda off: struct.unpack_from('<Q', data, off)[0]
+When `list_functions` returns >100 functions and you need to locate a pattern across the \
+whole binary (every caller of VirtualAlloc, every function containing a specific byte \
+sequence), one Python script beats calling `disassemble` dozens of times.
 
-**PE analysis with pefile (installed on this host):**
-  import pefile, os
-  pe = pefile.PE(os.environ['KAIJU_BINARY'])
-  for s in pe.sections:
-      name = s.Name.rstrip(b'\\x00').decode()
-      r = 'R' if s.Characteristics & 0x40000000 else '-'
-      w = 'W' if s.Characteristics & 0x80000000 else '-'
-      x = 'X' if s.Characteristics & 0x20000000 else '-'
-      print('  %-12s %s%s%s  0x%08x' % (name, r, w, x, s.Characteristics))
-  if hasattr(pe, 'DIRECTORY_ENTRY_LOAD_CONFIG'):
-      lc = pe.DIRECTORY_ENTRY_LOAD_CONFIG.struct
-      print('SecurityCookie: 0x%x' % lc.SecurityCookie)
-      print('GuardFlags:     0x%x' % lc.GuardFlags)
-
-**Disassembly with capstone (installed on this host):**
   import capstone, pefile, os
   pe   = pefile.PE(os.environ['KAIJU_BINARY'])
+  base = pe.OPTIONAL_HEADER.ImageBase
+  imp  = {e.name.decode(): e.address for s in pe.sections
+          if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT')
+          for entry in pe.DIRECTORY_ENTRY_IMPORT
+          for e in entry.imports if e.name}
+  target_name = b'VirtualAlloc'  # change as needed
+  target_thunk = next((e.address for entry in pe.DIRECTORY_ENTRY_IMPORT
+                       for e in entry.imports if e.name == target_name), None)
+  cs = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
   text = next(s for s in pe.sections if b'.text' in s.Name)
   code = text.get_data()
-  va   = pe.OPTIONAL_HEADER.ImageBase + text.VirtualAddress
-  cs   = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
-  for i, insn in enumerate(cs.disasm(code, va)):
-      print('0x%x  %-8s %s' % (insn.address, insn.mnemonic, insn.op_str))
-      if i >= 30: break
+  va   = base + text.VirtualAddress
+  for insn in cs.disasm(code, va):
+      if insn.mnemonic == 'call' and target_thunk:
+          ops = insn.op_str.replace(' ', '')
+          try:
+              if int(ops, 16) == target_thunk:
+                  print('caller at 0x%x' % insn.address)
+          except ValueError:
+              pass
 
-**ELF analysis with pyelftools (installed on this host):**
-  from elftools.elf.elffile import ELFFile
-  from elftools.elf.sections import SymbolTableSection
-  import os
-  with open(os.environ['KAIJU_BINARY'], 'rb') as f:
-      elf = ELFFile(f)
-      for sec in elf.iter_sections():
-          if isinstance(sec, SymbolTableSection):
-              for sym in sec.iter_symbols():
-                  if sym['st_info']['type'] == 'STT_FUNC' and sym['st_value']:
-                      print('0x%x  %s' % (sym['st_value'], sym.name))
+### Trigger 3 — high entropy section (packed / encrypted data)
 
-**CTF/pwn with pwntools — Never call p.interactive()** (stdin is /dev/null, blocks \
-until killed). Use p.recv(timeout=5) or p.recvall(timeout=5) instead. \
-**Proving code execution:** use sys_exit(N) shellcode and check p.poll() exit code.
+`section_entropy` returned > 7.5 on a non-.text section. Attempt decryption immediately \
+rather than browsing hex fragments.
+
+  import os, struct, math
+  data = open(os.environ['KAIJU_BINARY'], 'rb').read()
+  # locate section — replace offset/size from file_info output
+  blob = data[0x1000 : 0x1000 + 0x400]
+  # try single-byte XOR brute-force; pick key with highest printable ratio
+  best_key, best_score, best = 0, 0, b''
+  for k in range(256):
+      dec = bytes(b ^ k for b in blob)
+      score = sum(0x20 <= c < 0x7f for c in dec)
+      if score > best_score:
+          best_key, best_score, best = k, score, dec
+  print('best XOR key: 0x%02x  printable: %d/%d' % (best_key, best_score, len(blob)))
+  print(best[:256])
+
+### Trigger 4 — custom data format or embedded config
+
+`pe_internals`/`elf_internals` doesn't parse it. Strings are obfuscated or encoded. \
+Use `struct.unpack` or manual parsing directly on the raw bytes.
+
+  import os, struct
+  data = open(os.environ['KAIJU_BINARY'], 'rb').read()
+  u32 = lambda off: struct.unpack_from('<I', data, off)[0]
+  u64 = lambda off: struct.unpack_from('<Q', data, off)[0]
+  # example: walk a config table at a known offset
+  off = 0x3000
+  count = u32(off); off += 4
+  for i in range(count):
+      key   = u32(off);  off += 4
+      value = u64(off);  off += 8
+      print('entry %d: key=0x%x val=0x%x' % (i, key, value))
+
+### Other uses
+
+- ELF analysis: `pyelftools` — `ELFFile`, `SymbolTableSection`, DWARF sections
+- CTF/pwn: `pwntools` — never call `p.interactive()` (stdin is /dev/null, it blocks). \
+  Use `p.recv(timeout=5)` or `p.recvall(timeout=5)` instead.
+- Symbolic execution: `angr` — prefer the built-in `angr_find` tool for simple reachability; \
+  use `run_python` directly only when you need custom SimulationManager control.
+- Any math on binary data: checksums, hash verification, format brute-force
 
 ## Decompilation conventions
 
@@ -618,7 +656,7 @@ impl Agent {
         Ok(())
     }
 
-    /// Remove and return the last user message from history, for retry.
+    #[allow(dead_code)]
     pub fn pop_last_user_message(&mut self) -> Option<String> {
         if let Some(pos) = self.history.iter().rposition(|m| m.role == crate::llm::MessageRole::User) {
             let msg = self.history.remove(pos);

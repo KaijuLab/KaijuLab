@@ -308,12 +308,12 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
 
     // ── Utility functions ─────────────────────────────────────────────────────
 
-    /// Format an integer as a hex string: `hex(0x401000)` → `"0x401000"`.
+    // Format an integer as a hex string: hex(0x401000) → "0x401000"
     engine.register_fn("hex", |n: i64| -> String {
         format!("0x{:x}", n as u64)
     });
 
-    /// Parse a hex or decimal address string: `parse_addr("0x401000")` → `4198400i64`.
+    // Parse a hex or decimal address string: parse_addr("0x401000") → 4198400i64
     engine.register_fn("parse_addr", |s: &str| -> i64 {
         let s = s.trim();
         if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -323,7 +323,7 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
         }
     });
 
-    /// Returns the path to the plugins directory.
+    // Returns the path to the plugins directory
     engine.register_fn("plugins_dir", || -> String {
         plugins_dir().to_string_lossy().into_owned()
     });

@@ -31,11 +31,28 @@ fn sleigh_dir() -> std::path::PathBuf {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+/// Run `f` in a dedicated thread with a 64 MiB stack so that deeply-recursive
+/// decompiler passes (HighFunction, AST builder) don't overflow the default
+/// 8 MiB thread stack on large functions.
+fn run_in_large_stack<F, T>(f: F) -> anyhow::Result<T>
+where
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(f)?
+        .join()
+        .map_err(|e| anyhow::anyhow!("Decompile thread panicked: {}", panic_msg(e)))?
+}
+
 /// Decompile the function starting at `vaddr` in the binary at `path`.
 ///
 /// Returns a text string of pseudo-C code, or an error message.
 pub fn decompile_function(path: &str, vaddr: u64) -> String {
-    match decompile_inner(path, vaddr) {
+    let path = path.to_string();
+    let result = run_in_large_stack(move || decompile_inner(&path, vaddr));
+    match result {
         Ok(text) => text,
         Err(e) => format!("Decompiler error: {e}"),
     }
@@ -45,7 +62,10 @@ pub fn decompile_function(path: &str, vaddr: u64) -> String {
 /// at `base_addr`.  `arch_str` selects the SLEIGH language:
 ///   "x86_64" | "x86_32" | "aarch64" | "arm32"
 pub fn decompile_function_flat(path: &str, base_addr: u64, vaddr: u64, arch_str: &str) -> String {
-    match decompile_flat_inner(path, base_addr, vaddr, arch_str) {
+    let path = path.to_string();
+    let arch_str = arch_str.to_string();
+    let result = run_in_large_stack(move || decompile_flat_inner(&path, base_addr, vaddr, &arch_str));
+    match result {
         Ok(text) => text,
         Err(e)   => format!("Decompiler error: {e}"),
     }
@@ -106,10 +126,10 @@ fn decompile_flat_inner(
         .map_err(|e| anyhow::anyhow!("Lift failed at 0x{:x}: {e}", vaddr))?;
 
     let ir_block_count = memory.ir.len();
-    if ir_block_count > 500 {
+    if ir_block_count > 3000 {
         return Err(anyhow::anyhow!(
-            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 500). \
-             Use `disassemble` for raw instruction listing instead."
+            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 3000). \
+             Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
         ));
     }
 
@@ -121,10 +141,10 @@ fn decompile_flat_inner(
     hf.fill_global_symbols(&mut memory);
 
     let block_count = hf.composed_blocks.len();
-    if block_count > 400 {
+    if block_count > 1200 {
         return Err(anyhow::anyhow!(
-            "Function too complex to decompile ({block_count} basic blocks > limit of 400). \
-             Use `disassemble` for raw instruction listing instead."
+            "Function too complex to decompile ({block_count} basic blocks > limit of 1200). \
+             Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
         ));
     }
 
@@ -256,10 +276,10 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     // stack overflow on large AArch64/PE functions.  500 IR blocks is a
     // conservative upper bound; typical non-trivial functions stay below 200.
     let ir_block_count = memory.ir.len();
-    if ir_block_count > 500 {
+    if ir_block_count > 3000 {
         return Err(anyhow::anyhow!(
-            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 500). \
-             Use `disassemble` for raw instruction listing instead."
+            "Function too complex to decompile ({ir_block_count} IR blocks > limit of 3000). \
+             Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
         ));
     }
 
@@ -276,10 +296,10 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     // function with hundreds of nested branches they can exhaust any stack.
     // 400 blocks is well above what the AST builder handles reliably.
     let block_count = hf.composed_blocks.len();
-    if block_count > 400 {
+    if block_count > 1200 {
         return Err(anyhow::anyhow!(
-            "Function too complex to decompile ({block_count} basic blocks > limit of 400). \
-             Use `disassemble` for raw instruction listing instead."
+            "Function too complex to decompile ({block_count} basic blocks > limit of 1200). \
+             Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
         ));
     }
 

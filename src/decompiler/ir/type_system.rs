@@ -23,9 +23,11 @@ impl Default for VariableType {
 }
 
 pub struct Struct {
+    #[allow(dead_code)]
     fields: NoditMap<Interval<usize>, usize, VariableType>
 }
 
 pub struct KnownStructs{
+    #[allow(dead_code)]
     storage:Vec<Struct>
 }

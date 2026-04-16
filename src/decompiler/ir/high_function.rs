@@ -1,4 +1,4 @@
-use nodit::{interval::ie, DiscreteFinite, InclusiveInterval, Interval, NoditMap};
+use nodit::{interval::ie, DiscreteFinite, Interval, NoditMap};
 use pcode::VarNode;
 use sleigh_compile::ldef::SleighLanguage;
 use std::collections::HashSet;

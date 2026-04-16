@@ -467,8 +467,8 @@ impl App {
                 self.chat.push(ChatMsg::ToolCall { name: name.clone(), args: display_args });
                 self.status = format!("⏺ {}(…)", name);
                 self.is_loading = true;
-                // Scroll chat to bottom so the call is visible
-                self.scroll[Tab::Chat as usize] = 0;
+                // scroll=0 means "pinned to bottom"; render_chat tracks new content automatically.
+                // Do NOT reset scroll here so the user's manual scroll position is preserved.
             }
             AgentEvent::ToolResult { name, output } => {
                 let lines: Vec<String> = output.lines().map(|l| l.to_string()).collect();
@@ -533,14 +533,13 @@ impl App {
                     Some(ChatMsg::Assistant(text)) => text.push_str(&chunk),
                     _ => self.chat.push(ChatMsg::Assistant(chunk)),
                 }
-                self.active_tab = Tab::Chat;
-                self.scroll[Tab::Chat as usize] = 0;
+                // Do NOT force active_tab or scroll — let the user stay wherever they are.
+                // scroll=0 already means "bottom" and naturally tracks new content.
                 self.is_loading = true;
             }
             AgentEvent::LlmText(text) => {
                 self.chat.push(ChatMsg::Assistant(text));
-                self.active_tab = Tab::Chat;
-                self.scroll[Tab::Chat as usize] = 0;
+                // Do NOT force active_tab — let the user stay on the tab they chose.
                 self.is_loading = false;
                 self.status = "Ready".to_string();
                 self.needs_full_redraw = true;
