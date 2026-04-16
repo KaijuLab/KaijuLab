@@ -395,7 +395,19 @@ fn lift_function(addr: Address, memory: &mut Memory) -> anyhow::Result<()> {
 
     // SAFETY: we borrow the slice pointer before mutably borrowing memory
     // This is a one-time immutable read converted to owned data.
-    let bytes_owned: Vec<u8> = unsafe { (*bytes_slice).to_vec() };
+    //
+    // IMPORTANT: cap the decode window to prevent OOM on large .text sections.
+    // Without a cap, lifting a function midway through a multi-MB section
+    // decodes every subsequent byte as instructions (potentially 500k+ AArch64
+    // instructions), allocating gigabytes before the 500-IR-block guard fires.
+    // 256 KB / 4 bytes = 64k AArch64 instructions, far more than any function
+    // that would pass the 500-block complexity cap.  x86 instructions vary in
+    // length but 256 KB is equally generous; the decoder stops at decode errors.
+    const MAX_DECODE_BYTES: usize = 256 * 1024;
+    let bytes_owned: Vec<u8> = unsafe {
+        let all = &*bytes_slice;
+        all[..all.len().min(MAX_DECODE_BYTES)].to_vec()
+    };
 
     let instructions = LiteralState::from_machine_code(
         Cow::Owned(bytes_owned),
