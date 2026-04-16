@@ -172,6 +172,13 @@ what you found. Reference function names and addresses. Highlight the most impor
 - Unknown stripped binary → `identify_library_functions` first to name libc functions
 - Import resolution → `resolve_plt` (ELF) or `resolve_pe_imports` (PE) before disassembling
 - Full pass → `auto_analyze` kicks off file_info + list_functions + strings + vuln scan
+- **C++ binary** → `recover_vtables` early to map classes and virtual dispatch chains before \
+  spending decompile budget; rename discovered methods immediately with `rename_function`
+- **No readable strings / high entropy** → `find_string_decoders` to locate XOR/ADD loop stubs, \
+  then emulate with `run_python` + unicorn (see template below) to recover plaintext
+- **Runtime behaviour** → `frida_trace` with specific import names or addresses to log call \
+  arguments and return values without a full debugger; run `python_env` first to confirm frida \
+  is installed
 
 ## Large binary warning
 
@@ -282,6 +289,60 @@ Use `struct.unpack` or manual parsing directly on the raw bytes.
       key   = u32(off);  off += 4
       value = u64(off);  off += 8
       print('entry %d: key=0x%x val=0x%x' % (i, key, value))
+
+### Trigger 5 — emulate a decoder stub with unicorn
+
+After `find_string_decoders` identifies a candidate and `decompile` shows the loop body, \
+use unicorn to run it and extract the plaintext strings without executing the whole binary.
+
+  import unicorn, unicorn.x86_const as x86, os, struct, pefile
+  pe   = pefile.PE(os.environ['KAIJU_BINARY'])
+  base = pe.OPTIONAL_HEADER.ImageBase
+  data = open(os.environ['KAIJU_BINARY'], 'rb').read()
+
+  DECODER_VA = 0x140012345  # replace with address from find_string_decoders
+  DECODER_RVA = DECODER_VA - base
+  raw_off  = pe.get_offset_from_rva(DECODER_RVA)
+  code     = data[raw_off : raw_off + 256]    # enough for a small stub
+
+  STACK_BASE = 0x7ff000000000
+  HEAP_BASE  = 0x7fe000000000
+  HEAP_SIZE  = 0x10000
+  encrypted  = b'\\x41\\x02\\x43'  # replace with actual encrypted bytes
+  key        = 0x41                # replace with XOR key from find_string_decoders
+
+  mu = unicorn.Uc(unicorn.UC_ARCH_X86, unicorn.UC_MODE_64)
+  # map code page
+  PAGE = (DECODER_VA & ~0xfff)
+  mu.mem_map(PAGE, 0x2000)
+  mu.mem_write(DECODER_VA, code)
+  # map heap for input/output buffers
+  mu.mem_map(HEAP_BASE, HEAP_SIZE)
+  mu.mem_write(HEAP_BASE, encrypted)
+  # map stack
+  mu.mem_map(STACK_BASE - 0x10000, 0x10000)
+  mu.reg_write(x86.UC_X86_REG_RSP, STACK_BASE - 0x100)
+  # set arguments (rdi=dst, rsi=src, rdx=len, rcx=key)
+  mu.reg_write(x86.UC_X86_REG_RDI, HEAP_BASE + 0x1000)
+  mu.reg_write(x86.UC_X86_REG_RSI, HEAP_BASE)
+  mu.reg_write(x86.UC_X86_REG_RDX, len(encrypted))
+  mu.reg_write(x86.UC_X86_REG_RCX, key)
+
+  # hook invalid memory to stop cleanly at CALL imports
+  def hook_mem(uc, access, addr, size, val, user):
+      uc.emu_stop()
+      return True
+  mu.hook_add(unicorn.UC_HOOK_MEM_UNMAPPED, hook_mem)
+
+  try:
+      mu.emu_start(DECODER_VA, DECODER_VA + len(code), timeout=2_000_000, count=5000)
+  except unicorn.UcError:
+      pass
+
+  result = bytes(mu.mem_read(HEAP_BASE + 0x1000, len(encrypted)))
+  print('decrypted:', result)
+  try: print('as string:', result.decode('utf-8', errors='replace'))
+  except: pass
 
 ### Other uses
 

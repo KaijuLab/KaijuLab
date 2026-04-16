@@ -352,6 +352,27 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             )
         }
 
+        "recover_vtables" => recover_vtables(
+            &str_arg(args, "path"),
+            args["min_methods"].as_u64().unwrap_or(2) as usize,
+        ),
+
+        "find_string_decoders" => find_string_decoders(
+            &str_arg(args, "path"),
+            args["max_fns"].as_u64().unwrap_or(500) as usize,
+        ),
+
+        "frida_trace" => {
+            let hooks: Vec<String> = args["hooks"].as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            frida_trace(
+                &str_arg(args, "path"),
+                &hooks,
+                args["timeout_secs"].as_u64().unwrap_or(10),
+            )
+        }
+
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
 }
@@ -5146,6 +5167,519 @@ fn run_python(
     }
 }
 
+// ─── Tool: recover_vtables ───────────────────────────────────────────────────
+
+/// Scan .rdata/.rodata for sequences of pointers that all point into .text —
+/// the canonical layout of a C++ vtable on x86/x64 PE and ELF binaries.
+fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let min_methods = min_methods.max(2).min(64);
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    // Collect (ptr_size, text ranges, scan sections) from either PE or ELF.
+    let (ptr_sz, text_ranges, scan_sections): (
+        usize,
+        Vec<(u64, u64)>,
+        Vec<(String, u64, Vec<u8>)>,
+    ) = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(pe)) => {
+            let ptr_sz: usize = if pe.is_64 { 8 } else { 4 };
+            let base = pe.image_base as u64;
+
+            let text_ranges = pe.sections.iter()
+                .filter(|s| {
+                    let n = std::str::from_utf8(&s.name).unwrap_or("").trim_matches('\0');
+                    n == ".text" || n.contains("text")
+                })
+                .map(|s| {
+                    let va = base + s.virtual_address as u64;
+                    (va, va + s.virtual_size as u64)
+                })
+                .collect();
+
+            // vtables live in .rdata; also check .data for hand-assembled code
+            let scan = pe.sections.iter()
+                .filter(|s| {
+                    let n = std::str::from_utf8(&s.name).unwrap_or("").trim_matches('\0');
+                    n == ".rdata" || n == ".data"
+                })
+                .filter_map(|s| {
+                    let n = std::str::from_utf8(&s.name).unwrap_or("?")
+                        .trim_matches('\0').to_string();
+                    let va  = base + s.virtual_address as u64;
+                    let off = s.pointer_to_raw_data as usize;
+                    let sz  = s.size_of_raw_data as usize;
+                    Some((n, va, data.get(off..off + sz)?.to_vec()))
+                })
+                .collect();
+
+            (ptr_sz, text_ranges, scan)
+        }
+        Ok(goblin::Object::Elf(elf)) => {
+            let ptr_sz: usize = if elf.is_64 { 8 } else { 4 };
+
+            let text_ranges = elf.section_headers.iter()
+                .filter(|sh| matches!(
+                    elf.shdr_strtab.get_at(sh.sh_name),
+                    Some(".text") | Some("__text")
+                ))
+                .map(|sh| (sh.sh_addr, sh.sh_addr + sh.sh_size))
+                .collect();
+
+            let scan = elf.section_headers.iter()
+                .filter(|sh| matches!(
+                    elf.shdr_strtab.get_at(sh.sh_name),
+                    Some(".rodata") | Some(".data.rel.ro") | Some(".data")
+                ))
+                .filter_map(|sh| {
+                    let n = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("?").to_string();
+                    let off = sh.sh_offset as usize;
+                    let sz  = sh.sh_size as usize;
+                    Some((n, sh.sh_addr, data.get(off..off + sz)?.to_vec()))
+                })
+                .collect();
+
+            (ptr_sz, text_ranges, scan)
+        }
+        _ => return ToolResult::err("Unsupported format — PE or ELF required"),
+    };
+
+    let is_in_text = |addr: u64| -> bool {
+        addr != 0 && text_ranges.iter().any(|&(s, e)| addr >= s && addr < e)
+    };
+
+    let read_ptr = |bytes: &[u8], off: usize| -> Option<u64> {
+        if ptr_sz == 8 {
+            bytes.get(off..off + 8)
+                .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+        } else {
+            bytes.get(off..off + 4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as u64)
+        }
+    };
+
+    let mut vtables: Vec<(u64, Vec<u64>)> = Vec::new();
+
+    for (_sec_name, sec_va, sec_bytes) in &scan_sections {
+        let n = sec_bytes.len() / ptr_sz;
+        let mut i = 0;
+        while i < n {
+            let Some(ptr) = read_ptr(sec_bytes, i * ptr_sz) else { i += 1; continue; };
+            if !is_in_text(ptr) { i += 1; continue; }
+
+            // Collect the run of consecutive valid .text pointers
+            let vtable_va = sec_va + (i * ptr_sz) as u64;
+            let mut methods = vec![ptr];
+            let mut j = i + 1;
+            while j < n {
+                let Some(p2) = read_ptr(sec_bytes, j * ptr_sz) else { break; };
+                if is_in_text(p2) { methods.push(p2); j += 1; } else { break; }
+            }
+
+            if methods.len() >= min_methods {
+                vtables.push((vtable_va, methods));
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if vtables.is_empty() {
+        return ToolResult::ok(format!(
+            "No vtable candidates found — no runs of ≥{} consecutive .text pointers in \
+             .rdata/.rodata/.data.",
+            min_methods
+        ));
+    }
+
+    let project = Project::load_for(path);
+    let resolve = |addr: u64| -> String {
+        project.renames.get(&addr).cloned()
+            .unwrap_or_else(|| format!("FUN_{:016x}", addr))
+    };
+
+    let sep = "─".repeat(56);
+    let mut out = format!(
+        "vtable recovery — {} candidate{} (min_methods={})\n{}\n\n",
+        vtables.len(),
+        if vtables.len() == 1 { "" } else { "s" },
+        min_methods,
+        sep,
+    );
+    for (vt_va, methods) in &vtables {
+        out.push_str(&format!("vtable @ 0x{:016x}  ({} methods)\n", vt_va, methods.len()));
+        for (idx, m) in methods.iter().enumerate() {
+            out.push_str(&format!("  [{}]  0x{:016x}  {}\n", idx, m, resolve(*m)));
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "{}\nDecompile individual methods to confirm; use rename_function to assign class names.\n",
+        sep
+    ));
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: find_string_decoders ──────────────────────────────────────────────
+
+/// Scan .text functions for the hallmarks of a string-decoding stub:
+/// XOR-with-immediate, byte-level memory access, and a backward branch (loop).
+/// Returns candidates ranked by a heuristic score so the analyst can decompile
+/// and then emulate the top hits with unicorn.
+fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
+    use iced_x86::{Decoder, DecoderOptions, FlowControl, Mnemonic, OpKind};
+
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+    let obj = match object::File::parse(&*data) {
+        Ok(f) => f,
+        Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
+    };
+
+    let bitness: u32 = match obj.architecture() {
+        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+        Architecture::I386 => 32,
+        other => return ToolResult::err(format!(
+            "find_string_decoders requires x86/x86-64 (got {:?})", other
+        )),
+    };
+
+    let text_sec = obj.sections()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".text" || n == "__text"));
+    let (text_vaddr, text_end, text_bytes) = match text_sec {
+        Some(s) => {
+            let va  = s.address();
+            let end = va + s.size();
+            let bytes = s.data().unwrap_or(&[]).to_vec();
+            (va, end, bytes)
+        }
+        None => return ToolResult::err("Cannot find .text section"),
+    };
+
+    // Collect function start addresses from the symbol table
+    let project = Project::load_for(path);
+    let mut fn_addrs: Vec<u64> = obj.symbols()
+        .filter(|s| {
+            s.kind() == object::SymbolKind::Text
+                && s.address() >= text_vaddr
+                && s.address() < text_end
+                && s.size() > 0
+                && s.size() <= 0x800 // decoders are small
+        })
+        .map(|s| s.address())
+        .collect();
+
+    // Fall back to stripped-binary prologue scan if no symbols
+    if fn_addrs.is_empty() {
+        let is_64 = bitness == 64;
+        let mut i = 0usize;
+        while i + 4 <= text_bytes.len() {
+            let b = &text_bytes[i..];
+            let hit = if is_64 {
+                (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
+                    || (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
+            } else {
+                b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5
+            };
+            if hit { fn_addrs.push(text_vaddr + i as u64); }
+            i += 1;
+        }
+    }
+
+    // PE .pdata fallback for stripped x64 PE
+    if fn_addrs.is_empty() {
+        if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
+            let base = pe.image_base as u64;
+            if let Some(pdata) = pe.sections.iter()
+                .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+                .and_then(|s| s.data(&data).ok().flatten())
+            {
+                for chunk in pdata.chunks_exact(12) {
+                    let rva = u32::from_le_bytes(chunk[0..4].try_into().unwrap()) as u64;
+                    if rva != 0 { fn_addrs.push(base + rva); }
+                }
+            }
+        }
+    }
+
+    fn_addrs.sort_unstable();
+    fn_addrs.dedup();
+    fn_addrs.truncate(max_fns.min(2000));
+
+    let mut candidates: Vec<(u64, u32, String)> = Vec::new();
+
+    for &fn_va in &fn_addrs {
+        if fn_va < text_vaddr || fn_va >= text_end { continue; }
+        let fn_off = (fn_va - text_vaddr) as usize;
+        if fn_off >= text_bytes.len() { continue; }
+
+        // Cap at 512 bytes — real decoder stubs are small
+        let window = text_bytes[fn_off..].len().min(512);
+        let slice  = &text_bytes[fn_off..fn_off + window];
+        let mut decoder = Decoder::with_ip(bitness, slice, fn_va, DecoderOptions::NONE);
+
+        let mut score: u32 = 0;
+        let mut instr_count: u32 = 0;
+        let mut has_xor_imm       = false;
+        let mut has_arith_imm     = false;
+        let mut has_byte_mem      = false;
+        let mut has_back_branch   = false;
+        let mut has_loop_insn     = false;
+        let mut xor_keys: Vec<u64> = Vec::new();
+        let mut tags: Vec<&'static str> = Vec::new();
+
+        for instr in &mut decoder {
+            if instr.is_invalid() { continue; }
+            instr_count += 1;
+            if instr_count > 100 { break; }
+
+            let m  = instr.mnemonic();
+            let ip = instr.ip();
+
+            // XOR reg/mem, imm  (most common single-byte XOR key)
+            if m == Mnemonic::Xor
+                && matches!(
+                    instr.op1_kind(),
+                    OpKind::Immediate8 | OpKind::Immediate8to32 | OpKind::Immediate8to64
+                    | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate32to64
+                )
+                && instr.immediate(1) != 0
+            {
+                has_xor_imm = true;
+                xor_keys.push(instr.immediate(1));
+            }
+
+            // ADD / SUB / ROL / ROR with immediate (alternative obfuscation ops)
+            if matches!(m, Mnemonic::Add | Mnemonic::Sub | Mnemonic::Rol | Mnemonic::Ror)
+                && matches!(
+                    instr.op1_kind(),
+                    OpKind::Immediate8 | OpKind::Immediate8to32 | OpKind::Immediate16
+                    | OpKind::Immediate32
+                )
+            {
+                has_arith_imm = true;
+            }
+
+            // Byte memory read (MOVZX/MOVSX from [mem], or MOV AL/CL/DL…)
+            if matches!(m, Mnemonic::Movzx | Mnemonic::Movsx)
+                && instr.op1_kind() == OpKind::Memory
+            {
+                has_byte_mem = true;
+            }
+            if m == Mnemonic::Mov
+                && (instr.op0_kind() == OpKind::Memory || instr.op1_kind() == OpKind::Memory)
+            {
+                has_byte_mem = true;
+            }
+
+            // Backward branch within this function → loop body
+            if matches!(
+                instr.flow_control(),
+                FlowControl::ConditionalBranch | FlowControl::UnconditionalBranch
+            ) {
+                let tgt = instr.near_branch64();
+                if tgt < ip && tgt >= fn_va {
+                    has_back_branch = true;
+                }
+            }
+
+            // Explicit LOOP/LOOPE/LOOPNE instruction
+            if matches!(m, Mnemonic::Loop | Mnemonic::Loope | Mnemonic::Loopne) {
+                has_loop_insn = true;
+            }
+
+            if instr.flow_control() == FlowControl::Return { break; }
+        }
+
+        if has_xor_imm         { score += 30; tags.push("xor-imm"); }
+        if has_arith_imm       { score += 10; tags.push("arith-imm"); }
+        if has_byte_mem        { score += 20; tags.push("byte-mem"); }
+        if has_back_branch     { score += 25; tags.push("back-branch"); }
+        if has_loop_insn       { score += 30; tags.push("LOOP-insn"); }
+        // Size bonus: true stubs are tiny
+        if instr_count <= 15 && score > 0 { score += 25; }
+        else if instr_count <= 30 && score > 0 { score += 10; }
+
+        if score >= 50 {
+            let keys_str = if !xor_keys.is_empty() {
+                let ks: Vec<String> = xor_keys.iter().take(4)
+                    .map(|k| format!("0x{:x}", k)).collect();
+                format!(" key={}", ks.join(","))
+            } else {
+                String::new()
+            };
+            candidates.push((fn_va, score, format!(
+                "score={} insns={}{} [{}]",
+                score, instr_count, keys_str, tags.join(" ")
+            )));
+        }
+    }
+
+    if candidates.is_empty() {
+        return ToolResult::ok(format!(
+            "No string decoder candidates found in {} functions scanned.\n\
+             (Looked for: XOR-with-immediate + byte memory access + backward branch.)",
+            fn_addrs.len()
+        ));
+    }
+
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let sep = "─".repeat(56);
+    let mut out = format!(
+        "string decoder candidates — {} found ({} functions scanned)\n{}\n\n",
+        candidates.len(), fn_addrs.len(), sep
+    );
+    for (va, _score, desc) in &candidates {
+        let name = project.renames.get(va).cloned()
+            .unwrap_or_else(|| format!("FUN_{:016x}", va));
+        out.push_str(&format!("  0x{:016x}  {:<32}  {}\n", va, name, desc));
+    }
+    out.push_str(&format!(
+        "\n{}\nNext: decompile top candidates, then emulate with run_python + unicorn \
+         to recover plaintext strings.\n",
+        sep
+    ));
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: frida_trace ───────────────────────────────────────────────────────
+
+/// Run a binary under Frida, attach hooks to the requested addresses or export
+/// names, and return the call log (function, args, return value).
+/// Requires the `frida` Python package (`pip install frida frida-tools`).
+fn frida_trace(path: &str, hooks: &[String], timeout_secs: u64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if hooks.is_empty() { return ToolResult::err("'hooks' must contain at least one address or function name"); }
+    if !std::path::Path::new(path).exists() {
+        return ToolResult::err(format!("Binary '{}' not found", path));
+    }
+
+    // Detect architecture from the binary so the JS script reads the right registers
+    let arch_hint = std::fs::read(path).ok().and_then(|d| {
+        object::File::parse(d.as_slice()).ok().map(|f| f.architecture())
+    });
+    let (arg_regs, _ret_reg) = match arch_hint {
+        Some(Architecture::X86_64 | Architecture::X86_64_X32) =>
+            (r#"["rdi","rsi","rdx","rcx","r8","r9"]"#, "rax"),
+        Some(Architecture::Aarch64 | Architecture::Aarch64_Ilp32) =>
+            (r#"["x0","x1","x2","x3","x4","x5"]"#, "x0"),
+        Some(Architecture::Arm) =>
+            (r#"["r0","r1","r2","r3"]"#, "r0"),
+        Some(Architecture::I386) =>
+            (r#"[]"# , "eax"),   // x86-32: args are on stack, skip for now
+        _ =>
+            (r#"["rdi","rsi","rdx","rcx"]"#, "rax"),
+    };
+
+    // Build hook attachment JS for each requested target
+    let mut hook_js = String::new();
+    for hook in hooks {
+        let trimmed = hook.trim();
+        let attach_expr = if trimmed.starts_with("0x") || trimmed.starts_with("0X")
+            || trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
+        {
+            // Numeric address
+            format!("ptr(\"{}\")", trimmed)
+        } else {
+            // Export name — search all loaded modules
+            format!("Module.findExportByName(null, {:?})", trimmed)
+        };
+        hook_js.push_str(&format!(r#"
+(function() {{
+  var target = {attach_expr};
+  if (!target) {{ console.log("[frida] WARNING: could not resolve hook target: {hook_display}"); return; }}
+  Interceptor.attach(target, {{
+    onEnter: function(args) {{
+      var argRegs = {arg_regs};
+      var argVals = argRegs.map(function(r) {{
+        try {{ return this.context[r].toString(); }} catch(e) {{ return "?"; }}
+      }}, this);
+      send(JSON.stringify({{event:"enter", target:"{hook_display}", args:argVals}}));
+    }},
+    onLeave: function(retval) {{
+      send(JSON.stringify({{event:"leave", target:"{hook_display}", retval:retval.toString()}}));
+    }}
+  }});
+  console.log("[frida] hooked: {hook_display}");
+}})();
+"#,
+            attach_expr = attach_expr,
+            hook_display = trimmed,
+            arg_regs = arg_regs,
+        ));
+    }
+
+
+    let script = format!(r#"
+import frida, sys, json, os, time
+
+BINARY = os.environ.get('KAIJU_BINARY', '')
+events = []
+
+def on_message(message, data):
+    if message.get('type') == 'send':
+        try:
+            events.append(json.loads(message['payload']))
+        except Exception:
+            events.append({{'raw': message['payload']}})
+    elif message.get('type') == 'error':
+        print('[frida error]', message.get('description',''), message.get('stack',''))
+
+js_hook = r"""
+{hook_js}
+"""
+
+try:
+    device = frida.get_local_device()
+    pid    = device.spawn([BINARY])
+    session = device.attach(pid)
+    script  = session.create_script(js_hook)
+    script.on('message', on_message)
+    script.load()
+    device.resume(pid)
+    time.sleep({timeout_secs})
+    try:
+        session.detach()
+    except Exception:
+        pass
+except frida.NotSupportedError as e:
+    print("frida.NotSupportedError:", e)
+    print("Tip: frida may require root or ptrace permissions on this system.")
+    sys.exit(1)
+except Exception as e:
+    print("frida error:", e)
+    sys.exit(1)
+
+print(f"[frida_trace] captured {{len(events)}} events")
+print()
+for ev in events:
+    if ev.get('event') == 'enter':
+        ev_args = ', '.join(ev.get('args', []))
+        print(f"  CALL  {{ev['target']}}({{ev_args}})")
+    elif ev.get('event') == 'leave':
+        print(f"  RET   {{ev['target']}} -> {{ev.get('retval','?')}}")
+    else:
+        print(' ', ev)
+"#,
+        hook_js      = hook_js,
+        timeout_secs = timeout_secs.clamp(2, 30),
+    );
+
+    run_python(&script, None, Some(path), timeout_secs + 5)
+}
+
 // ─── Tool: run_binary ────────────────────────────────────────────────────────
 
 /// Execute a native binary with optional args / stdin and capture its output.
@@ -6292,6 +6826,72 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["path", "vaddr"]
+            }),
+        },
+        ToolDefinition {
+            name: "recover_vtables".into(),
+            description: "Scan .rdata/.rodata for sequences of pointers that all point into \
+                           .text — the canonical layout of a C++ vtable on x86/x64 PE and ELF \
+                           binaries. Returns candidate vtable addresses with their virtual method \
+                           addresses (and project renames when available). Use this before \
+                           decompiling C++ binaries to identify classes and virtual dispatch \
+                           chains. min_methods filters out small false-positive pointer arrays \
+                           (default 2; raise to 3-4 for cleaner results on noisy binaries).".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":        { "type": "string",  "description": "Path to the PE or ELF binary" },
+                    "min_methods": { "type": "integer", "description": "Minimum consecutive .text pointers to qualify as a vtable (default 2)" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "find_string_decoders".into(),
+            description: "Scan x86/x86-64 functions for the hallmarks of a string-decoding stub: \
+                           XOR-with-immediate, byte-level memory access, and a backward branch. \
+                           Returns candidates ranked by a heuristic score together with the \
+                           detected XOR key(s) and instruction count. Use this when a binary has \
+                           no readable strings — the top hits are the routines that decrypt them \
+                           at runtime. Follow up by decompiling the candidates and then emulating \
+                           them with run_python + unicorn to recover plaintext strings.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path":    { "type": "string",  "description": "Path to the binary" },
+                    "max_fns": { "type": "integer", "description": "Maximum number of functions to scan (default 500)" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "frida_trace".into(),
+            description: "Spawn a binary under Frida, attach lightweight Interceptor hooks to \
+                           the specified function addresses or export names, and return a call log \
+                           showing arguments and return values. Requires the frida Python package \
+                           (pip install frida frida-tools). Use for: tracing obfuscated dispatch \
+                           tables, logging crypto function inputs/outputs at runtime, confirming \
+                           which branch a specific input triggers, or watching API calls without \
+                           a full debugger. Run python_env first to confirm frida is installed. \
+                           NOTE: may require ptrace permission or root on some Linux systems.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the binary to spawn"
+                    },
+                    "hooks": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Functions to hook — each entry is either a hex address (e.g. '0x401234') or an export name (e.g. 'malloc')"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Seconds to run the binary before detaching (default 10, max 30)"
+                    }
+                },
+                "required": ["path", "hooks"]
             }),
         },
     ]

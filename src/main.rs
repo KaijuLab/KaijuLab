@@ -401,6 +401,11 @@ Scripting & execution:
   /plugins                                List available plugins (~/.kaiju/plugins/)
   /run <name> [binary]                    Run a Rhai plugin by name (or path)
 
+C++ & obfuscation:
+  /vtables         <path> [min_methods]   Recover C++ vtables from .rdata/.rodata
+  /decoders        <path> [max_fns]       Find string-decoder stubs (XOR+loop patterns)
+  /frida           <path> <hook> [hook..] [timeout]  Trace function calls at runtime via Frida
+
 Other:
   /ls              [path]                 List files in a directory
 
@@ -408,6 +413,9 @@ Examples:
   /disasm /bin/ls 0x5880
   /entropy /path/to/suspect.exe
   /search /path/to/binary E8 ?? ?? ?? ?? 48 89 C7
+  /vtables /path/to/malware.exe 3
+  /decoders /path/to/packed.exe
+  /frida /path/to/binary malloc CreateThread 10
   /python solve.py 60
   /run my_script /bin/ls";
 
@@ -734,6 +742,36 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
             let vaddr = parts.get(2).and_then(|s| parse_int(s)).unwrap_or(0);
             let name  = parts.get(3).copied().unwrap_or("");
             run_tool("batch_annotate", json!({"path": path, "vaddr": vaddr, "function_name": name}), tx);
+        }
+
+        // /vtables <path> [min_methods]  — recover C++ vtables
+        "vtables" | "recover_vtables" => {
+            let path        = parts.get(1).copied().unwrap_or("");
+            let min_methods = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(2);
+            run_tool("recover_vtables", json!({"path": path, "min_methods": min_methods}), tx);
+        }
+
+        // /decoders <path> [max_fns]  — find string-decoder stubs
+        "decoders" | "find_string_decoders" => {
+            let path    = parts.get(1).copied().unwrap_or("");
+            let max_fns = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(500);
+            run_tool("find_string_decoders", json!({"path": path, "max_fns": max_fns}), tx);
+        }
+
+        // /frida <path> <hook1> [hook2 ...] [timeout]
+        // hooks are export names or hex addresses; optional trailing integer = timeout
+        "frida" | "frida_trace" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            // Collect remaining parts; if the last one is a plain integer treat it as timeout
+            let rest: Vec<&str> = parts.get(2..).unwrap_or(&[]).to_vec();
+            let (timeout, hook_parts) = match rest.last().and_then(|s| s.parse::<u64>().ok()) {
+                Some(t) => (t, &rest[..rest.len() - 1]),
+                None    => (10u64, rest.as_slice()),
+            };
+            let hooks: Vec<serde_json::Value> = hook_parts.iter()
+                .map(|s| serde_json::Value::String(s.to_string()))
+                .collect();
+            run_tool("frida_trace", json!({"path": path, "hooks": hooks, "timeout_secs": timeout}), tx);
         }
 
         // /python <script_file> [timeout]  — run a .py file directly
