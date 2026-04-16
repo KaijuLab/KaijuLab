@@ -73,6 +73,7 @@ fn tool_cache() -> &'static Mutex<ToolCache> {
 
 const CACHEABLE_TOOLS: &[&str] = &[
     "disassemble", "decompile", "xrefs_to", "cfg_view", "call_graph",
+    "pe_security_audit", "pe_internals", "elf_internals",
 ];
 
 const WRITE_TOOLS: &[&str] = &[
@@ -318,7 +319,9 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
         ),
         "batch_annotate" => batch_annotate(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0), args),
         "elf_internals" => elf_internals(&str_arg(args, "path")),
-        "pe_internals"  => pe_internals(&str_arg(args, "path")),
+        "pe_internals"      => pe_internals(&str_arg(args, "path")),
+        "pe_security_audit" => pe_security_audit(&str_arg(args, "path")),
+        "python_env"        => python_env(),
         "xrefs_data" => xrefs_data(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
@@ -756,6 +759,498 @@ fn pe_internals(path: &str) -> ToolResult {
             out.push_str(&format!("  … and {} more\n", pe.exports.len() - 20));
         }
     }
+
+    ToolResult::ok(out)
+}
+
+// ─── Tool: pe_security_audit ─────────────────────────────────────────────────
+//
+// O(file_size) PE hardening audit — no decompilation, works on large binaries.
+// Covers:
+//   • Section characteristics: writable .rodata/.rdata/.fptable  (FIND-01/02)
+//   • DLL characteristics: ASLR, DEP, CFG declared, Force Integrity (FIND-05)
+//   • Load Config: SecurityCookie, GuardCFCheckFunctionPointer, GuardFlags (FIND-03/04)
+//   • ARM64: bare-BLR ratio — % of indirect calls without CFG guard prefix (FIND-03)
+//   • ARM64: stack-canary ADRP coverage — % of functions referencing cookie (FIND-04)
+
+/// Convert a PE RVA to a file offset using the section table.
+fn pe_rva_to_file_offset(
+    sections: &[goblin::pe::section_table::SectionTable],
+    rva: u64,
+) -> Option<usize> {
+    for s in sections {
+        let va  = s.virtual_address as u64;
+        let vsz = (s.virtual_size.max(s.size_of_raw_data)) as u64;
+        if rva >= va && rva < va + vsz {
+            return Some(s.pointer_to_raw_data as usize + (rva - va) as usize);
+        }
+    }
+    None
+}
+
+/// Read a little-endian u32 from `buf` at `offset`, returning 0 on OOB.
+#[inline]
+fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
+    if offset + 4 <= buf.len() {
+        u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap_or([0; 4]))
+    } else {
+        0
+    }
+}
+
+/// Read a little-endian u64 from `buf` at `offset`, returning 0 on OOB.
+#[inline]
+fn read_u64_le(buf: &[u8], offset: usize) -> u64 {
+    if offset + 8 <= buf.len() {
+        u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap_or([0; 8]))
+    } else {
+        0
+    }
+}
+
+fn pe_security_audit(path: &str) -> ToolResult {
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
+    };
+
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        Ok(_) => return ToolResult::err("Not a PE binary — use elf_internals for ELF"),
+        Err(e) => return ToolResult::err(format!("Cannot parse PE: {}", e)),
+    };
+
+    let is_64      = pe.is_64;
+    let image_base = pe.image_base as u64;
+    let machine    = pe.header.coff_header.machine; // 0xAA64 = ARM64
+    let is_arm64   = machine == 0xAA64;
+
+    let mut out          = String::new();
+    let mut high_count   = 0u32;
+    let mut medium_count = 0u32;
+
+    out.push_str(&format!("PE Security Audit: '{}'\n{}\n\n", path, "═".repeat(72)));
+
+    // ── DLL Characteristics ──────────────────────────────────────────────────
+    let dll_chars = pe.header.optional_header
+        .map(|oh| oh.windows_fields.dll_characteristics)
+        .unwrap_or(0);
+
+    let has_aslr         = dll_chars & 0x0040 != 0;
+    let has_high_entropy = dll_chars & 0x0020 != 0;
+    let has_dep          = dll_chars & 0x0100 != 0;
+    let has_cfg_decl     = dll_chars & 0x4000 != 0;
+    let has_force_integ  = dll_chars & 0x0080 != 0;
+    let has_no_seh       = dll_chars & 0x0400 != 0;
+
+    out.push_str("── DLL Characteristics ─────────────────────────────────────────────\n");
+    out.push_str(&format!("  ASLR (DYNAMIC_BASE)     : {}\n",
+        if has_aslr { "YES" } else { "NO  ← missing mitigation" }));
+    out.push_str(&format!("  High-entropy ASLR       : {}\n",
+        if has_high_entropy { "YES" } else { "no" }));
+    out.push_str(&format!("  DEP / NX (NX_COMPAT)    : {}\n",
+        if has_dep { "YES" } else { "NO  ← missing mitigation" }));
+    out.push_str(&format!("  CFG (GUARD_CF declared) : {}\n",
+        if has_cfg_decl { "declared" } else { "NO  ← missing mitigation" }));
+    out.push_str(&format!("  Force Integrity         : {}\n",
+        if has_force_integ { "YES" } else { "no  ← FIND-05 [MEDIUM]" }));
+    out.push_str(&format!("  No SEH (NO_SEH)         : {}\n",
+        if has_no_seh { "YES" } else { "no" }));
+    out.push_str(&format!("  DllCharacteristics raw  : 0x{:04x}\n\n", dll_chars));
+
+    if !has_force_integ { medium_count += 1; }
+
+    // ── Section characteristics ──────────────────────────────────────────────
+    // IMAGE_SCN_MEM_WRITE = 0x80000000
+    // Sections whose name implies they should be read-only
+    const SCN_MEM_WRITE : u32 = 0x8000_0000;
+    const SCN_MEM_EXEC  : u32 = 0x2000_0000;
+    const SCN_MEM_READ  : u32 = 0x4000_0000;
+    const SCN_CNT_IDATA : u32 = 0x0000_0040; // Initialized data
+
+    out.push_str("── Section Characteristics ─────────────────────────────────────────\n");
+    let mut writable_ro_secs: Vec<String> = Vec::new();
+
+    for sec in &pe.sections {
+        let name  = sec.name().unwrap_or("?");
+        let chars = sec.characteristics;
+        let va    = image_base + sec.virtual_address as u64;
+        let vsz   = sec.virtual_size as u64;
+
+        let r = if chars & SCN_MEM_READ  != 0 { "R" } else { "-" };
+        let w = if chars & SCN_MEM_WRITE != 0 { "W" } else { "-" };
+        let x = if chars & SCN_MEM_EXEC  != 0 { "X" } else { "-" };
+        let perm = format!("{}{}{}", r, w, x);
+
+        // Sections that are data-only AND writable AND look like read-only data
+        let is_data       = chars & SCN_CNT_IDATA != 0;
+        let is_writable   = chars & SCN_MEM_WRITE != 0;
+        let is_executable = chars & SCN_MEM_EXEC  != 0;
+        let ro_name       = name.contains("rodata") || name.contains("rdata")
+                         || name.contains("fptable") || name.contains("const")
+                         || name == ".rdata";
+
+        let annotation = if is_data && is_writable && !is_executable && ro_name {
+            writable_ro_secs.push(name.to_string());
+            high_count += 1;
+            "  ← [HIGH] FIND-01/02 should be R-- (IMAGE_SCN_MEM_WRITE set)"
+        } else {
+            ""
+        };
+
+        out.push_str(&format!(
+            "  {:<14} VA=0x{:016x}  size=0x{:07x}  [{}]  chars=0x{:08x}{}\n",
+            name, va, vsz, perm, chars, annotation
+        ));
+    }
+    out.push_str("\n");
+
+    if !writable_ro_secs.is_empty() {
+        out.push_str(&format!(
+            "[!] FIND-01/02 [HIGH]: The following read-only data sections have\n\
+             [!] IMAGE_SCN_MEM_WRITE set: {}\n\
+             [!] Windows maps these PAGE_WRITECOPY — writable without VirtualProtect.\n\
+             [!] A write-what-where primitive can overwrite crypto constants or\n\
+             [!] function pointers without triggering VirtualProtect hooks.\n\
+             [!] Fix: /SECTION:.rodata,R  /SECTION:.fptable,R  (MSVC/LLD linker)\n\n",
+            writable_ro_secs.join(", ")
+        ));
+    }
+
+    // ── Load Config (raw byte parsing) ───────────────────────────────────────
+    //
+    // Goblin exposes the Load Config directory entry via
+    // pe.header.optional_header.data_directories.get_load_config_table().
+    // We then convert the RVA to a file offset and parse the raw bytes directly,
+    // because goblin does not expose every field (GuardCFCheckFunctionPointer,
+    // GuardFlags, etc.).
+    //
+    // Offsets for IMAGE_LOAD_CONFIG_DIRECTORY64 (PE32+, empirically verified
+    // against comet.exe v145 with Size=0x140):
+    //   +0x58  SecurityCookie               (u64)
+    //   +0x70  GuardCFCheckFunctionPointer  (u64)
+    //   +0x78  GuardCFDispatchFunctionPointer (u64)
+    //   +0x80  GuardCFFunctionTable         (u64)
+    //   +0x88  GuardCFFunctionCount         (u64)
+    //   +0x90  GuardFlags                   (u32)
+    //
+    // Offsets for IMAGE_LOAD_CONFIG_DIRECTORY32 (PE32):
+    //   +0x3C  SecurityCookie               (u32)
+    //   +0x48  GuardCFCheckFunctionPointer  (u32)
+    //   +0x50  GuardCFFunctionTable         (u32)
+    //   +0x54  GuardCFFunctionCount         (u32)
+    //   +0x58  GuardFlags                   (u32)
+
+    out.push_str("── Load Config ─────────────────────────────────────────────────────\n");
+
+    let lc_info: Option<(u32, u32)> = pe.header.optional_header.and_then(|oh| {
+        oh.data_directories
+            .get_load_config_table()
+            .map(|dd| (dd.virtual_address, dd.size))
+    });
+
+    let mut cookie_va: u64   = 0;
+    let mut guard_check: u64 = 0;
+    let mut lc_parsed        = false;
+
+    match lc_info {
+        None => {
+            out.push_str("  Load Config: no optional header present\n\n");
+        }
+        Some((0, _)) => {
+            out.push_str("  Load Config: directory not present (no SecurityCookie, no CFG table)\n\n");
+            high_count += 1;
+        }
+        Some((lc_rva, lc_size)) => {
+            match pe_rva_to_file_offset(&pe.sections, lc_rva as u64) {
+                None => {
+                    out.push_str(&format!(
+                        "  Load Config RVA 0x{:x} could not be resolved to file offset\n\n",
+                        lc_rva
+                    ));
+                }
+                Some(lc_off) => {
+                    let avail = (lc_size as usize).min(0x200).min(
+                        data.len().saturating_sub(lc_off));
+                    if avail == 0 {
+                        out.push_str("  Load Config extends beyond file end\n\n");
+                    } else {
+                        let lc = &data[lc_off..lc_off + avail];
+                        lc_parsed = true;
+
+                        let (guard_table, guard_count, guard_flags) = if is_64 {
+                            cookie_va   = read_u64_le(lc, 0x58);
+                            guard_check = read_u64_le(lc, 0x70);
+                            (read_u64_le(lc, 0x80), read_u64_le(lc, 0x88), read_u32_le(lc, 0x90))
+                        } else {
+                            cookie_va   = read_u32_le(lc, 0x3C) as u64;
+                            guard_check = read_u32_le(lc, 0x48) as u64;
+                            (read_u32_le(lc, 0x50) as u64, read_u32_le(lc, 0x54) as u64, read_u32_le(lc, 0x58))
+                        };
+
+                        // IMAGE_GUARD_CF_INSTRUMENTED = 0x0100
+                        let cf_instrumented = guard_flags & 0x0100 != 0;
+
+                        out.push_str(&format!(
+                            "  SecurityCookie VA           : {}\n",
+                            if cookie_va != 0 {
+                                format!("0x{:016x}  (present)", cookie_va)
+                            } else {
+                                "0  ← MISSING — no /GS canary".to_string()
+                            }
+                        ));
+                        out.push_str(&format!(
+                            "  GuardCFCheckFunctionPointer : 0x{:016x}\n", guard_check));
+                        out.push_str(&format!(
+                            "  GuardCFFunctionTable        : 0x{:016x}\n", guard_table));
+                        out.push_str(&format!(
+                            "  GuardCFFunctionCount        : {}\n", guard_count));
+                        out.push_str(&format!(
+                            "  GuardFlags                  : 0x{:08x}  (CF_INSTRUMENTED: {})\n\n",
+                            guard_flags,
+                            if cf_instrumented { "SET" } else { "NOT SET ← CFG declared but not built" }
+                        ));
+
+                        if cookie_va == 0 {
+                            out.push_str("[!] FIND-04 [HIGH]: SecurityCookie is 0 — /GS stack canaries disabled\n\n");
+                            high_count += 1;
+                        }
+
+                        // Check whether __guard_check_icall_fptr points to a RET stub
+                        if guard_check != 0 && image_base != 0 {
+                            let fptr_rva = guard_check.wrapping_sub(image_base);
+                            if let Some(fptr_off) = pe_rva_to_file_offset(&pe.sections, fptr_rva) {
+                                let target_va = if is_64 {
+                                    read_u64_le(&data, fptr_off)
+                                } else {
+                                    read_u32_le(&data, fptr_off) as u64
+                                };
+                                if target_va != 0 {
+                                    let target_rva = target_va.wrapping_sub(image_base);
+                                    if let Some(target_off) = pe_rva_to_file_offset(&pe.sections, target_rva) {
+                                        if target_off + 4 <= data.len() {
+                                            let insn = read_u32_le(&data, target_off);
+                                            // ARM64 RET = 0xD65F03C0; x86-64 RET = 0xC3 (first byte)
+                                            let is_ret = insn == 0xD65F03C0
+                                                || (data[target_off] == 0xC3);
+                                            if is_ret {
+                                                out.push_str(&format!(
+                                                    "[!] FIND-03 [HIGH]: __guard_check_icall_fptr (0x{:016x})\n\
+                                                     [!] → points to target 0x{:016x} which disassembles as RET.\n\
+                                                     [!] The CFG check is a no-op stub — indirect calls are not\n\
+                                                     [!] validated at runtime even though CF_INSTRUMENTED is set.\n\n",
+                                                    guard_check, target_va
+                                                ));
+                                                high_count += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── ARM64 bare-BLR scan ──────────────────────────────────────────────────
+    //
+    // On ARM64, a properly instrumented indirect call looks like:
+    //   ADRP  Xn, __guard_check_icall_fptr@PAGE    ; load check fn address
+    //   LDR   Xn, [Xn, :lo12:__guard_check_icall_fptr]
+    //   BLR   Xm                                   ; the guarded target call
+    //
+    // A "bare" BLR has no such ADRP prefix in the 8-instruction window before it.
+    // Encoding: (insn & 0xFFFFFC1F) == 0xD63F0000
+    // ADRP:     (insn & 0x9F000000) == 0x90000000
+
+    if is_arm64 && lc_parsed {
+        let text_sec = pe.sections.iter().find(|s| {
+            s.name().ok().map_or(false, |n| n == ".text")
+        });
+
+        if let Some(ts) = text_sec {
+            let ts_off  = ts.pointer_to_raw_data as usize;
+            let ts_size = ts.size_of_raw_data as usize;
+            let ts_va   = image_base + ts.virtual_address as u64;
+
+            // Count .pdata entries as the function denominator
+            let pdata_fn_count = pe.sections.iter()
+                .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+                .map(|s| s.size_of_raw_data as usize / 8)
+                .unwrap_or(0);
+
+            if ts_off + ts_size <= data.len() && ts_size >= 8 {
+                let text = &data[ts_off..ts_off + ts_size];
+
+                // Derive the SecurityCookie page so we can identify ADRP-to-cookie
+                let cookie_page = cookie_va & !0xFFFu64;
+
+                let mut total_blr    = 0u32;
+                let mut guarded_blr  = 0u32;
+                let mut fn_with_cookie = 0u32;
+
+                let mut i = 0usize;
+                while i + 4 <= text.len() {
+                    let insn = read_u32_le(text, i);
+
+                    // ── BLR check ────────────────────────────────────────────
+                    if (insn & 0xFFFF_FC1F) == 0xD63F_0000 {
+                        total_blr += 1;
+
+                        // Scan up to 8 instructions back for an ADRP to the
+                        // guard-check pointer page (or any ADRP, as a heuristic)
+                        let window_start = i.saturating_sub(32); // 8 * 4 bytes
+                        let mut found_guard = false;
+                        let mut j = window_start;
+                        while j < i {
+                            let prev = read_u32_le(text, j);
+                            if (prev & 0x9F00_0000) == 0x9000_0000 {
+                                // This is an ADRP — decode its target page
+                                let pc        = ts_va + j as u64;
+                                let immlo     = ((prev >> 29) & 0x3) as u64;
+                                let immhi     = ((prev >>  5) & 0x0007_FFFF) as u64;
+                                let imm21     = (immhi << 2) | immlo;
+                                // Sign-extend 21-bit immediate
+                                let imm21_s = if imm21 & (1 << 20) != 0 {
+                                    (imm21 | (!0u64 << 21)) as i64
+                                } else {
+                                    imm21 as i64
+                                };
+                                let target_page = ((pc & !0xFFF) as i64)
+                                    .wrapping_add(imm21_s << 12) as u64;
+
+                                // Guard-check pointer lives on its own page;
+                                // if this ADRP targets that page it is the CFG
+                                // guard prefix.  Fall back to "any ADRP" as a
+                                // conservative heuristic when cookie_page == 0.
+                                if cookie_page == 0
+                                    || target_page == (guard_check & !0xFFF)
+                                {
+                                    found_guard = true;
+                                    break;
+                                }
+                            }
+                            j += 4;
+                        }
+                        if found_guard { guarded_blr += 1; }
+                    }
+
+                    // ── Function prologue + cookie ADRP scan ─────────────────
+                    // Look for STP X29,X30 (frame setup) as a function entry
+                    // heuristic, then check next 64 bytes for ADRP-to-cookie.
+                    if cookie_page != 0 {
+                        // STP X29,X30,[SP,#imm]: (insn & 0xFFC003FF) == 0xA9003BFD
+                        // PACIBSP: 0xD503237F
+                        let is_entry = (insn & 0xFFC0_03FF) == 0xA900_3BFD
+                            || insn == 0xD503_237F;
+                        if is_entry {
+                            let limit = (i + 64).min(text.len().saturating_sub(4));
+                            let mut has_cookie_ref = false;
+                            let mut k = i;
+                            while k < limit {
+                                let prev = read_u32_le(text, k);
+                                if (prev & 0x9F00_0000) == 0x9000_0000 {
+                                    let pc    = ts_va + k as u64;
+                                    let immlo = ((prev >> 29) & 0x3) as u64;
+                                    let immhi = ((prev >>  5) & 0x0007_FFFF) as u64;
+                                    let imm21 = (immhi << 2) | immlo;
+                                    let imm21_s = if imm21 & (1 << 20) != 0 {
+                                        (imm21 | (!0u64 << 21)) as i64
+                                    } else {
+                                        imm21 as i64
+                                    };
+                                    let tp = ((pc & !0xFFF) as i64)
+                                        .wrapping_add(imm21_s << 12) as u64;
+                                    if tp == cookie_page {
+                                        has_cookie_ref = true;
+                                        break;
+                                    }
+                                }
+                                k += 4;
+                            }
+                            if has_cookie_ref { fn_with_cookie += 1; }
+                        }
+                    }
+
+                    i += 4;
+                }
+
+                let bare_blr  = total_blr.saturating_sub(guarded_blr);
+                let bare_pct  = if total_blr > 0 {
+                    bare_blr as f64 * 100.0 / total_blr as f64
+                } else { 0.0 };
+                let cookie_pct = if pdata_fn_count > 0 {
+                    fn_with_cookie as f64 * 100.0 / pdata_fn_count as f64
+                } else { 0.0 };
+                let uncookied = pdata_fn_count.saturating_sub(fn_with_cookie as usize);
+
+                out.push_str("── ARM64 CFG / Stack Canary Coverage ───────────────────────────────\n");
+                out.push_str(&format!(
+                    "  .text size                  : 0x{:x} bytes ({} instructions)\n",
+                    ts_size, ts_size / 4
+                ));
+                out.push_str(&format!(
+                    "  Functions (.pdata entries)  : {}\n", pdata_fn_count));
+                out.push_str(&format!(
+                    "  Total BLR instructions      : {}\n", total_blr));
+                out.push_str(&format!(
+                    "  Guarded BLR (ADRP prefix)   : {} ({:.1}%)\n",
+                    guarded_blr, if total_blr > 0 { guarded_blr as f64 * 100.0 / total_blr as f64 } else { 0.0 }
+                ));
+                out.push_str(&format!(
+                    "  Bare BLR (no guard prefix)  : {} ({:.1}%){}  [FIND-03]\n",
+                    bare_blr, bare_pct,
+                    if bare_pct > 20.0 { "  ← [HIGH]" } else { "" }
+                ));
+                out.push_str(&format!(
+                    "  Fns with cookie ADRP        : {} ({:.1}%)\n",
+                    fn_with_cookie, cookie_pct
+                ));
+                out.push_str(&format!(
+                    "  Fns WITHOUT canary          : {} ({:.1}%){}  [FIND-04]\n\n",
+                    uncookied,
+                    if pdata_fn_count > 0 { uncookied as f64 * 100.0 / pdata_fn_count as f64 } else { 0.0 },
+                    if cookie_pct < 70.0 { "  ← [HIGH]" } else { "" }
+                ));
+
+                if bare_pct > 20.0 { high_count += 1; }
+                if cookie_pct < 70.0 && cookie_va != 0 { high_count += 1; }
+
+                if bare_pct > 20.0 {
+                    out.push_str(&format!(
+                        "[!] FIND-03 [HIGH]: {:.1}% of BLR instructions ({}/{}) have no\n\
+                         [!] preceding ADRP to the guard-check pointer page.  An attacker\n\
+                         [!] who corrupts a function pointer reachable via a bare BLR can\n\
+                         [!] redirect execution to arbitrary code with no CFG enforcement.\n\n",
+                        bare_pct, bare_blr, total_blr
+                    ));
+                }
+                if cookie_pct < 70.0 && cookie_va != 0 {
+                    out.push_str(&format!(
+                        "[!] FIND-04 [HIGH]: Only {:.1}% of functions ({}/{}) reference the\n\
+                         [!] SecurityCookie page in their prologue.  The remaining {}\n\
+                         [!] functions lack /GS stack canary protection, leaving large\n\
+                         [!] stack-frame functions vulnerable to stack-smashing attacks.\n\n",
+                        cookie_pct, fn_with_cookie, pdata_fn_count, uncookied
+                    ));
+                }
+            }
+        }
+    }
+
+    // ── Summary ─────────────────────────────────────────────────────────────
+    out.push_str("── Summary ─────────────────────────────────────────────────────────\n");
+    out.push_str(&format!("  High-severity findings  : {}\n", high_count));
+    out.push_str(&format!("  Medium-severity findings: {}\n", medium_count));
+    out.push_str(&format!("  Architecture            : {}\n",
+        if is_arm64 { "ARM64" } else if is_64 { "x86-64" } else { "x86" }));
+    out.push_str(&format!("  Image base (preferred)  : 0x{:016x}\n", image_base));
 
     ToolResult::ok(out)
 }
@@ -2710,10 +3205,25 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
     }
 
     if fn_addrs.is_empty() {
-        return ToolResult::ok(
-            "No functions found to scan (no symbols and no recognised prologues in .text). \
-             Try running list_functions first."
-        );
+        // For PE binaries, run the header-level security audit which needs no
+        // symbols and completes in O(file_size) — useful for large stripped PEs.
+        let pe_audit = if matches!(goblin::Object::parse(&data), Ok(goblin::Object::PE(_))) {
+            let audit = pe_security_audit(path).output;
+            if !audit.starts_with("Error:") {
+                Some(audit)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        return ToolResult::ok(match pe_audit {
+            Some(audit) => format!(
+                "No functions found to scan (no symbols / prologues detected).\n\
+                 Running PE security audit instead:\n\n{}", audit),
+            None => "No functions found to scan (no symbols and no recognised prologues in .text). \
+                     Try running list_functions first.".to_string(),
+        });
     }
 
     // Dangerous function patterns to watch for
@@ -2724,8 +3234,22 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         "malloc", "free", "realloc",
     ];
 
+    // For PE binaries always prepend the header-level hardening audit.
+    // This gives the LLM structural context (writable .rodata, CFG, canaries)
+    // before it sees individual function decompilations.
+    let pe_audit_prefix = if matches!(goblin::Object::parse(&data), Ok(goblin::Object::PE(_))) {
+        let audit = pe_security_audit(path).output;
+        if !audit.starts_with("Error:") {
+            format!("{}\n{}\n", "═".repeat(72), audit)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     let mut out = format!(
-        "Vulnerability scan for '{}' ({} functions).\n\
+        "{}Vulnerability scan for '{}' ({} functions).\n\
          Review each decompiled function below and evaluate for:\n\
          • Buffer overflow (unchecked memcpy/strcpy/gets with user-controlled size)\n\
          • Format string (printf/fprintf with non-literal format argument)\n\
@@ -2737,7 +3261,7 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
          For each function, call set_vuln_score(path, vaddr, score) with:\n\
            0 = clean, 1-3 = low risk, 4-6 = medium, 7-9 = high, 10 = critical\n\n\
          {}\n\n",
-        path, fn_addrs.len(), "═".repeat(72)
+        pe_audit_prefix, path, fn_addrs.len(), "═".repeat(72)
     );
 
     // Windows API danger patterns (function name substrings, case-insensitive)
@@ -3449,6 +3973,63 @@ fn decompile_flat(path: &str, base_addr: u64, vaddr: u64, arch: &str) -> ToolRes
             base_addr, vaddr, arch, result
         ))
     }
+}
+
+// ─── Tool: python_env ────────────────────────────────────────────────────────
+
+/// Return the Python version and installed binary-analysis packages.
+/// The LLM should call this once before writing `run_python` scripts so it
+/// knows exactly which imports will succeed.
+fn python_env() -> ToolResult {
+    let script = r#"
+import sys, importlib, importlib.metadata as meta
+print(f"Python {sys.version}")
+print()
+print("Binary analysis packages:")
+
+# (import_name, display_name)
+PACKAGES = [
+    ("pefile",     "pefile"),
+    ("capstone",   "capstone"),
+    ("angr",       "angr"),
+    ("unicorn",    "unicorn"),
+    ("z3",         "z3-solver"),
+    ("elftools",   "pyelftools"),
+    ("yara",       "yara-python"),
+    ("ropgadget",  "ROPgadget"),
+    ("pwn",        "pwntools"),
+    ("lief",       "lief"),
+    ("keystone",   "keystone-engine"),
+    ("miasm",      "miasm"),
+    ("frida",      "frida"),
+    ("r2pipe",     "r2pipe"),
+]
+
+for mod, pkg in PACKAGES:
+    try:
+        importlib.import_module(mod)
+        try:
+            ver = meta.version(pkg)
+        except Exception:
+            ver = "?"
+        print(f"  [+] {pkg:<22} {ver}")
+    except ImportError:
+        print(f"  [-] {pkg}")
+
+print()
+print("Always available (stdlib):")
+print("  struct       — pack/unpack raw bytes: struct.unpack_from('<I', data, offset)[0]")
+print("  binascii     — hexlify/unhexlify")
+print("  hashlib      — md5/sha1/sha256 of bytes")
+print("  mmap         — memory-map large files without reading all bytes")
+print("  ctypes       — cast byte arrays to C structs")
+print("  re           — regex over bytes/strings")
+print("  collections  — Counter, defaultdict")
+print()
+print("KAIJU_BINARY env var: path to the currently loaded binary.")
+print("  data = open(os.environ['KAIJU_BINARY'], 'rb').read()")
+"#;
+    run_python(script, None, None, 20)
 }
 
 // ─── Tool: run_python ────────────────────────────────────────────────────────
@@ -4612,6 +5193,20 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "python_env".into(),
+            description: "Return the Python 3 version and availability of every binary-analysis \
+                           package (pefile, capstone, angr, unicorn, z3, pyelftools, pwntools, \
+                           yara, ROPgadget, lief, keystone, etc.) plus a reminder of the always-\
+                           available stdlib modules useful for binary parsing (struct, binascii, \
+                           hashlib, mmap, ctypes).  Call this once before writing a run_python \
+                           script so you know which imports will succeed.  No arguments needed.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        ToolDefinition {
             name: "run_python".into(),
             description: "Execute a Python 3 script and return its combined stdout+stderr output. \
                            Use this for custom analysis tasks that are awkward with the built-in tools: \
@@ -4658,6 +5253,28 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Path to the ELF binary" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "pe_security_audit".into(),
+            description: "Run an O(file_size) hardening audit on a PE binary without decompiling \
+                           any functions.  Works on large stripped PE/PE32+ binaries (e.g. Electron \
+                           apps, Windows system DLLs) where scan_vulnerabilities times out. \
+                           Checks: (1) section characteristics — detects writable .rodata/.rdata/\
+                           .fptable (IMAGE_SCN_MEM_WRITE set, exploitable without VirtualProtect); \
+                           (2) DLL characteristics — ASLR, DEP, CFG, ForceIntegrity, SEH; \
+                           (3) Load Config raw parsing — SecurityCookie VA, GuardCFCheckFunction\
+                           Pointer, GuardCFFunctionTable, GuardCFFunctionCount, GuardFlags; \
+                           (4) ARM64-specific: bare-BLR ratio (% of indirect calls lacking a \
+                           guard-check ADRP prefix) and stack-canary ADRP coverage (% of functions \
+                           referencing the SecurityCookie page).  Always run this before \
+                           pe_internals when auditing a Windows binary for hardening regressions.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the PE/PE32+ binary to audit" }
                 },
                 "required": ["path"]
             }),

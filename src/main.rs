@@ -390,6 +390,8 @@ Project (persistent across sessions):
 Scripting & execution:
   /elf             <path>                  ELF security mitigations + special sections
   /pe              <path>                  PE mitigations, imports, .pdata count, TLS
+  /audit           <path>                  O(file_size) PE hardening audit (CFG, canaries, writable .rodata)
+  /pyenv                                  Python version + installed analysis packages (pefile, capstone, …)
   /xdata           <path> <vaddr>         Data xrefs — all reads/writes to an address
   /exec            <path> [args...] [< input]  Run a native binary, capture output
   /python          <script.py> [timeout]  Run a Python 3 file (LLM uses run_python tool)
@@ -665,6 +667,17 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
         "pe" | "pe_info" | "pe_internals" => {
             let path = parts.get(1).copied().unwrap_or("");
             run_tool("pe_internals", json!({"path": path}), tx);
+        }
+
+        // /audit <path>  — O(file_size) PE hardening audit (section chars, CFG, canaries)
+        "audit" | "pe_audit" | "pe_security_audit" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("pe_security_audit", json!({"path": path}), tx);
+        }
+
+        // /pyenv  — show Python version + installed binary-analysis packages
+        "pyenv" | "python_env" => {
+            run_tool("python_env", json!({}), tx);
         }
 
         // /xdata <path> <vaddr>  — data cross-references to an address

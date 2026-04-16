@@ -153,6 +153,12 @@ what you found. Reference function names and addresses. Highlight the most impor
 - Strings → `strings_extract` (pass `section='.rodata'` to avoid .text noise)
 - Vulnerability hunting → `scan_vulnerabilities`, then `decompile` suspicious functions, \
   then `set_vuln_score`
+- **PE hardening audit** (Windows .exe/.dll) → **always call `pe_security_audit` first** \
+  before `scan_vulnerabilities`. It runs in O(file_size) with no decompilation and detects \
+  structural mitigations issues: writable .rodata/.fptable sections (exploitable without \
+  VirtualProtect), CFG declared but guard-check stub is a RET no-op, bare BLR ratio, \
+  stack canary (SecurityCookie) coverage, and missing Force Integrity. These findings are \
+  missed by `scan_vulnerabilities` alone on large stripped PE binaries.
 - Unknown stripped binary → `identify_library_functions` first to name libc functions
 - Import resolution → `resolve_plt` (ELF) or `resolve_pe_imports` (PE) before disassembling
 - Full pass → `auto_analyze` kicks off file_info + list_functions + strings + vuln scan
@@ -164,40 +170,79 @@ Statically linked binaries (musl, glibc-static) routinely contain 500–2000+ fu
 running `auto_analyze` on them causes memory exhaustion and is explicitly blocked. \
 If `list_functions` or `file_info` reveals a large function count, use the targeted workflow:\
 \n1. `file_info` — architecture, segments, sections\
-\n2. `list_functions` — browse and pick targets by address\
-\n3. `disassemble` / `decompile` — examine specific functions\
-\n4. `scan_vulnerabilities` — limited to a small `max_fns` count\
+\n2. For PE binaries: `pe_security_audit` — O(file_size) hardening audit (no decompilation)\
+\n3. `list_functions` — browse and pick high-value targets by address\
+\n4. `disassemble` / `decompile` — examine specific functions\
+\n5. `scan_vulnerabilities` — limited to a small `max_fns` count\
 \nNever loop over all functions automatically when there are more than 50.
 
-## run_python rules — follow these exactly
+## run_python — binary analysis patterns
 
-`run_python` executes a **complete, self-contained Python 3 script** in a subprocess.
+`run_python` executes a **complete, self-contained Python 3 script** in a subprocess. \
 Each call is independent: no state, variables, or imports carry over between calls.
+
+**Call `python_env` once before writing scripts** to learn which packages are installed. \
+Never guess — an ImportError silently kills the script and returns nothing useful.
 
 **Always write the full script in one call.** Never split a script across multiple calls.
 
-**Never call `p.interactive()`** — there is no user at a terminal. The subprocess stdin
-is /dev/null so `interactive()` blocks forever and the script will be killed by the timeout.
-Instead use `p.recv(timeout=5)` or `p.recvall(timeout=5)` to collect output, and
-`p.sendline(b'cmd')` before the recv to send commands to a spawned shell.
+**If a script fails:** read the full traceback, fix the specific line, and resubmit the \
+entire corrected script. Never give up after one failure — iterate until it works.
 
-**To receive binary output from a process:**
-- Use `p.recv(N)` to receive exactly N bytes (e.g. the known banner length).
-- Use `p.recvuntil(b'marker')` only when you have **verified the exact marker string**
-  from a previous run's output. Do not guess it.
-- Use `p.recv(timeout=5)` as a safe fallback when the exact length is unknown.
+When to use `run_python` instead of built-in tools:
+- Custom PE/ELF structure parsing beyond what `pe_internals`/`elf_internals` exposes
+- Opcode-level scanning across .text (all CALL rax, all BLR Xn, arbitrary byte patterns)
+- Shannon entropy sliding-window (finer granularity than `section_entropy`)
+- Decrypting/deobfuscating embedded payloads (XOR, RC4, base64 with custom alphabet)
+- Any math on binary data: checksums, hash verification, format brute-force
 
-**Iterative exploit development:** if a script fails, read the full output carefully,
-fix the specific problem, and resubmit the entire corrected script in one call.
+**Binary reading boilerplate (stdlib only — always works):**
+  import os, sys, struct, binascii
+  binary = os.environ.get('KAIJU_BINARY', '')
+  data = open(binary, 'rb').read()
+  u32 = lambda off: struct.unpack_from('<I', data, off)[0]
+  u64 = lambda off: struct.unpack_from('<Q', data, off)[0]
 
-**Proving code execution without a shell:** use sys_exit(N) shellcode and check the
-reported exit code rather than relying on execve. Example:
-    from pwn import *
-    p = process('./target')
-    # ... send exploit ...
-    p.send(asm('mov eax,1; mov ebx,42; int 0x80'))  # exit(42)
-    p.wait()
-    print('exit code:', p.poll())   # should print 42
+**PE analysis with pefile (installed on this host):**
+  import pefile, os
+  pe = pefile.PE(os.environ['KAIJU_BINARY'])
+  for s in pe.sections:
+      name = s.Name.rstrip(b'\\x00').decode()
+      r = 'R' if s.Characteristics & 0x40000000 else '-'
+      w = 'W' if s.Characteristics & 0x80000000 else '-'
+      x = 'X' if s.Characteristics & 0x20000000 else '-'
+      print('  %-12s %s%s%s  0x%08x' % (name, r, w, x, s.Characteristics))
+  if hasattr(pe, 'DIRECTORY_ENTRY_LOAD_CONFIG'):
+      lc = pe.DIRECTORY_ENTRY_LOAD_CONFIG.struct
+      print('SecurityCookie: 0x%x' % lc.SecurityCookie)
+      print('GuardFlags:     0x%x' % lc.GuardFlags)
+
+**Disassembly with capstone (installed on this host):**
+  import capstone, pefile, os
+  pe   = pefile.PE(os.environ['KAIJU_BINARY'])
+  text = next(s for s in pe.sections if b'.text' in s.Name)
+  code = text.get_data()
+  va   = pe.OPTIONAL_HEADER.ImageBase + text.VirtualAddress
+  cs   = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+  for i, insn in enumerate(cs.disasm(code, va)):
+      print('0x%x  %-8s %s' % (insn.address, insn.mnemonic, insn.op_str))
+      if i >= 30: break
+
+**ELF analysis with pyelftools (installed on this host):**
+  from elftools.elf.elffile import ELFFile
+  from elftools.elf.sections import SymbolTableSection
+  import os
+  with open(os.environ['KAIJU_BINARY'], 'rb') as f:
+      elf = ELFFile(f)
+      for sec in elf.iter_sections():
+          if isinstance(sec, SymbolTableSection):
+              for sym in sec.iter_symbols():
+                  if sym['st_info']['type'] == 'STT_FUNC' and sym['st_value']:
+                      print('0x%x  %s' % (sym['st_value'], sym.name))
+
+**CTF/pwn with pwntools — Never call p.interactive()** (stdin is /dev/null, blocks \
+until killed). Use p.recv(timeout=5) or p.recvall(timeout=5) instead. \
+**Proving code execution:** use sys_exit(N) shellcode and check p.poll() exit code.
 
 ## Decompilation conventions
 
