@@ -2029,9 +2029,218 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     ToolResult::ok(out)
 }
 
+// ─── PE .pdata function boundary helper ─────────────────────────────────────
+
+/// Parse the PE `.pdata` exception directory and return a sorted list of
+/// `(start_va, size_bytes, name)` triples.  Size is 0 when unwind info is
+/// unavailable (packed unwind with no length, or pointer outside .rdata).
+/// The `project` renames are applied so user-supplied names show correctly.
+fn pe_pdata_functions(path: &str) -> Vec<(u64, u64, String)> {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        _ => return Vec::new(),
+    };
+    let pdata_bytes = match pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+        .and_then(|s| s.data(&data).ok().flatten())
+    {
+        Some(b) => b.to_vec(),
+        None => return Vec::new(),
+    };
+
+    let image_base = pe.image_base as u64;
+    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
+        .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
+
+    let project = Project::load_for(path);
+    let num_entries = pdata_bytes.len() / 8;
+    let mut fns: Vec<(u64, u64, String)> = Vec::with_capacity(num_entries);
+
+    for i in 0..num_entries {
+        let off = i * 8;
+        let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().unwrap_or([0;4])) as u64;
+        let unwind_raw = u32::from_le_bytes(pdata_bytes[off+4..off+8].try_into().unwrap_or([0;4]));
+        if begin_rva == 0 { continue; }
+
+        let begin_va = image_base + begin_rva;
+        let flag = unwind_raw & 0x3;
+        let fn_size: u64 = if flag != 0 {
+            ((unwind_raw >> 2) & 0x7FF) as u64 * 4
+        } else if let Some((rdata_va, rdata_file_off)) = rdata_range {
+            let ui_rva = unwind_raw as u64;
+            if ui_rva >= rdata_va {
+                let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
+                if ui_off + 4 <= data.len() {
+                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                    (ui_word & 0x3_FFFF) as u64 * 4
+                } else { 0 }
+            } else { 0 }
+        } else { 0 };
+
+        let name = project.get_name(begin_va)
+            .unwrap_or_else(|| format!("FUN_{:016x}", begin_va));
+        fns.push((begin_va, fn_size, name));
+    }
+
+    fns.sort_by_key(|(va, _, _)| *va);
+    fns.dedup_by_key(|(va, _, _)| *va);
+    fns
+}
+
 // ─── Tool: xrefs_to ─────────────────────────────────────────────────────────
 
+/// Decode an AArch64 ADRP instruction's result page address.
+///
+/// ADRP: Xd = (PC & ~0xFFF) + SignExtend(immhi:immlo, 21) << 12
+/// Encoding bits: [31]=1 [30:29]=immlo [28:24]=10000 [23:5]=immhi [4:0]=Rd
+fn aarch64_adrp_page(insn: u32, pc: u64) -> u64 {
+    let immlo = ((insn >> 29) & 0x3) as u64;
+    let immhi = ((insn >> 5) & 0x7_FFFF) as u64;
+    let imm21 = (immhi << 2) | immlo;
+    // Sign-extend 21-bit integer to 64-bit
+    let signed = if imm21 & (1 << 20) != 0 {
+        (imm21 | !((1u64 << 21) - 1)) as i64
+    } else {
+        imm21 as i64
+    };
+    ((pc & !0xFFF) as i64 + (signed << 12)) as u64
+}
+
+/// Scan executable sections of an AArch64 binary for **indirect** call references
+/// to `target_vaddr` — specifically `ADRP Rn, #page; LDR Rm, [Rn, #off]` pairs
+/// where `page + off == target_vaddr`.
+///
+/// This pattern is used by Windows ARM64 PE (and other ABIs) to load an address
+/// from the IAT / GOT before calling it via `BLR Rm`.  No direct `BL target` is
+/// emitted, so Capstone's straight-line disassembly misses these references.
+///
+/// Returns a `Vec<(adrp_pc, ldr_pc, is_blr_next)>` where:
+/// - `adrp_pc`      — address of the ADRP instruction (start of the load sequence)
+/// - `ldr_pc`       — address of the LDR instruction (+4)
+/// - `is_blr_next`  — true when the instruction after LDR is `BLR Rm` (indirect call)
+fn aarch64_scan_iat_refs(
+    obj: &object::File,
+    target_vaddr: u64,
+) -> Vec<(u64, u64, bool)> {
+    let target_page    = target_vaddr & !0xFFF;
+    let target_off_raw = target_vaddr & 0xFFF;
+
+    let mut hits: Vec<(u64, u64, bool)> = Vec::new();
+
+    for sec in obj.sections() {
+        if !crate::arch::is_code_section(sec.name().unwrap_or("")) { continue; }
+        let sec_vaddr = sec.address();
+        let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+        if sec_bytes.len() < 8 { continue; }
+
+        let n = sec_bytes.len() / 4;
+
+        for i in 0..n.saturating_sub(1) {
+            let off0 = i * 4;
+            let insn0 = u32::from_le_bytes([
+                sec_bytes[off0], sec_bytes[off0+1],
+                sec_bytes[off0+2], sec_bytes[off0+3],
+            ]);
+            let pc0 = sec_vaddr + off0 as u64;
+
+            // ── Check ADRP ─────────────────────────────────────────────────
+            // Encoding: bit31=1, bits[28:24]=10000  →  mask 0x9F000000 == 0x90000000
+            if (insn0 & 0x9F000000) != 0x90000000 { continue; }
+            let rd = insn0 & 0x1F;
+            if aarch64_adrp_page(insn0, pc0) != target_page { continue; }
+
+            // ── Search the next MAX_GAP instructions for a matching LDR ─────────
+            // The compiler sometimes interleaves other instructions between
+            // the ADRP and its associated LDR (e.g. MOV, ADD for a different
+            // register).  Allow up to 8 instructions of separation while the
+            // ADRP destination register hasn't been clobbered.
+            const MAX_GAP: usize = 8;
+            for gap in 1..=MAX_GAP {
+                let off1 = off0 + gap * 4;
+                if off1 + 4 > sec_bytes.len() { break; }
+                let insn1 = u32::from_le_bytes([
+                    sec_bytes[off1], sec_bytes[off1+1],
+                    sec_bytes[off1+2], sec_bytes[off1+3],
+                ]);
+                let pc1 = pc0 + gap as u64 * 4;
+
+                // If something writes to `rd` (Rd == rd in a dest-register insn),
+                // the ADRP result is clobbered — stop looking.
+                // Heuristic: if this is another ADRP or MOV writing rd, stop.
+                let writes_rd = {
+                    let dest_5 = insn1 & 0x1F; // bottom 5 bits = Rd for most insns
+                    // ADRP writes rd directly
+                    let is_adrp  = (insn1 & 0x9F000000) == 0x90000000;
+                    // MOV (register) Xd, Xm: alias of ORR Xd, XZR, Xm → 0xAA0003E0
+                    let is_mov_r = (insn1 & 0x7FE0FFE0) == 0xAA0003E0;
+                    // MOVZ Xd = 0xD2800000 family
+                    let is_movz  = (insn1 & 0xFF800000) == 0xD2800000;
+                    (is_adrp || is_mov_r || is_movz) && dest_5 == rd
+                };
+                if writes_rd { break; }
+
+                // LDR Xt, [Xn, #uimm12]  (64-bit, unsigned offset)
+                // Encoding: 1111 1001 01 imm12 Rn Rt  →  0xF9400000 / 0xFFC00000
+                if (insn1 & 0xFFC00000) == 0xF9400000 {
+                    let rn    = (insn1 >> 5) & 0x1F;
+                    let imm12 = (insn1 >> 10) & 0xFFF;
+                    let load_off = (imm12 * 8) as u64; // 64-bit scale: ×8
+                    if rn == rd && load_off == target_off_raw {
+                        let rt = insn1 & 0x1F;
+                        // Peek one instruction further for BLR Rt
+                        let is_blr = off1 + 8 <= sec_bytes.len() && {
+                            let insn2 = u32::from_le_bytes([
+                                sec_bytes[off1+4], sec_bytes[off1+5],
+                                sec_bytes[off1+6], sec_bytes[off1+7],
+                            ]);
+                            (insn2 & 0xFFFFFC1F) == 0xD63F0000
+                                && ((insn2 >> 5) & 0x1F) == rt
+                        };
+                        hits.push((pc0, pc1, is_blr));
+                        break; // found the matching LDR for this ADRP
+                    }
+                }
+
+                // LDR Wt, [Xn, #uimm12]  (32-bit, unsigned offset)
+                // Encoding: 1011 1001 01 imm12 Rn Rt  →  0xB9400000 / 0xFFC00000
+                if (insn1 & 0xFFC00000) == 0xB9400000 {
+                    let rn    = (insn1 >> 5) & 0x1F;
+                    let imm12 = (insn1 >> 10) & 0xFFF;
+                    let load_off = (imm12 * 4) as u64; // 32-bit scale: ×4
+                    if rn == rd && load_off == target_off_raw {
+                        let rt = insn1 & 0x1F;
+                        let is_blr = off1 + 8 <= sec_bytes.len() && {
+                            let insn2 = u32::from_le_bytes([
+                                sec_bytes[off1+4], sec_bytes[off1+5],
+                                sec_bytes[off1+6], sec_bytes[off1+7],
+                            ]);
+                            (insn2 & 0xFFFFFC1F) == 0xD63F0000
+                                && ((insn2 >> 5) & 0x1F) == rt
+                        };
+                        hits.push((pc0, pc1, is_blr));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    hits
+}
+
 /// Find all call sites that target `target_vaddr` by scanning the .text section.
+///
+/// On x86/x86-64 uses iced-x86 for fast direct CALL/JMP decoding.
+/// On AArch64 performs two passes:
+///   1. Capstone scan for direct `BL target_vaddr` instructions.
+///   2. Raw 4-byte scan for `ADRP + LDR` pairs that load from `target_vaddr`
+///      (Windows ARM64 PE / ELF PLT indirect-call pattern).
+///      When such a site is a shared import stub (ADRP+LDR+BR tail-call),
+///      a third pass scans for `BL <stub_addr>` callers.
 fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
     if path.is_empty() { return ToolResult::err("'path' is required"); }
     if target_vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
@@ -2047,10 +2256,13 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
     };
 
     let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
-    let mut callers: Vec<u64> = Vec::new();
 
+    // ── Caller list: (site_addr, label) ─────────────────────────────────────
+    // label distinguishes how the reference was found.
+    let mut callers: Vec<(u64, &'static str)> = Vec::new();
+
+    // ── x86 / x86-64: iced-x86 direct CALL/JMP scan ─────────────────────────
     if arch_class.is_x86() {
-        // Fast path: use iced-x86 for x86/x86-64
         let bitness: u32 = match obj.architecture() {
             Architecture::X86_64 | Architecture::X86_64_X32 => 64,
             _ => 32,
@@ -2068,38 +2280,101 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         let mut decoder = Decoder::with_ip(bitness, text_bytes, text_vaddr, DecoderOptions::NONE);
         for instr in &mut decoder {
             if matches!(instr.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) {
-                let tgt = instr.near_branch64();
-                if tgt == target_vaddr {
-                    callers.push(instr.ip());
+                if instr.near_branch64() == target_vaddr {
+                    callers.push((instr.ip(), "direct"));
                 }
             }
         }
+
+    // ── AArch64: Capstone BL scan + raw ADRP+LDR indirect scan ──────────────
+    } else if matches!(arch_class, crate::arch::ArchClass::Arm64) {
+
+        // Pass 1 — direct BL / B <target_vaddr> via Capstone
+        if let Ok(cs) = crate::arch::build_capstone(arch_class) {
+            for sec in obj.sections() {
+                let sec_name = sec.name().unwrap_or("");
+                if !crate::arch::is_code_section(sec_name) { continue; }
+                let sec_vaddr = sec.address();
+                let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+                if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
+                    for insn in insns.as_ref() {
+                        let m = insn.mnemonic().unwrap_or("");
+                        let o = insn.op_str().unwrap_or("");
+                        if crate::arch::is_direct_call(arch_class, m, o)
+                            || crate::arch::is_direct_branch(arch_class, m, o)
+                        {
+                            if crate::arch::parse_branch_target(o) == Some(target_vaddr) {
+                                callers.push((insn.address(), "direct BL"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 2 — ADRP+LDR indirect pattern (IAT / GOT references)
+        let iat_hits = aarch64_scan_iat_refs(&obj, target_vaddr);
+        for (adrp_pc, _ldr_pc, is_blr) in &iat_hits {
+            let label = if *is_blr { "ADRP+LDR+BLR (indirect call)" } else { "ADRP+LDR (indirect load)" };
+            callers.push((*adrp_pc, label));
+        }
+
+        // Pass 3 — if the ADRP+LDR site looks like a shared import stub
+        //          (ADRP at the very start of a function, followed by LDR then BR),
+        //          scan for BL <stub_addr> callers.
+        //
+        // Heuristic: treat every ADRP+LDR+BLR hit as a potential stub entry-point
+        // and do a second Capstone sweep for direct BL to it.
+        let stub_candidates: Vec<u64> = iat_hits.iter()
+            .filter(|(_, _, is_blr)| *is_blr)
+            .map(|(adrp_pc, _, _)| *adrp_pc)
+            .collect();
+
+        if !stub_candidates.is_empty() {
+            if let Ok(cs2) = crate::arch::build_capstone(arch_class) {
+                for sec in obj.sections() {
+                    let sec_name = sec.name().unwrap_or("");
+                    if !crate::arch::is_code_section(sec_name) { continue; }
+                    let sec_vaddr = sec.address();
+                    let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+                    if let Ok(insns) = cs2.disasm_all(sec_bytes, sec_vaddr) {
+                        for insn in insns.as_ref() {
+                            let m = insn.mnemonic().unwrap_or("");
+                            let o = insn.op_str().unwrap_or("");
+                            if crate::arch::is_direct_call(arch_class, m, o) {
+                                if let Some(tgt) = crate::arch::parse_branch_target(o) {
+                                    if stub_candidates.contains(&tgt) {
+                                        // Caller of the import stub — this is the real indirect call site
+                                        callers.push((insn.address(), "BL → import stub"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    // ── All other architectures: Capstone generic scan ───────────────────────
     } else {
-        // Generic path: use capstone for all other architectures
         let cs = match crate::arch::build_capstone(arch_class) {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("Capstone init failed: {}", e)),
         };
-        // Scan all executable sections
         for sec in obj.sections() {
             let sec_name = sec.name().unwrap_or("");
             if !crate::arch::is_code_section(sec_name) { continue; }
             let sec_vaddr = sec.address();
-            let sec_bytes = match sec.data() {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
             if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
                 for insn in insns.as_ref() {
-                    let mnemonic = insn.mnemonic().unwrap_or("");
-                    let op_str   = insn.op_str().unwrap_or("");
-                    if crate::arch::is_direct_call(arch_class, mnemonic, op_str)
-                        || crate::arch::is_direct_branch(arch_class, mnemonic, op_str)
+                    let m = insn.mnemonic().unwrap_or("");
+                    let o = insn.op_str().unwrap_or("");
+                    if crate::arch::is_direct_call(arch_class, m, o)
+                        || crate::arch::is_direct_branch(arch_class, m, o)
                     {
-                        if let Some(tgt) = crate::arch::parse_branch_target(op_str) {
-                            if tgt == target_vaddr {
-                                callers.push(insn.address());
-                            }
+                        if crate::arch::parse_branch_target(o) == Some(target_vaddr) {
+                            callers.push((insn.address(), "direct"));
                         }
                     }
                 }
@@ -2108,41 +2383,64 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
     }
 
     if callers.is_empty() {
+        let hint = if matches!(arch_class, crate::arch::ArchClass::Arm64) {
+            "\nHint: for ARM64 imports, also try xrefs_to with the IAT entry address \
+             from pe_internals/resolve_pe_imports. If still empty, the binary may use \
+             an import-by-ordinal or delay-load scheme."
+        } else { "" };
         return ToolResult::ok(format!(
-            "No call/jmp to 0x{:x} found in .text", target_vaddr
+            "No call/jmp to 0x{:x} found in .text{}", target_vaddr, hint
         ));
     }
 
-    // Annotate each caller with its enclosing function name if available
+    // ── Annotate each site with its enclosing function ───────────────────────
+    // Prefer ELF/Mach-O symbols; fall back to PE .pdata for stripped PE binaries.
     let syms: Vec<(u64, u64, String)> = {
         let mut v: Vec<_> = obj
             .symbols()
             .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
             .map(|s| (s.address(), s.size(), s.name().unwrap_or("<?>").to_string()))
             .collect();
+        if v.is_empty() {
+            v = pe_pdata_functions(path);
+        }
         v.sort_by_key(|(a, _, _)| *a);
         v
     };
+    let project = Project::load_for(path);
 
     let find_func = |addr: u64| -> String {
-        // Check project renames first
-        let p = Project::load_for(path);
-        if let Some(renamed) = p.get_name(addr) {
-            return renamed;
-        }
-        for (fn_addr, fn_size, fn_name) in &syms {
-            if addr >= *fn_addr && addr < fn_addr + fn_size {
-                return fn_name.clone();
+        if let Some(renamed) = project.get_name(addr) { return renamed; }
+        // Binary search for the last function whose start <= addr
+        match syms.binary_search_by_key(&addr, |(a, _, _)| *a) {
+            Ok(i) => return syms[i].2.clone(),
+            Err(0) => {}
+            Err(i) => {
+                let (fn_addr, fn_size, fn_name) = &syms[i - 1];
+                let end = if *fn_size > 0 { fn_addr + fn_size } else { u64::MAX };
+                if addr >= *fn_addr && addr < end {
+                    return fn_name.clone();
+                }
             }
         }
         "<unknown>".to_string()
     };
 
-    let mut out = format!("Cross-references to 0x{:x} ({} callers):\n\n", target_vaddr, callers.len());
-    out.push_str(&format!("  {:<20}  {}\n  {}\n", "Caller address", "Enclosing function", "─".repeat(55)));
-    for addr in &callers {
+    // De-duplicate (pass 3 may re-report addresses already found in pass 2)
+    callers.sort_by_key(|(a, _)| *a);
+    callers.dedup_by_key(|(a, _)| *a);
+
+    let mut out = format!(
+        "Cross-references to 0x{:x} ({} site{}):\n\n",
+        target_vaddr, callers.len(), if callers.len() == 1 { "" } else { "s" }
+    );
+    out.push_str(&format!(
+        "  {:<20}  {:<32}  {}\n  {}\n",
+        "Site address", "Enclosing function", "How", "─".repeat(72)
+    ));
+    for (addr, how) in &callers {
         let fname = find_func(*addr);
-        out.push_str(&format!("  0x{:016x}  {}\n", addr, fname));
+        out.push_str(&format!("  0x{:016x}  {:<32}  {}\n", addr, fname, how));
     }
 
     ToolResult::ok(out)
@@ -2778,14 +3076,50 @@ fn resolve_pe_imports(path: &str) -> ToolResult {
         return ToolResult::ok("No imports found (binary may be statically linked)");
     }
     let image_base = pe.image_base as u64;
+
+    // Build a map (dll_name_lower, function_name) → IAT_slot_VA using
+    // pe.import_data which exposes the per-DLL FirstThunk (IAT) RVA.
+    // goblin's `imp.rva` is the RVA of IMAGE_IMPORT_BY_NAME (name table),
+    // NOT the IAT slot that machine code reads.  The IAT slot VA is:
+    //   image_base + first_thunk_rva_for_dll + entry_index × ptr_size
+    let ptr_size: u64 = if pe.is_64 { 8 } else { 4 };
+    let mut iat_map: std::collections::HashMap<(String, String), u64> =
+        std::collections::HashMap::new();
+
+    if let Some(import_data) = &pe.import_data {
+        for dll_entry in &import_data.import_data {
+            let iat_base_rva =
+                dll_entry.import_directory_entry.import_address_table_rva as u64;
+            let dll_name_raw = dll_entry.name.to_ascii_lowercase();
+            // Walk the import lookup table entries for this DLL
+            let lut = if let Some(l) = &dll_entry.import_lookup_table {
+                l
+            } else {
+                continue;
+            };
+            for (idx, entry) in lut.iter().enumerate() {
+                use goblin::pe::import::SyntheticImportLookupTableEntry::*;
+                let fn_name = match entry {
+                    HintNameTableRVA((_rva, hint_entry)) => hint_entry.name.to_string(),
+                    OrdinalNumber(ord) => format!("#{}", ord),
+                };
+                let slot_va = image_base + iat_base_rva + idx as u64 * ptr_size;
+                iat_map.insert((dll_name_raw.clone(), fn_name), slot_va);
+            }
+        }
+    }
+
     let mut out = format!(
         "PE imports ({} entries, image_base=0x{:016x}):\n\n  {:<20}  {:<30}  {}\n  {}\n",
         pe.imports.len(), image_base,
-        "IAT address", "DLL", "Symbol",
+        "IAT slot address", "DLL", "Symbol",
         "─".repeat(72)
     );
     for imp in &pe.imports {
-        let vaddr = image_base + imp.rva as u64;
+        let key = (imp.dll.to_ascii_lowercase(), imp.name.to_string());
+        let vaddr = iat_map.get(&key).copied()
+            // Fall back to the name-table address if lookup failed (should not happen)
+            .unwrap_or_else(|| image_base + imp.rva as u64);
         out.push_str(&format!(
             "  0x{:016x}  {:<30}  {}\n",
             vaddr, imp.dll, imp.name
