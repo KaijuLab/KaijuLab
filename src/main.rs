@@ -401,6 +401,11 @@ Scripting & execution:
   /plugins                                List available plugins (~/.kaiju/plugins/)
   /run <name> [binary]                    Run a Rhai plugin by name (or path)
 
+AArch64 PE deep vulnerability analysis:
+  /bof             <path> [min_frame]     Stack-BOF candidates: large frames without PACI/canary
+  /iat             <path>                 Writable IAT slots + call sites (hijack surface)
+  /inject          <path>                 Process-injection API chains (alloc+write+exec)
+
 C++ & obfuscation:
   /vtables         <path> [min_methods]   Recover C++ vtables from .rdata/.rodata
   /decoders        <path> [max_fns]       Find string-decoder stubs (XOR+loop patterns)
@@ -797,6 +802,25 @@ fn dispatch_manual_command(input: &str, tx: &mpsc::UnboundedSender<agent::AgentE
                         tx);
                 }
             }
+        }
+
+        // /bof <path> [min_frame_bytes]  — AArch64 PE stack-BOF candidates
+        "bof" | "stack_bof" | "stack_bof_candidates" => {
+            let path      = parts.get(1).copied().unwrap_or("");
+            let min_frame = parts.get(2).and_then(|s| s.parse::<u64>().ok()).unwrap_or(256);
+            run_tool("stack_bof_candidates", json!({"path": path, "min_frame_bytes": min_frame}), tx);
+        }
+
+        // /iat <path>  — writable IAT hijack surface
+        "iat" | "writable_iat" | "writable_iat_hijack_surface" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("writable_iat_hijack_surface", json!({"path": path}), tx);
+        }
+
+        // /inject <path>  — find process-injection API chains
+        "inject" | "injection" | "find_injection_chains" => {
+            let path = parts.get(1).copied().unwrap_or("");
+            run_tool("find_injection_chains", json!({"path": path}), tx);
         }
 
         other => {

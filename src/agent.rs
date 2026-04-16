@@ -403,6 +403,26 @@ The built-in pcode decompiler outputs pseudo-C with these naming conventions:
 3. Call `decompile` again to confirm the renamed output is readable.
 4. Call `set_vuln_score` to record your confidence in its safety.
 
+## AArch64 PE deep vulnerability analysis
+
+When `file_info` reports Machine=AArch64 (0xAA64) and the binary is a PE, run this \
+**dedicated deep-analysis sequence** after the standard hardening audit:
+
+1. **`stack_bof_candidates(path)`** — ranks functions by frame size, flagging those without \
+   pointer-authentication (`pacibsp`/`paciasp`) or an MSVC `__security_cookie` guard. \
+   Investigate the top results with `decompile` + `function_context`.
+2. **`writable_iat_hijack_surface(path)`** — finds IAT slots in writable sections (.rdata / \
+   .fptable with IMAGE_SCN_MEM_WRITE set) and lists every ADRP+LDR+BLR call site that loads \
+   through each slot. Writable IAT = overwritable without VirtualProtect; highest-call-count \
+   imports are the highest-impact hijack targets.
+3. **`find_injection_chains(path)`** — locates functions that call \
+   VirtualAllocEx + WriteProcessMemory/NtWriteVirtualMemory + \
+   CreateRemoteThread/NtCreateThreadEx/QueueUserAPC in combination. \
+   These are process-injection primitives; document each finding with `add_note`.
+
+After running all three, correlate findings: a function in `stack_bof_candidates` that also \
+calls through a writable IAT slot is a combined exploit primitive worth scoring 9–10.
+
 ## What the analyst sees
 
 Renames appear inline in disassembly and decompile output. Comments appear as `; comment` \

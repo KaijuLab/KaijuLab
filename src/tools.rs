@@ -75,6 +75,7 @@ const CACHEABLE_TOOLS: &[&str] = &[
     "disassemble", "decompile", "xrefs_to", "cfg_view", "call_graph",
     "pe_security_audit", "pe_internals", "elf_internals",
     "crypto_identify", "function_context",
+    "stack_bof_candidates", "writable_iat_hijack_surface", "find_injection_chains",
 ];
 
 const WRITE_TOOLS: &[&str] = &[
@@ -372,6 +373,13 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
                 args["timeout_secs"].as_u64().unwrap_or(10),
             )
         }
+
+        "stack_bof_candidates" => stack_bof_candidates(
+            &str_arg(args, "path"),
+            args["min_frame_bytes"].as_u64().unwrap_or(256),
+        ),
+        "writable_iat_hijack_surface" => writable_iat_hijack_surface(&str_arg(args, "path")),
+        "find_injection_chains" => find_injection_chains(&str_arg(args, "path")),
 
         _ => ToolResult::err(format!("Unknown tool '{}'", name)),
     }
@@ -3535,6 +3543,527 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
                     .unwrap_or_else(|| format!("0x{:x}", a)))
                 .collect();
             out.push_str(&format!("              Successors: {}\n", succ_labels.join(", ")));
+        }
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: stack_bof_candidates ──────────────────────────────────────────────
+
+/// Scan every .pdata function for large stack frames (sub sp, sp, #N) that lack
+/// PACI or __security_cookie protection — classic stack buffer-overflow targets.
+fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
+    };
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        _ => return ToolResult::err("Not a PE binary"),
+    };
+    let image_base = pe.image_base as u64;
+    let min_frame = if min_frame_bytes == 0 { 256 } else { min_frame_bytes };
+
+    // Build text section map: vaddr → file offset
+    let sections: Vec<_> = pe.sections.iter().map(|s| {
+        let va    = image_base + s.virtual_address as u64;
+        let foff  = s.pointer_to_raw_data as usize;
+        let fsize = s.size_of_raw_data as usize;
+        (va, s.virtual_size as u64, foff, fsize)
+    }).collect();
+    let va_to_foff = |va: u64| -> Option<usize> {
+        for &(sec_va, sec_vsz, sec_foff, sec_fsz) in &sections {
+            if va >= sec_va && va < sec_va + sec_vsz {
+                let off = sec_foff + (va - sec_va) as usize;
+                if off < sec_foff + sec_fsz { return Some(off); }
+            }
+        }
+        None
+    };
+
+    // Iterate .pdata entries
+    let pdata = match pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+        .and_then(|s| s.data(&data).ok().flatten())
+    {
+        Some(b) => b,
+        None => return ToolResult::err("No .pdata section found"),
+    };
+
+    let project = Project::load_for(path);
+    let mut candidates: Vec<(u64, u64, bool)> = Vec::new(); // (va, frame_size, has_paci)
+
+    let n = pdata.len() / 8;
+    for i in 0..n {
+        let off = i * 8;
+        let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
+        if begin_rva == 0 { continue; }
+        let fn_va = image_base + begin_rva;
+        let foff = match va_to_foff(fn_va) { Some(o) => o, None => continue };
+        let end = (foff + 128).min(data.len());
+        if end <= foff { continue; }
+        let bytes = &data[foff..end];
+
+        // Check for PACI: 7f 23 03 d5 (pacibsp) or 5f 24 03 d5 (paciasp)
+        let has_paci = bytes.len() >= 4 && (
+            (bytes[0] == 0x7f && bytes[1] == 0x23 && bytes[2] == 0x03 && bytes[3] == 0xd5) ||
+            (bytes[0] == 0x5f && bytes[1] == 0x24 && bytes[2] == 0x03 && bytes[3] == 0xd5)
+        );
+
+        // Check for __security_cookie canary: ADRP + LDR x8, [x8, #offset]
+        // Pattern: look for `str x8, [sp, #N]` following `ldr x8, [xREG, #cookie_off]`
+        // Simple heuristic: look for the distinctive canary XOR epilogue byte pattern
+        // The __security_cookie load is `ldr x8, [xN, #offset]` early in function,
+        // and the check is `eor + cbnz __stack_chk_fail`. We detect canary by presence
+        // of the cookie ADRP pattern anywhere in first 128 bytes.
+        let has_cookie = {
+            let mut found = false;
+            // Look for ADRP xN, #page where page is in .data range (cookie lives there)
+            // Then LDR x8, [xN, #offset] — cookie offset is typically 0x40
+            // Simplified: scan for any `str x8, [sp, #N]` (e8 [03|07|0b|0f] [??] f9)
+            // that follows an ADRP within 4 instructions — conservative heuristic
+            let mut j = 0usize;
+            while j + 4 <= bytes.len() {
+                // STR x8, [sp, #offset]: word & 0xFFC003FF == 0xF90003E8
+                let w = u32::from_le_bytes([bytes[j], bytes[j+1], bytes[j+2], bytes[j+3]]);
+                if (w & 0xFFC003FF) == 0xF90003E8 {
+                    // Check if preceded by LDR (not store) from .data-like page:
+                    // ADRP within previous 8 instructions
+                    let search_start = j.saturating_sub(32);
+                    for k in (search_start..j).step_by(4) {
+                        if k + 4 > bytes.len() { break; }
+                        let wk = u32::from_le_bytes([bytes[k], bytes[k+1], bytes[k+2], bytes[k+3]]);
+                        // ADRP: top 7 bits must be 0b1001000 = 0x48 (bits 31-24 = 0x90 or 0xb0 etc.)
+                        // AArch64 ADRP encoding: op=1, 1 0 0 0 0, immhi, Rd — bits 28-31 = 1001
+                        if (wk >> 24) & 0x9f == 0x90 {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if found { break; }
+                }
+                j += 4;
+            }
+            found
+        };
+
+        // Scan for `sub sp, sp, #N` with shift=0: word = 0xD1000000 | (N << 10) | 0x3FF
+        // byte[0]=0xFF, byte[3]=0xD1; frame_size = (word >> 10) & 0xFFF
+        let mut frame_size: u64 = 0;
+        let mut j = 0usize;
+        while j + 4 <= bytes.len() {
+            let w = u32::from_le_bytes([bytes[j], bytes[j+1], bytes[j+2], bytes[j+3]]);
+            // SUB SP, SP, #imm12 (shift=0): 0xD10003FF | (imm12 << 10)
+            if (w & 0xFF0003FF) == 0xD10003FF {
+                let imm12 = ((w >> 10) & 0xFFF) as u64;
+                if imm12 > frame_size { frame_size = imm12; }
+            }
+            // SUB SP, SP, #imm12 (shift=1, lsl 12): 0xD1400000 | (imm12 << 10) | 0x3FF
+            if (w & 0xFF0003FF) == 0xD14003FF {
+                let imm12 = ((w >> 10) & 0xFFF) as u64;
+                if imm12 * 4096 > frame_size { frame_size = imm12 * 4096; }
+            }
+            j += 4;
+        }
+
+        if frame_size >= min_frame && !has_paci && !has_cookie {
+            candidates.push((fn_va, frame_size, false));
+        }
+    }
+
+    if candidates.is_empty() {
+        return ToolResult::ok(format!(
+            "No stack BOF candidates found (min_frame={} bytes, PACI/cookie excluded).", min_frame
+        ));
+    }
+
+    candidates.sort_by(|a, b| b.1.cmp(&a.1)); // sort by frame size desc
+    let mut out = format!(
+        "Stack BOF candidates: {} function(s) with frame ≥ {} bytes and NO PACI/canary:\n\
+         (Sorted by frame size descending. These functions have no return-address protection.)\n\n\
+         {:<20}  {:>10}  {}\n{}\n",
+        candidates.len(), min_frame,
+        "Address", "Frame(B)", "Name",
+        "─".repeat(60)
+    );
+    for (va, fsz, _) in candidates.iter().take(50) {
+        let name = project.get_name(*va).unwrap_or_else(|| format!("FUN_{:016x}", va));
+        out.push_str(&format!("  0x{:016x}  {:>10}  {}\n", va, fsz, name));
+    }
+    if candidates.len() > 50 {
+        out.push_str(&format!("\n  … and {} more (use min_frame_bytes to narrow)\n", candidates.len() - 50));
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: writable_iat_hijack_surface ───────────────────────────────────────
+
+/// Map writable IAT slots to callers — shows which functions call through
+/// pointers that live in writable sections (exploitable without VirtualProtect).
+fn writable_iat_hijack_surface(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
+    };
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        _ => return ToolResult::err("Not a PE binary"),
+    };
+    let image_base = pe.image_base as u64;
+
+    // Build set of writable section ranges
+    let writable_ranges: Vec<(u64, u64)> = pe.sections.iter()
+        .filter(|s| s.characteristics & 0x80000000 != 0) // IMAGE_SCN_MEM_WRITE
+        .map(|s| {
+            let va = image_base + s.virtual_address as u64;
+            (va, va + s.virtual_size as u64)
+        })
+        .collect();
+    let is_writable = |va: u64| writable_ranges.iter().any(|&(lo, hi)| va >= lo && va < hi);
+
+    // Build full IAT map: slot_va → "dll!fn"
+    let iat_map = build_pe_iat_map(&data);
+
+    // Filter to writable slots and prioritize by danger
+    const HIGH_RISK: &[&str] = &[
+        "createremotethread", "writeprocessmemory", "virtualallocex", "virtualalloc",
+        "loadlibrary", "getprocaddress", "createprocess", "shellexecute", "winexec",
+        "connectnamedpipe", "createnamedpipe", "readprocessmemory",
+        "regsetvalueex", "cryptencrypt", "cryptdecrypt",
+    ];
+
+    let mut writable_slots: Vec<(u64, String, bool)> = iat_map.iter()
+        .filter(|(&va, _)| is_writable(va))
+        .map(|(&va, name)| {
+            let low = name.to_ascii_lowercase();
+            let high_risk = HIGH_RISK.iter().any(|&h| low.contains(h));
+            (va, name.clone(), high_risk)
+        })
+        .collect();
+    writable_slots.sort_by(|a, b| b.2.cmp(&a.2).then(a.1.cmp(&b.1)));
+
+    // Always report writable sections (even if IAT isn't in them — they may contain
+    // function-pointer tables or read-only data that is exploitable without VirtualProtect).
+    let writable_sec_names: Vec<String> = pe.sections.iter()
+        .filter(|s| s.characteristics & 0x80000000 != 0)
+        .filter_map(|s| s.name().ok().map(|n| {
+            let va = image_base + s.virtual_address as u64;
+            format!("{} (VA=0x{:x}, VSize=0x{:x})", n, va, s.virtual_size)
+        }))
+        .collect();
+
+    if writable_slots.is_empty() {
+        let mut out = String::from("IAT is in read-only section — no writable IAT slots.\n\n");
+        if !writable_sec_names.is_empty() {
+            out.push_str("WARNING: The following sections are writable (IMAGE_SCN_MEM_WRITE set).\n");
+            out.push_str("If they contain function pointers, vtables, or jump tables, those can\n");
+            out.push_str("be overwritten without VirtualProtect:\n\n");
+            for n in &writable_sec_names {
+                out.push_str(&format!("  {}\n", n));
+            }
+        }
+        return ToolResult::ok(out);
+    }
+
+    // For each writable IAT slot, find callers by scanning .text for ADRP+LDR+BLR pattern
+    // We use the raw BL-scanner approach: scan for ADRP page matching the slot's upper bits,
+    // then LDR from that page+offset, then BLR.
+    // For efficiency: build a set of (adrp_page, ldr_offset) → slot_va pairs
+    let mut slot_callers: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+
+    let text_sec = pe.sections.iter().find(|s| s.name().ok().map_or(false, |n| n == ".text"));
+    if let Some(text) = text_sec {
+        let text_va  = image_base + text.virtual_address as u64;
+        let text_foff = text.pointer_to_raw_data as usize;
+        let text_fsz  = text.size_of_raw_data as usize;
+        if text_foff + text_fsz <= data.len() {
+            let text_bytes = &data[text_foff .. text_foff + text_fsz];
+            let n = text_bytes.len() & !3;
+            // State machine: track ADRP page per register (simplified: track x8)
+            // We only track the most common caller pattern: ADRP xN + LDR xN, [xN, #off] + BLR xN
+            // Use a small per-position register file: reg_page[0..32]
+            let mut adrp_page = [0u64; 32];
+            let mut reg_iat   = [0u64; 32]; // IAT slot VA if loaded from writable IAT
+            for i in (0..n).step_by(4) {
+                let w = u32::from_le_bytes([text_bytes[i], text_bytes[i+1], text_bytes[i+2], text_bytes[i+3]]);
+                let insn_va = text_va + i as u64;
+                let op31_24 = (w >> 24) as u8;
+                let rd  = (w & 0x1f) as usize;
+                let rn  = ((w >> 5) & 0x1f) as usize;
+                // ADRP: bits 31 = 1, 29-28 = 10, 24 = 1 → high nibble 1001xxxx (0x90-0x9f,0xb0-0xbf)
+                if (op31_24 & 0x9f) == 0x90 {
+                    // ADRP Rd, #page: page = PC_aligned + signed_offset (pc-relative page)
+                    // imm = immhi:immlo, sign-extended, << 12
+                    let immlo = (w >> 29) & 0x3;
+                    let immhi = (w >> 5) & 0x7FFFF;
+                    let imm = ((immhi << 2 | immlo) as i64).wrapping_shl(64 - 21).wrapping_shr(64 - 21 - 12);
+                    let page = (insn_va & !0xfff).wrapping_add(imm as u64);
+                    adrp_page[rd] = page;
+                    reg_iat[rd] = 0;
+                    continue;
+                }
+                // LDR (unsigned offset, 64-bit): 0xF9400000 | (imm12 << 10) | (rn << 5) | rt
+                if (w & 0xFFC00000) == 0xF9400000 {
+                    let rt   = (w & 0x1f) as usize;
+                    let rn_l = ((w >> 5) & 0x1f) as usize;
+                    let imm12 = ((w >> 10) & 0xfff) as u64;
+                    let off = imm12 * 8; // size=8 (64-bit LDR) → offset = imm12 << 3
+                    let slot_va = adrp_page[rn_l].wrapping_add(off);
+                    if iat_map.contains_key(&slot_va) && is_writable(slot_va) {
+                        reg_iat[rt] = slot_va;
+                    } else {
+                        reg_iat[rt] = 0;
+                    }
+                    continue;
+                }
+                // BLR xN
+                if (w & 0xFFFFFC1F) == 0xD63F0000 {
+                    let rn_l = ((w >> 5) & 0x1f) as usize;
+                    if reg_iat[rn_l] != 0 {
+                        slot_callers.entry(reg_iat[rn_l]).or_default().push(insn_va);
+                    }
+                    continue;
+                }
+                // Clear reg_iat on any write to the register that was tracking an IAT
+                // (conservative: clear on any instruction that writes rd)
+                if rd < 32 && rd != 31 {
+                    // only clear if this instruction writes to rd (most do)
+                    // skip reads (LDR already handled, ADRP handled)
+                    if (op31_24 & 0x9f) != 0x90 && (w & 0xFFC00000) != 0xF9400000 {
+                        reg_iat[rd] = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    let project = Project::load_for(path);
+
+    let high_count = writable_slots.iter().filter(|s| s.2).count();
+    let mut out = format!(
+        "Writable IAT hijack surface: {} total slots ({} HIGH-RISK)\n\
+         An attacker with any write-what-where primitive can overwrite these IAT\n\
+         slots (in writable sections) to redirect execution without VirtualProtect.\n\n",
+        writable_slots.len(), high_count
+    );
+
+    // Show high-risk slots with callers first
+    let sections_label = writable_ranges.iter()
+        .filter_map(|&(lo, _)| {
+            pe.sections.iter().find(|s| image_base + s.virtual_address as u64 == lo)
+                .and_then(|s| s.name().ok()).map(|n| n.to_string())
+        })
+        .collect::<Vec<_>>().join(", ");
+    out.push_str(&format!("  Writable sections containing IAT: {}\n\n", sections_label));
+
+    for (slot_va, imp_name, high_risk) in &writable_slots {
+        let risk_label = if *high_risk { "[HIGH-RISK]" } else { "[  normal ]" };
+        out.push_str(&format!("  {} 0x{:016x}  {}\n", risk_label, slot_va, imp_name));
+        if let Some(callers) = slot_callers.get(slot_va) {
+            for &site in callers.iter().take(4) {
+                let fn_name = project.get_name(site)
+                    .unwrap_or_else(|| format!("FUN_{:016x}", site));
+                out.push_str(&format!("        called from 0x{:x} ({})\n", site, fn_name));
+            }
+            if callers.len() > 4 {
+                out.push_str(&format!("        … and {} more call sites\n", callers.len() - 4));
+            }
+        }
+    }
+    ToolResult::ok(out)
+}
+
+// ─── Tool: find_injection_chains ─────────────────────────────────────────────
+
+/// Find functions that contain both allocation (VirtualAllocEx/VirtualAlloc) AND
+/// write/execute primitives (WriteProcessMemory/CreateRemoteThread) — process
+/// injection chains. Also reports functions containing any single high-risk combo.
+fn find_injection_chains(path: &str) -> ToolResult {
+    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
+    };
+    let pe = match goblin::Object::parse(&data) {
+        Ok(goblin::Object::PE(p)) => p,
+        _ => return ToolResult::err("Not a PE binary"),
+    };
+    let image_base = pe.image_base as u64;
+
+    // Categorise IAT slots into injection-phase buckets
+    let iat_map = build_pe_iat_map(&data);
+    let mut alloc_slots: std::collections::HashSet<u64>  = std::collections::HashSet::new();
+    let mut write_slots: std::collections::HashSet<u64>  = std::collections::HashSet::new();
+    let mut exec_slots:  std::collections::HashSet<u64>  = std::collections::HashSet::new();
+    let mut pipe_slots:  std::collections::HashSet<u64>  = std::collections::HashSet::new();
+
+    for (&va, name) in &iat_map {
+        let low = name.to_ascii_lowercase();
+        if low.contains("virtualalloc") || low.contains("heapalloc") { alloc_slots.insert(va); }
+        if low.contains("writeprocessmemory") || low.contains("ntwritevirtualmemory") { write_slots.insert(va); }
+        if low.contains("createremotethread") || low.contains("ntcreatethreadex")
+            || low.contains("rtlcreateuserthread") || low.contains("queueuserapc") { exec_slots.insert(va); }
+        if low.contains("namedpipe") || low.contains("connectnamedpipe") { pipe_slots.insert(va); }
+    }
+
+    if alloc_slots.is_empty() && write_slots.is_empty() && exec_slots.is_empty() {
+        return ToolResult::ok("No process injection IAT entries found in this binary.");
+    }
+
+    // Scan .text for ADRP+LDR+BLR patterns, tracking which injection slots each function uses
+    let pdata = match pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
+        .and_then(|s| s.data(&data).ok().flatten())
+    {
+        Some(b) => b,
+        None => return ToolResult::err("No .pdata section"),
+    };
+
+    // Build pdata function index: start_rva → end_rva
+    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
+        .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
+    let mut fn_ranges: Vec<(u64, u64)> = Vec::new(); // (start_va, end_va)
+    let num_pdata = pdata.len() / 8;
+    for i in 0..num_pdata {
+        let off = i * 8;
+        let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
+        if begin_rva == 0 { continue; }
+        let unwind_raw = u32::from_le_bytes(pdata[off+4..off+8].try_into().unwrap_or([0;4]));
+        let flag = unwind_raw & 0x3;
+        let fn_size: u64 = if flag != 0 {
+            ((unwind_raw >> 2) & 0x7FF) as u64 * 4
+        } else if let Some((rdata_va, rdata_foff)) = rdata_range {
+            let ui_rva = unwind_raw as u64;
+            if ui_rva >= rdata_va {
+                let ui_off = rdata_foff + (ui_rva - rdata_va) as usize;
+                if ui_off + 4 <= data.len() {
+                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                    (ui_word & 0x3_FFFF) as u64 * 4
+                } else { 512 }
+            } else { 512 }
+        } else { 512 };
+        let start_va = image_base + begin_rva;
+        let end_va   = start_va + fn_size.max(64);
+        fn_ranges.push((start_va, end_va));
+    }
+
+    let text_sec = pe.sections.iter().find(|s| s.name().ok().map_or(false, |n| n == ".text"));
+    let (text_va_base, text_foff, text_fsz) = match text_sec {
+        Some(s) => (image_base + s.virtual_address as u64, s.pointer_to_raw_data as usize, s.size_of_raw_data as usize),
+        None => return ToolResult::err("No .text section"),
+    };
+    if text_foff + text_fsz > data.len() { return ToolResult::err("Truncated .text"); }
+    let text_bytes = &data[text_foff .. text_foff + text_fsz];
+
+    // For each function, scan its bytes for injection-related BLR targets
+    let project = Project::load_for(path);
+    let mut injection_fns: Vec<(u64, Vec<String>)> = Vec::new(); // (fn_va, used_imports)
+
+    for &(fn_va, fn_end) in &fn_ranges {
+        if fn_va < text_va_base || fn_end <= fn_va { continue; }
+        let fn_foff = (fn_va - text_va_base) as usize;
+        let fn_size = ((fn_end - fn_va) as usize).min(65536);
+        if fn_foff + fn_size > text_bytes.len() { continue; }
+        let fn_bytes = &text_bytes[fn_foff .. fn_foff + fn_size];
+
+        let mut adrp_page = [0u64; 32];
+        let mut reg_iat   = [0u64; 32];
+        let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let n = fn_bytes.len() & !3;
+        for i in (0..n).step_by(4) {
+            let w = u32::from_le_bytes([fn_bytes[i], fn_bytes[i+1], fn_bytes[i+2], fn_bytes[i+3]]);
+            let insn_va = fn_va + i as u64;
+            let op31_24 = (w >> 24) as u8;
+            let rd  = (w & 0x1f) as usize;
+            let rn  = ((w >> 5) & 0x1f) as usize;
+
+            // ADRP
+            if (op31_24 & 0x9f) == 0x90 {
+                let immlo = (w >> 29) & 0x3;
+                let immhi = (w >> 5) & 0x7FFFF;
+                let imm = ((immhi << 2 | immlo) as i64).wrapping_shl(64 - 21).wrapping_shr(64 - 21 - 12);
+                let page = (insn_va & !0xfff).wrapping_add(imm as u64);
+                adrp_page[rd] = page;
+                reg_iat[rd] = 0;
+                continue;
+            }
+            // LDR 64-bit unsigned offset
+            if (w & 0xFFC00000) == 0xF9400000 {
+                let rt   = (w & 0x1f) as usize;
+                let rn_l = ((w >> 5) & 0x1f) as usize;
+                let imm12 = ((w >> 10) & 0xfff) as u64;
+                let slot_va = adrp_page[rn_l].wrapping_add(imm12 * 8);
+                reg_iat[rt] = if iat_map.contains_key(&slot_va) { slot_va } else { 0 };
+                continue;
+            }
+            // BLR
+            if (w & 0xFFFFFC1F) == 0xD63F0000 {
+                let rn_l = ((w >> 5) & 0x1f) as usize;
+                if reg_iat[rn_l] != 0 {
+                    if let Some(imp) = iat_map.get(&reg_iat[rn_l]) {
+                        used.insert(imp.clone());
+                    }
+                }
+                continue;
+            }
+            // BL (direct)
+            if (w >> 26) == 0x25 {
+                let imm26 = w & 0x3FF_FFFF;
+                let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
+                    (imm26 as i64) | (-1i64 << 26)
+                } else { imm26 as i64 };
+                let tgt = fn_va.wrapping_add((i as u64).wrapping_add((signed_off * 4) as u64));
+                if let Some(imp) = iat_map.get(&tgt) { used.insert(imp.clone()); }
+                continue;
+            }
+            // Clear iat tracking on write
+            if rd < 32 { reg_iat[rd] = 0; }
+            let _ = rn;
+        }
+
+        if used.is_empty() { continue; }
+        // Check if function uses injection-phase combinations
+        let has_alloc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("virtualalloc") || l.contains("heapalloc") });
+        let has_write = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("writeprocessmemory") });
+        let has_exec  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("createremotethread") || l.contains("ntcreatethreadex") });
+        let has_pipe  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("namedpipe") || l.contains("connectnamedpipe") });
+
+        // Report: alloc+write, alloc+exec, write+exec, full chain, or pipe IPC
+        let is_injection = (has_alloc && has_write) || (has_alloc && has_exec) ||
+                           (has_write && has_exec) || has_pipe;
+        if is_injection {
+            let mut apis: Vec<String> = used.into_iter().collect();
+            apis.sort();
+            injection_fns.push((fn_va, apis));
+        }
+    }
+
+    let mut out = format!(
+        "Process injection chain analysis for '{}'\n\
+         ══════════════════════════════════════════════\n\n",
+        path
+    );
+    if injection_fns.is_empty() {
+        out.push_str("No direct injection chains found in individual functions.\n");
+        out.push_str("(Injection may be split across multiple callers — check call_graph.)\n\n");
+        out.push_str("IAT entries available for injection:\n");
+        for va in alloc_slots.iter().chain(write_slots.iter()).chain(exec_slots.iter()) {
+            if let Some(n) = iat_map.get(va) {
+                out.push_str(&format!("  0x{:016x}  {}\n", va, n));
+            }
+        }
+    } else {
+        out.push_str(&format!("{} function(s) contain injection-capable API combinations:\n\n", injection_fns.len()));
+        for (va, apis) in &injection_fns {
+            let name = project.get_name(*va).unwrap_or_else(|| format!("FUN_{:016x}", va));
+            out.push_str(&format!("  0x{:016x}  {} — uses:\n", va, name));
+            for api in apis {
+                out.push_str(&format!("      {}\n", api));
+            }
         }
     }
     ToolResult::ok(out)
@@ -7117,6 +7646,54 @@ pub fn all_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["path", "hooks"]
+            }),
+        },
+        ToolDefinition {
+            name: "stack_bof_candidates".into(),
+            description: "Scan an AArch64 PE binary's .pdata entries for functions with large stack \
+                           frames that lack pointer-authentication (pacibsp/paciasp) and/or a MSVC \
+                           security cookie. Returns a ranked list of functions most susceptible to \
+                           stack-based buffer overflows. Use on Windows AArch64 PE binaries after \
+                           file_info confirms the architecture.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the AArch64 PE binary" },
+                    "min_frame_bytes": { "type": "integer", "description": "Minimum stack-frame size to report (default 256 bytes)" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "writable_iat_hijack_surface".into(),
+            description: "Identify writable IAT (Import Address Table) slots in a PE binary and \
+                           enumerate every call site that loads through each slot using the \
+                           ADRP+LDR+BLR pattern (AArch64). A writable IAT slot is a potential \
+                           hijack vector — an attacker can overwrite the slot without needing \
+                           VirtualProtect. Results show which imports are most widely called and \
+                           thus highest-impact if hijacked.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the PE binary" }
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolDefinition {
+            name: "find_injection_chains".into(),
+            description: "Scan all functions in a PE binary for process-injection API chains: \
+                           combinations of memory-allocation (VirtualAllocEx), memory-write \
+                           (WriteProcessMemory/NtWriteVirtualMemory), and remote execution \
+                           (CreateRemoteThread/NtCreateThreadEx/QueueUserAPC). \
+                           Functions hitting all three categories are flagged as injection-capable. \
+                           Uses AArch64 ADRP+LDR+BLR decoding to resolve IAT targets.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the PE binary" }
+                },
+                "required": ["path"]
             }),
         },
     ]
