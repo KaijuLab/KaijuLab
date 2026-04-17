@@ -3960,7 +3960,7 @@ fn find_injection_chains(path: &str) -> ToolResult {
 
     // For each function, scan its bytes for injection-related BLR targets
     let project = Project::load_for(path);
-    let mut injection_fns: Vec<(u64, Vec<String>)> = Vec::new(); // (fn_va, used_imports)
+    let mut injection_fns: Vec<(u64, Vec<String>, String)> = Vec::new(); // (fn_va, used_imports, chain_kind)
 
     for &(fn_va, fn_end) in &fn_ranges {
         if fn_va < text_va_base || fn_end <= fn_va { continue; }
@@ -4026,19 +4026,44 @@ fn find_injection_chains(path: &str) -> ToolResult {
         }
 
         if used.is_empty() { continue; }
-        // Check if function uses injection-phase combinations
-        let has_alloc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("virtualalloc") || l.contains("heapalloc") });
-        let has_write = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("writeprocessmemory") });
-        let has_exec  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("createremotethread") || l.contains("ntcreatethreadex") });
+        // Check for injection-phase combinations.
+        // Require at least TWO distinct phases to avoid false-positives on
+        // browser/IPC code that legitimately uses individual primitives in
+        // isolation (e.g. a sandbox bootstrap that only allocates, or a pipe
+        // function that only uses named-pipe APIs without any exec primitive).
+        let has_alloc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("virtualallocex") || l.contains("ntalloc") });
+        let has_write = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("writeprocessmemory") || l.contains("ntwritevirtualmemory") });
+        let has_exec  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("createremotethread") || l.contains("ntcreatethreadex") || l.contains("rtlcreateuserthread") || l.contains("queueuserapc") });
+        // Named-pipe alone is not an injection chain; only flag if combined
+        // with a memory-write or exec primitive (e.g. pipe + LoadLibrary + OpenProcess).
         let has_pipe  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("namedpipe") || l.contains("connectnamedpipe") });
+        let has_loadlib = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("loadlibrary") });
+        let has_openproc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("openprocess") });
 
-        // Report: alloc+write, alloc+exec, write+exec, full chain, or pipe IPC
-        let is_injection = (has_alloc && has_write) || (has_alloc && has_exec) ||
-                           (has_write && has_exec) || has_pipe;
+        // True injection chain: must involve at least two of alloc/write/exec,
+        // OR a pipe broker that combines OpenProcess + LoadLibrary (dynamic
+        // library loading into a foreign process via IPC).
+        let is_injection =
+            (has_alloc && has_write) ||
+            (has_alloc && has_exec)  ||
+            (has_write && has_exec)  ||
+            (has_pipe && has_loadlib && has_openproc);
         if is_injection {
+            // Annotate the kind of chain
+            let chain_kind = if has_alloc && has_write && has_exec {
+                "[FULL CHAIN: alloc+write+exec]"
+            } else if has_alloc && has_write {
+                "[alloc+write — exec primitive missing]"
+            } else if has_alloc && has_exec {
+                "[alloc+exec — write primitive missing]"
+            } else if has_write && has_exec {
+                "[write+exec — alloc primitive missing]"
+            } else {
+                "[pipe broker: OpenProcess+LoadLibrary via IPC]"
+            };
             let mut apis: Vec<String> = used.into_iter().collect();
             apis.sort();
-            injection_fns.push((fn_va, apis));
+            injection_fns.push((fn_va, apis, chain_kind.to_string()));
         }
     }
 
@@ -4058,9 +4083,9 @@ fn find_injection_chains(path: &str) -> ToolResult {
         }
     } else {
         out.push_str(&format!("{} function(s) contain injection-capable API combinations:\n\n", injection_fns.len()));
-        for (va, apis) in &injection_fns {
+        for (va, apis, kind) in &injection_fns {
             let name = project.get_name(*va).unwrap_or_else(|| format!("FUN_{:016x}", va));
-            out.push_str(&format!("  0x{:016x}  {} — uses:\n", va, name));
+            out.push_str(&format!("  0x{:016x}  {}  {}\n", va, kind, name));
             for api in apis {
                 out.push_str(&format!("      {}\n", api));
             }
