@@ -128,6 +128,8 @@ CI pipelines or for cold orientation before opening the workbench.
 ```
 
 - **Command palette** (`Ctrl+K` / `Cmd+K`): `0x401000` jumps · `parse_header` fuzzy-finds · `/rename`, `/comment`, `/note`, `/scan vuln`, `/goto`, `/info`.
+- **Playbooks**: guided expert workflows for malware triage, CTF flag hunting, vulnerability audit, and capability survey. Playbooks run deterministic tools, summarize evidence, and can create findings for review.
+- **Findings board**: review evidence-backed findings, jump to addresses, and move items through triage, confirmed, dismissed, or false-positive states.
 - **Source attribution**: every mutation in the timeline shows whether it came from `user`, `claude`, `codex`, `plugin`, or `tool`. Filter the stream by source.
 - **Inspector**: shows the selected function's annotations, vuln score, notes. Edit in place; writes hit the same project DB as MCP writes.
 
@@ -170,6 +172,11 @@ Tools are available identically through REST (`/api/...`), MCP
 ### Intelligence
 `scan_vulnerabilities`, `identify_library_functions`, `diff_binary`,
 `virustotal_check` (requires `VIRUSTOTAL_API_KEY`).
+
+### Playbooks
+`list_playbooks`, `run_playbook`. Available playbooks:
+`malware_triage`, `ctf_flag_hunt`, `vulnerability_audit`,
+`capability_survey`.
 
 ### Function hash database (cross-binary)
 `register_function_hash`, `lookup_function_hash`, `match_all_functions`

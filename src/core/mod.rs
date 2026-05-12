@@ -8,6 +8,7 @@ pub mod analysis;
 pub mod events;
 pub mod findings;
 pub mod jobs;
+pub mod playbooks;
 pub mod project_store;
 pub mod workspace;
 

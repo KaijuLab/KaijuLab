@@ -25,6 +25,7 @@ use crate::{
         analysis,
         events::Source,
         findings::{CreateFinding, CreatedBy, Evidence, FindingKind, Severity, UpdateFinding},
+        playbooks::{self, PlaybookId, PlaybookRunRequest},
         project_store,
         workspace::{read_recent, socket_path_for, Workspace},
     },
@@ -64,6 +65,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/findings", get(list_findings).post(create_finding))
         .route("/api/findings/:id", get(get_finding).patch(update_finding))
         .route("/api/scans/vuln", post(start_vuln_scan))
+        .route("/api/playbooks", get(list_playbooks))
+        .route("/api/playbooks/:id/run", post(run_playbook))
         .route("/api/agents/:agent/run", post(run_agent))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/:id", get(get_job))
@@ -612,6 +615,66 @@ async fn start_vuln_scan(
         },
     );
     Ok(Json(json!({ "job_id": job_id.0 })))
+}
+
+// ─── Playbooks ───────────────────────────────────────────────────────────────
+
+async fn list_playbooks() -> Json<Value> {
+    Json(json!(playbooks::list_playbooks()))
+}
+
+async fn run_playbook(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<PlaybookRunRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let id = PlaybookId::parse(&id).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let run = playbooks::run_playbook(&ws, id, req.max_functions).map_err(ApiError::from)?;
+    let created_findings = if req.create_findings {
+        persist_playbook_findings(&s, &run)
+    } else {
+        Vec::new()
+    };
+    Ok(Json(json!({
+        "run": run,
+        "created_findings": created_findings,
+    })))
+}
+
+fn persist_playbook_findings(s: &AppState, run: &playbooks::PlaybookRun) -> Vec<String> {
+    use crate::core::events::{now_ts, Event};
+
+    let mut ids = Vec::new();
+    for proposed in &run.proposed_findings {
+        let kind = proposed.kind.clone();
+        let severity = proposed.severity;
+        let finding = s.findings.create(CreateFinding {
+            kind,
+            severity,
+            vaddr: proposed.vaddr.clone(),
+            rule: proposed.rule.clone(),
+            rationale: proposed.rationale.clone(),
+            evidence: proposed.evidence.clone(),
+            suggested_actions: proposed.suggested_actions.clone(),
+            created_by: CreatedBy::Tool {
+                name: format!("{:?}", run.id),
+            },
+        });
+        let kind_str = serde_json::to_string(&finding.kind).unwrap_or_else(|_| "custom".into());
+        let sev_str = serde_json::to_string(&finding.severity).unwrap_or_else(|_| "info".into());
+        s.events.emit(Event::FindingCreated {
+            id: finding.id.clone(),
+            kind: kind_str.trim_matches('"').to_string(),
+            severity: sev_str.trim_matches('"').to_string(),
+            vaddr: finding.vaddr.clone(),
+            rule: finding.rule.clone(),
+            source: Source::Tool,
+            ts: now_ts(),
+        });
+        ids.push(finding.id);
+    }
+    ids
 }
 
 async fn list_jobs(State(s): State<AppState>) -> Json<Value> {

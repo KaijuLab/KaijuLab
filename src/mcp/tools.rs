@@ -7,7 +7,9 @@
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
-use crate::core::{analysis, events::Source, project_store, workspace::Workspace, EventBus};
+use crate::core::{
+    analysis, events::Source, playbooks, project_store, workspace::Workspace, EventBus,
+};
 
 /// Return the JSON Schema list of all MCP tools.  Shape mirrors what
 /// `tools/list` returns to the MCP client.
@@ -150,6 +152,26 @@ pub fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": { "pattern": { "type": "string" } },
                 "required": ["pattern"]
+            })
+        ),
+        def(
+            "list_playbooks",
+            "List guided professional analysis playbooks.",
+            obj_no_args()
+        ),
+        def(
+            "run_playbook",
+            "Run a guided analysis playbook and return structured evidence/findings.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "enum": ["malware_triage", "ctf_flag_hunt", "vulnerability_audit", "capability_survey"]
+                    },
+                    "max_functions": { "type": "integer" }
+                },
+                "required": ["id"]
             })
         ),
         // ── write tools (carry implicit source=claude/codex) ──────────
@@ -351,6 +373,20 @@ pub fn dispatch_mcp(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("missing pattern"))?;
             analysis::search_bytes(workspace, p)
+        }
+        "list_playbooks" => Ok(serde_json::to_string_pretty(&playbooks::list_playbooks())?),
+        "run_playbook" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing id"))?;
+            let id = playbooks::PlaybookId::parse(id)?;
+            let max_functions = args
+                .get("max_functions")
+                .and_then(|v| v.as_u64())
+                .map(|x| x as u32);
+            let run = playbooks::run_playbook(workspace, id, max_functions)?;
+            Ok(serde_json::to_string_pretty(&run)?)
         }
 
         // ── write ─────────────────────────────────────────────────────

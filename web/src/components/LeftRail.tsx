@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { api, Playbook, PlaybookRunResponse } from '../api';
 import { useStore } from '../state';
 
 export function LeftRail() {
@@ -28,6 +29,7 @@ export function LeftRail() {
 
   return (
     <aside className="flex flex-col w-72 shrink-0 bg-kaiju-panel border-r border-kaiju-border">
+      <PlaybooksPanel />
       <div className="p-2 border-b border-kaiju-border">
         <input
           value={query}
@@ -69,5 +71,60 @@ export function LeftRail() {
         })}
       </div>
     </aside>
+  );
+}
+
+function PlaybooksPanel() {
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [running, setRunning] = useState<string | null>(null);
+  const [last, setLast] = useState<PlaybookRunResponse | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.listPlaybooks().then(setPlaybooks).catch((e) => setError(String(e)));
+  }, []);
+
+  const run = async (pb: Playbook) => {
+    setRunning(pb.id);
+    setError('');
+    try {
+      const result = await api.runPlaybook(pb.id, 120, true);
+      setLast(result);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  return (
+    <div className="border-b border-kaiju-border p-2">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wider text-kaiju-muted">Playbooks</div>
+        {running && <div className="text-[10px] text-kaiju-accent">running</div>}
+      </div>
+      <div className="grid grid-cols-2 gap-1">
+        {playbooks.map((pb) => (
+          <button
+            key={pb.id}
+            title={pb.goal}
+            disabled={running !== null}
+            onClick={() => run(pb)}
+            className="border border-kaiju-border px-2 py-1 text-left text-[11px] leading-tight hover:border-kaiju-accent disabled:opacity-50"
+          >
+            {pb.title}
+          </button>
+        ))}
+      </div>
+      {error && <div className="mt-2 text-[11px] text-kaiju-danger">{error}</div>}
+      {last && (
+        <div className="mt-2 border-l-2 border-kaiju-accent pl-2 text-[11px] leading-snug">
+          <div className="text-kaiju-text">{last.run.summary}</div>
+          <div className="mt-1 text-kaiju-muted">
+            findings: {last.created_findings.length} · evidence: {last.run.steps.length}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

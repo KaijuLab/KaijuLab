@@ -1,5 +1,8 @@
 // Thin REST client for the kaijulab daemon.
 
+import type { Finding } from './types/Finding';
+import type { FindingStatus } from './types/FindingStatus';
+
 export interface WorkspaceInfo {
   binary_path: string;
   display_name: string;
@@ -39,6 +42,29 @@ export interface AgentRunResponse {
   applied: boolean;
 }
 
+export type PlaybookId = 'malware_triage' | 'ctf_flag_hunt' | 'vulnerability_audit' | 'capability_survey';
+
+export interface Playbook {
+  id: PlaybookId;
+  title: string;
+  audience: string;
+  goal: string;
+  steps: string[];
+}
+
+export interface PlaybookRun {
+  id: PlaybookId;
+  title: string;
+  summary: string;
+  steps: Array<{ title: string; status: string; evidence: Array<{ label: string; tool: string; snippet: string }> }>;
+  proposed_findings: Array<{ rule: string; rationale: string; severity: string; suggested_actions: string[] }>;
+}
+
+export interface PlaybookRunResponse {
+  run: PlaybookRun;
+  created_findings: string[];
+}
+
 async function jget<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -48,6 +74,16 @@ async function jget<T>(url: string): Promise<T> {
 async function jpost<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(url, {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${url} → ${r.status}`);
+  return r.json() as Promise<T>;
+}
+
+async function jpatch<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -115,6 +151,19 @@ export const api = {
       kind,
       vaddr,
       write_policy,
+    }),
+  listPlaybooks: () => jget<Playbook[]>('/api/playbooks'),
+  runPlaybook: (id: PlaybookId, max_functions = 120, create_findings = true) =>
+    jpost<PlaybookRunResponse>(`/api/playbooks/${id}/run`, {
+      max_functions,
+      create_findings,
+    }),
+  listFindings: () => jget<Finding[]>('/api/findings'),
+  updateFinding: (id: string, status: FindingStatus, owner?: string | null) =>
+    jpatch<Finding>(`/api/findings/${id}`, {
+      status,
+      owner: owner ?? null,
+      append_notes: [],
     }),
   paletteExec: (input: string, current_vaddr?: string) =>
     jpost<PaletteResult>('/api/palette/exec', { input, current_vaddr }),
