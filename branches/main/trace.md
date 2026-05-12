@@ -12,3 +12,4 @@
 [20:09:36] OBSERVE: read src/tui.rs
 [20:09:36] OBSERVE: read src/agent.rs
 [20:09:36] OBSERVE: read src/agent.rs
+[20:09:36] OBSERVE: read src/tui.rs
