@@ -134,3 +134,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:37:31] ACT: wrote web/src/components/Timeline.tsx
 [20:37:41] ACT: wrote web/src/components/CommandPalette.tsx
 [20:37:58] ACT: wrote tests/gen_types.rs
+[20:45:47] ACT: implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + palette + embedded UI), src/ipc (Unix socket protocol), src/mcp (stdio shim with daemon discovery), src/agent_bridge (stub for future PRs), main.rs Serve/Mcp/Analyze subcommands. Web UI: React+Vite+TS with TopBar/LeftRail/CenterWorkspace/Inspector/Timeline/CommandPalette. ts-rs generates 28 .ts type files into web/src/types/.
