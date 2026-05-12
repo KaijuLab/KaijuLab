@@ -200,3 +200,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:04:07] OBSERVE: read src/core/workspace.rs
 [21:04:14] ACT: edited src/core/workspace.rs
 [21:04:33] ACT: edited src/core/workspace.rs
+[21:04:38] ACT: edited src/core/mod.rs
