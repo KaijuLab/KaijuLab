@@ -1,0 +1,1 @@
+{"git_oid":"e46b0ada701568b9cd6a918fad21ae414c6d8c15","parent_oid":"f24d187756ad0b2a582ff0b354fc2a5ae71e1940","ai_metadata":{"model_name":"claude-sonnet-4-6","prompt":"let's implement that kind of path picker/drag-drop","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-05-12T21:28:52.023262855Z"}
