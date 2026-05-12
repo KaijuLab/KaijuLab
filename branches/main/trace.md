@@ -479,3 +479,4 @@ _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 [22:51:28] OBSERVE: read src/server/mod.rs
 [22:51:28] OBSERVE: read src/server/ws.rs
 [22:51:28] OBSERVE: read src/server/routes.rs
+[22:51:28] OBSERVE: searched src for "auth_token|token|Authorization|CorsLayer|middleware|from_fn|serve\("
