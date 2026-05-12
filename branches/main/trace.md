@@ -112,3 +112,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:31:40] ACT: edited src/main.rs
 [20:31:50] OBSERVE: read src/main.rs
 [20:32:07] ACT: edited src/main.rs
+[20:34:18] ACT: edited src/core/findings.rs
