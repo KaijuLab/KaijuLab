@@ -259,3 +259,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: listed files under src
 [21:53:16] OBSERVE: read src/agent_bridge/mod.rs
 [21:53:16] OBSERVE: read src/agent_bridge/mod.rs
+[21:53:16] OBSERVE: read src/agent_bridge/claude.rs
