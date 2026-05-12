@@ -230,3 +230,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:32:45] OBSERVE: read web/src/api.ts
 [21:32:45] OBSERVE: read src/server/routes.rs
 [21:32:51] OBSERVE: read src/core/workspace.rs
+[21:33:09] OBSERVE: read web/dist/index.html
