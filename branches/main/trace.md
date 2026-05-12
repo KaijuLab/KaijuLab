@@ -326,3 +326,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: listed files under AgentRunKind.ts
 [21:53:16] OBSERVE: read web/src/types/OpenWorkspaceRequest.ts
 [21:53:16] OBSERVE: read web/src/types/OpenWorkspaceRequest.ts
+[21:53:16] OBSERVE: read web/src/types/RegistrySnapshot.ts
