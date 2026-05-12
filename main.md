@@ -14,11 +14,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…
 - [x] implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + …
 - [x] edited .gitignore; edited .gitignore; wrote README.md
+- [x] edited .gitignore; edited .gitignore; wrote README.md
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 20:52 UTC] `main`: edited .gitignore; edited .gitignore; wrote README.md
 - [2026-05-12 20:51 UTC] `main`: edited .gitignore; edited .gitignore; wrote README.md
 - [2026-05-12 20:48 UTC] `main`: implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + …
 - [2026-05-12 20:46 UTC] `main`: wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…

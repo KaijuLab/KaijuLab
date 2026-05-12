@@ -165,3 +165,9 @@ _[Checkpoint: 6a039226 — implemented milestone 1: src/core (workspace/events/j
 _[Checkpoint: 6a0392e1 — edited .gitignore; edited .gitignore; wrote README.md]_
 ---
 
+
+
+---
+_[Checkpoint: 6a03932a — edited .gitignore; edited .gitignore; wrote README.md]_
+---
+
