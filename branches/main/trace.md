@@ -137,3 +137,9 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:45:47] ACT: implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + palette + embedded UI), src/ipc (Unix socket protocol), src/mcp (stdio shim with daemon discovery), src/agent_bridge (stub for future PRs), main.rs Serve/Mcp/Analyze subcommands. Web UI: React+Vite+TS with TopBar/LeftRail/CenterWorkspace/Inspector/Timeline/CommandPalette. ts-rs generates 28 .ts type files into web/src/types/.
 [20:45:47] OBSERVE: end-to-end demo verified: serve daemon + WS client + mcp shim, all sharing state via Unix socket. MCP rename_function emits granular function.renamed event with source:claude that reaches WebSocket subscribers instantly. The milestone-1 killer demo (Claude + human editing the same project, watching each other live) works.
 [20:45:47] NOTE: TODO follow-ups: (1) agent_bridge adapters return NotImplemented — wire claude -p / codex exec; (2) cancellation tokens declared but not yet woven through tools::dispatch_inner; (3) auth_token field exists in AppState but middleware doesn't check it yet; (4) functions text-parse in web/api.ts is brittle for non-symbol-table binaries; (5) Inspector lacks xrefs / hash-DB matches / cross-binary panels; (6) Findings UI not yet built (schema + endpoints exist).
+
+
+---
+_[Checkpoint: 6a03917f — milestone-1 web/MCP scaffolding lands]_
+---
+
