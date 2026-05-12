@@ -63,3 +63,4 @@ _[Checkpoint: 6a038a58 — added docs/web-mcp-architecture.md; edited docs/web-m
 _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…]_
 ---
 
+[20:20:36] OBSERVE: read src/tools.rs
