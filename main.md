@@ -21,11 +21,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote web/src/components/TopBar.tsx; edited web/src/hooks/useEventStream.ts; added WorkspaceRegistry + path picker / dra…
 - [x] Implemented agent bridge and UI/MCP maturity slice
 - [x] Added active-workspace MCP discovery for web-opened binaries
+- [x] Added guided professional analysis playbooks
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 22:14 UTC] `main`: Added guided professional analysis playbooks
 - [2026-05-12 22:00 UTC] `main`: Added active-workspace MCP discovery for web-opened binaries
 - [2026-05-12 21:53 UTC] `main`: Implemented agent bridge and UI/MCP maturity slice
 - [2026-05-12 21:44 UTC] `main`: wrote web/src/components/TopBar.tsx; edited web/src/hooks/useEventStream.ts; added WorkspaceRegistry + path picker / dra…
