@@ -383,3 +383,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:14:16] OBSERVE: read web/src/App.tsx
 [22:14:16] OBSERVE: read web/src/components/LeftRail.tsx
 [22:14:17] OBSERVE: read web/src/state.ts
+[22:14:17] OBSERVE: read web/src/state.ts
