@@ -287,3 +287,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: searched tools.rs for "similar|match_all|hash|taint|slice|semantic|call_graph|cfg_view|xrefs_data|run_binary|function_context|create_finding"
 [21:53:16] OBSERVE: read src/main.rs
 [21:53:16] OBSERVE: read web/src/api.ts
+[21:53:16] OBSERVE: read web/src/api.ts
