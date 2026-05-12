@@ -379,3 +379,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:14:16] NOTE: Implemented professional playbook substrate: core/playbooks.rs deterministic workflows malware_triage, ctf_flag_hunt, vulnerability_audit, capability_survey; REST /api/playbooks + /api/playbooks/:id/run persists proposed findings; MCP list_playbooks/run_playbook; UI left rail playbook runner.
 [22:14:16] OBSERVE: searched web/src for "src"
 [22:14:16] OBSERVE: searched src for "playbook|workflow|finding|scan|capability|triage|strings|imports|callgraph|cfg|jobs|palette"
+[22:14:16] OBSERVE: read src/core/mod.rs
