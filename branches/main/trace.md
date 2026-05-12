@@ -247,3 +247,4 @@ _[Checkpoint: 6a039cc4 — wrote web/src/components/TopBar.tsx; edited web/src/h
 _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/hooks/useEventStream.ts; added WorkspaceRegistry + path picker / dra…]_
 ---
 
+[21:44:46] THINK: Maturity roadmap should prioritize agent-native MCP contract, durable RE database, analysis graph algorithms, and analyst UI workflows over generic chat UI because KaijuLab already positions daemon as source of truth with Claude/Codex as external reasoning engines.
