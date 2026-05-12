@@ -354,3 +354,9 @@ _[Checkpoint: 6a03a15f — Implemented agent bridge and UI/MCP maturity slice]_
 [22:00:25] OBSERVE: read README.md
 [22:00:25] OBSERVE: read README.md
 [22:00:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+
+
+---
+_[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened binaries]_
+---
+
