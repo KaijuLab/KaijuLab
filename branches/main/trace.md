@@ -237,3 +237,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 _[Checkpoint: 6a039cc4 — wrote web/src/components/TopBar.tsx; edited web/src/hooks/useEventStream.ts; added WorkspaceRegistry + path picker / dra…]_
 ---
 
+[21:43:36] OBSERVE: read web/src/components/LeftRail.tsx
