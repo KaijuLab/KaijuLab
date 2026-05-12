@@ -215,3 +215,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:07:34] ACT: edited Cargo.toml
 [21:08:07] ACT: edited web/src/api.ts
 [21:08:21] ACT: wrote web/src/components/OpenBinary.tsx
+[21:08:28] ACT: edited web/src/state.ts
