@@ -443,3 +443,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 [22:22:28] OBSERVE: searched src for "findings\.|FindingStore|s\.findings|create_agent_triage_finding|persist_playbook_findings"
 [22:22:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/project.rs
 [22:22:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/findings.rs
+[22:22:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/mod.rs
