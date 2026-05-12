@@ -329,3 +329,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: read web/src/types/RegistrySnapshot.ts
 [21:53:16] OBSERVE: read web/src/types/RegistrySnapshot.ts
 [21:53:16] OBSERVE: read web/src/types/AgentRunKind.ts
+[21:53:16] OBSERVE: read web/src/types/AgentRunResponse.ts
