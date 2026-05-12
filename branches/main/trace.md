@@ -517,3 +517,9 @@ _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 [22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/palette.rs
 [22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs
 [22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/ws.rs
+
+
+---
+_[Checkpoint: 6a03af72 — Implemented serve --token enforcement for REST and WebSocket routes with web UI token prompt/storage and docs update.]_
+---
+

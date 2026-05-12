@@ -24,11 +24,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added guided professional analysis playbooks
 - [x] Added findings board and evidence review UI
 - [x] Persisted findings in project database
+- [x] Implemented serve --token enforcement for REST and WebSocket routes with web UI token prompt/storage and docs update.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 22:53 UTC] `main`: Implemented serve --token enforcement for REST and WebSocket routes with web UI token prompt/storage and docs update.
 - [2026-05-12 22:23 UTC] `main`: Persisted findings in project database
 - [2026-05-12 22:17 UTC] `main`: Added findings board and evidence review UI
 - [2026-05-12 22:14 UTC] `main`: Added guided professional analysis playbooks
