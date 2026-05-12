@@ -47,3 +47,9 @@ _[Checkpoint: 6a0389fb — Added Web + MCP architecture sketch covering product 
 ---
 
 [20:14:09] OBSERVE: read docs/web-mcp-architecture.md
+
+
+---
+_[Checkpoint: 6a038a58 — added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md]_
+---
+
