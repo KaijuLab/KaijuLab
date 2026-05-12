@@ -75,7 +75,7 @@ libc = "0.2"
 # ── Web / MCP stack ───────────────────────────────────────────────────────────
 
 # HTTP server
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.7", features = ["ws", "macros", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 tower = "0.4"
 

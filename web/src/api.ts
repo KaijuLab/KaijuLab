@@ -42,8 +42,31 @@ async function jpost<T>(url: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+export interface RegistrySnapshot {
+  active: string | null;
+  workspaces: WorkspaceInfo[];
+}
+
 export const api = {
-  workspace: () => jget<WorkspaceInfo>('/api/workspace'),
+  activeWorkspace: () => jget<WorkspaceInfo | null>('/api/workspace'),
+  listWorkspaces: () => jget<RegistrySnapshot>('/api/workspaces'),
+  openWorkspace: (path: string) =>
+    jpost<WorkspaceInfo>('/api/workspaces/open', { path }),
+  activateWorkspace: (hash: string) =>
+    jpost<{ ok: boolean }>(`/api/workspaces/${hash}/activate`, {}),
+  closeWorkspace: async (hash: string) => {
+    const r = await fetch(`/api/workspaces/${hash}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`close → ${r.status}`);
+    return r.json();
+  },
+  uploadWorkspace: async (file: File): Promise<WorkspaceInfo> => {
+    const form = new FormData();
+    form.append('file', file);
+    const r = await fetch('/api/workspaces/upload', { method: 'POST', body: form });
+    if (!r.ok) throw new Error(`upload → ${r.status}`);
+    return r.json();
+  },
+  recentFiles: () => jget<string[]>('/api/workspaces/recent'),
   binaryInfo: () => jget<{ text: string }>('/api/binary/info'),
   sections: () => jget<{ text: string }>('/api/sections'),
   imports: () => jget<{ text: string }>('/api/imports'),

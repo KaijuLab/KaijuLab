@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use ts_rs::TS;
 
-use crate::core::{analysis, events::Source, project_store};
+use crate::core::{analysis, events::Source, project_store, workspace::Workspace};
 
 use super::AppState;
 
@@ -42,6 +42,12 @@ fn run(s: &AppState, req: &PaletteRequest) -> PaletteResult {
         };
     }
 
+    let Some(ws) = s.registry.active() else {
+        return PaletteResult::Error {
+            message: "no active workspace — open a binary first".into(),
+        };
+    };
+
     // Bare address jump: "0x401000" or "401000"
     if let Some(v) = try_parse_vaddr(input) {
         return PaletteResult::Navigate {
@@ -51,13 +57,13 @@ fn run(s: &AppState, req: &PaletteRequest) -> PaletteResult {
 
     // Slash commands
     if let Some(cmd) = input.strip_prefix('/') {
-        return run_slash(s, cmd, req.current_vaddr.as_deref());
+        return run_slash(s, &ws, cmd, req.current_vaddr.as_deref());
     }
 
     // Bare symbol: try to match a renamed function name; otherwise navigate
     // to a vaddr if the inner list_functions output contains it.
     let needle = input.to_ascii_lowercase();
-    let hit = s.workspace.with_project(|p| {
+    let hit = ws.with_project(|p| {
         p.renames
             .iter()
             .find(|(_, name)| name.to_ascii_lowercase().contains(&needle))
@@ -73,7 +79,7 @@ fn run(s: &AppState, req: &PaletteRequest) -> PaletteResult {
     }
 }
 
-fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteResult {
+fn run_slash(s: &AppState, ws: &Workspace, cmd: &str, current_vaddr: Option<&str>) -> PaletteResult {
     let mut parts = cmd.splitn(2, char::is_whitespace);
     let head = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("").trim();
@@ -93,7 +99,7 @@ fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteRes
                     message: "usage: /rename <vaddr> <name>".into(),
                 };
             }
-            match project_store::rename_function(&s.workspace, &s.events, v, name, Source::User) {
+            match project_store::rename_function(ws, &s.events, v, name, Source::User) {
                 Ok(_) => PaletteResult::Ok {
                     message: format!("renamed 0x{:x} → {}", v, name),
                 },
@@ -111,7 +117,7 @@ fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteRes
                     message: "usage: /comment <vaddr> <text>".into(),
                 };
             };
-            match project_store::add_comment(&s.workspace, &s.events, v, text, Source::User) {
+            match project_store::add_comment(ws, &s.events, v, text, Source::User) {
                 Ok(_) => PaletteResult::Ok {
                     message: format!("comment @ 0x{:x}", v),
                 },
@@ -122,7 +128,7 @@ fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteRes
         }
         "note" => {
             let v = current_vaddr.and_then(try_parse_vaddr);
-            match project_store::add_note(&s.workspace, &s.events, rest, v, Source::User) {
+            match project_store::add_note(ws, &s.events, rest, v, Source::User) {
                 Ok(n) => PaletteResult::Ok {
                     message: format!("note #{}", n.id),
                 },
@@ -132,7 +138,7 @@ fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteRes
             }
         }
         "scan" => match rest {
-            "vuln" => match analysis::scan_vulnerabilities(&s.workspace, None) {
+            "vuln" => match analysis::scan_vulnerabilities(ws, None) {
                 Ok(text) => PaletteResult::Text { text },
                 Err(e) => PaletteResult::Error {
                     message: e.to_string(),
@@ -149,7 +155,7 @@ fn run_slash(s: &AppState, cmd: &str, current_vaddr: Option<&str>) -> PaletteRes
             .unwrap_or(PaletteResult::Error {
                 message: "usage: /goto <vaddr>".into(),
             }),
-        "info" => match analysis::file_info(&s.workspace) {
+        "info" => match analysis::file_info(ws) {
             Ok(text) => PaletteResult::Text { text },
             Err(e) => PaletteResult::Error {
                 message: e.to_string(),

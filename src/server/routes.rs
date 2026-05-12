@@ -1,10 +1,12 @@
 //! REST routes for `kaijulab serve`.
 
+use std::path::PathBuf;
+
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,7 @@ use crate::core::{
     events::Source,
     findings::{CreateFinding, UpdateFinding},
     project_store,
+    workspace::{read_recent, socket_path_for, Workspace},
 };
 
 use super::AppState;
@@ -23,7 +26,15 @@ use super::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/workspace", get(get_workspace))
+        // Workspace management
+        .route("/api/workspaces", get(list_workspaces))
+        .route("/api/workspaces/open", post(open_workspace))
+        .route("/api/workspaces/upload", post(upload_workspace))
+        .route("/api/workspaces/recent", get(get_recent))
+        .route("/api/workspaces/:hash/activate", post(activate_workspace))
+        .route("/api/workspaces/:hash", delete(close_workspace))
+        // Active-workspace data
+        .route("/api/workspace", get(get_active))
         .route("/api/binary/info", get(binary_info))
         .route("/api/sections", get(sections))
         .route("/api/imports", get(imports))
@@ -51,14 +62,123 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+fn active(s: &AppState) -> Result<Workspace, ApiError> {
+    s.registry
+        .active()
+        .ok_or_else(|| ApiError::not_found("no active workspace — open a binary first"))
+}
+
+/// Open a binary as a workspace and spawn its per-workspace Unix-socket
+/// listener so MCP shims attach correctly.  Used by main.rs at startup and by
+/// the open / upload REST handlers.
+pub fn open_and_spawn(s: &AppState, path: &std::path::Path) -> Result<Workspace, ApiError> {
+    let ws = s
+        .registry
+        .open(path)
+        .map_err(|e| ApiError::bad_request(format!("open failed: {}", e)))?;
+    let socket = socket_path_for(ws.workspace_hash())
+        .map_err(|e| ApiError::internal(format!("socket path: {}", e)))?;
+    // Spawn (idempotent on existing sockets — spawn_server removes stale files).
+    if let Err(e) = crate::ipc::spawn_server(socket, ws.clone(), s.events.clone()) {
+        tracing::warn!("ipc socket for {} disabled: {}", ws.binary_path_str(), e);
+    }
+    Ok(ws)
+}
+
 // ─── Health & workspace ──────────────────────────────────────────────────────
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-async fn get_workspace(State(s): State<AppState>) -> Json<Value> {
-    Json(json!(s.workspace.info()))
+async fn get_active(State(s): State<AppState>) -> Json<Value> {
+    match s.registry.active() {
+        Some(ws) => Json(json!(ws.info())),
+        None => Json(Value::Null),
+    }
+}
+
+async fn list_workspaces(State(s): State<AppState>) -> Json<Value> {
+    Json(json!(s.registry.snapshot()))
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export, export_to = "../web/src/types/")]
+pub struct OpenWorkspaceRequest {
+    pub path: String,
+}
+
+async fn open_workspace(
+    State(s): State<AppState>,
+    Json(req): Json<OpenWorkspaceRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let path = std::path::PathBuf::from(&req.path);
+    let ws = open_and_spawn(&s, &path)?;
+    Ok(Json(json!(ws.info())))
+}
+
+async fn upload_workspace(
+    State(s): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let mut filename: Option<String> = None;
+    let mut bytes: Option<Vec<u8>> = None;
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        ApiError::bad_request(format!("multipart: {}", e))
+    })? {
+        if field.name() == Some("file") {
+            filename = field.file_name().map(|s| s.to_string());
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| ApiError::bad_request(format!("read: {}", e)))?;
+            bytes = Some(data.to_vec());
+        }
+    }
+    let filename =
+        filename.ok_or_else(|| ApiError::bad_request("missing file field"))?;
+    let bytes = bytes.ok_or_else(|| ApiError::bad_request("empty upload"))?;
+
+    let upload_dir: PathBuf = {
+        let home = std::env::var("HOME").map_err(|_| ApiError::internal("HOME not set"))?;
+        let dir = PathBuf::from(home).join(".kaiju").join("uploads");
+        std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(e.to_string()))?;
+        dir
+    };
+    // Strip any path component a malicious client might have stuffed into the
+    // filename — we only honour the basename.
+    let safe = std::path::Path::new(&filename)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .ok_or_else(|| ApiError::bad_request("invalid filename"))?;
+    let dest = upload_dir.join(safe);
+    std::fs::write(&dest, &bytes).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let ws = open_and_spawn(&s, &dest)?;
+    Ok(Json(json!(ws.info())))
+}
+
+async fn get_recent() -> Json<Value> {
+    Json(json!(read_recent()))
+}
+
+async fn activate_workspace(
+    State(s): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    if s.registry.activate(&hash) {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found("workspace not found"))
+    }
+}
+
+async fn close_workspace(
+    State(s): State<AppState>,
+    Path(hash): Path<String>,
+) -> Json<Value> {
+    let removed = s.registry.close(&hash);
+    Json(json!({ "removed": removed }))
 }
 
 // ─── Binary info ─────────────────────────────────────────────────────────────
@@ -70,19 +190,23 @@ struct TextResponse {
 }
 
 async fn binary_info(State(s): State<AppState>) -> Result<Json<TextResponse>, ApiError> {
-    let text = analysis::file_info(&s.workspace).map_err(ApiError::from)?;
-    Ok(Json(TextResponse { text }))
+    let ws = active(&s)?;
+    Ok(Json(TextResponse {
+        text: analysis::file_info(&ws).map_err(ApiError::from)?,
+    }))
 }
 
 async fn sections(State(s): State<AppState>) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     Ok(Json(TextResponse {
-        text: analysis::sections(&s.workspace).map_err(ApiError::from)?,
+        text: analysis::sections(&ws).map_err(ApiError::from)?,
     }))
 }
 
 async fn imports(State(s): State<AppState>) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     Ok(Json(TextResponse {
-        text: analysis::imports(&s.workspace).map_err(ApiError::from)?,
+        text: analysis::imports(&ws).map_err(ApiError::from)?,
     }))
 }
 
@@ -96,8 +220,9 @@ async fn strings(
     State(s): State<AppState>,
     Query(q): Query<StringsQuery>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     Ok(Json(TextResponse {
-        text: analysis::strings_extract(&s.workspace, q.section.as_deref(), q.min_len)
+        text: analysis::strings_extract(&ws, q.section.as_deref(), q.min_len)
             .map_err(ApiError::from)?,
     }))
 }
@@ -114,9 +239,9 @@ async fn list_functions(
     State(s): State<AppState>,
     Query(q): Query<FunctionsQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw = analysis::list_functions(&s.workspace, q.json).map_err(ApiError::from)?;
+    let ws = active(&s)?;
+    let raw = analysis::list_functions(&ws, q.json).map_err(ApiError::from)?;
     if q.json {
-        // Inner tool may emit pretty JSON; pass through as-is.
         let parsed: Value = serde_json::from_str(&raw).unwrap_or(Value::String(raw));
         Ok(Json(parsed))
     } else {
@@ -134,9 +259,10 @@ async fn disasm(
     Path(vaddr): Path<String>,
     Query(q): Query<DisasmQuery>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&vaddr)?;
     Ok(Json(TextResponse {
-        text: analysis::disassemble(&s.workspace, v, q.length).map_err(ApiError::from)?,
+        text: analysis::disassemble(&ws, v, q.length).map_err(ApiError::from)?,
     }))
 }
 
@@ -144,9 +270,10 @@ async fn decompile(
     State(s): State<AppState>,
     Path(vaddr): Path<String>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&vaddr)?;
     Ok(Json(TextResponse {
-        text: analysis::decompile(&s.workspace, v).map_err(ApiError::from)?,
+        text: analysis::decompile(&ws, v).map_err(ApiError::from)?,
     }))
 }
 
@@ -154,9 +281,10 @@ async fn function_context(
     State(s): State<AppState>,
     Path(vaddr): Path<String>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&vaddr)?;
     Ok(Json(TextResponse {
-        text: analysis::function_context(&s.workspace, v).map_err(ApiError::from)?,
+        text: analysis::function_context(&ws, v).map_err(ApiError::from)?,
     }))
 }
 
@@ -164,9 +292,10 @@ async fn xrefs(
     State(s): State<AppState>,
     Path(vaddr): Path<String>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&vaddr)?;
     Ok(Json(TextResponse {
-        text: analysis::xrefs_to(&s.workspace, v).map_err(ApiError::from)?,
+        text: analysis::xrefs_to(&ws, v).map_err(ApiError::from)?,
     }))
 }
 
@@ -179,8 +308,9 @@ async fn callgraph(
     State(s): State<AppState>,
     Query(q): Query<CallgraphQuery>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     Ok(Json(TextResponse {
-        text: analysis::call_graph(&s.workspace, q.max_depth).map_err(ApiError::from)?,
+        text: analysis::call_graph(&ws, q.max_depth).map_err(ApiError::from)?,
     }))
 }
 
@@ -188,9 +318,10 @@ async fn cfg(
     State(s): State<AppState>,
     Path(vaddr): Path<String>,
 ) -> Result<Json<TextResponse>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&vaddr)?;
     Ok(Json(TextResponse {
-        text: analysis::cfg_view(&s.workspace, v).map_err(ApiError::from)?,
+        text: analysis::cfg_view(&ws, v).map_err(ApiError::from)?,
     }))
 }
 
@@ -235,8 +366,9 @@ struct VulnScoreEntry {
     pub score: u8,
 }
 
-async fn project_snapshot(State(s): State<AppState>) -> Json<ProjectSnapshot> {
-    let snap = s.workspace.with_project(|p| ProjectSnapshot {
+async fn project_snapshot(State(s): State<AppState>) -> Result<Json<ProjectSnapshot>, ApiError> {
+    let ws = active(&s)?;
+    let snap = ws.with_project(|p| ProjectSnapshot {
         renames: p
             .renames
             .iter()
@@ -272,7 +404,7 @@ async fn project_snapshot(State(s): State<AppState>) -> Json<ProjectSnapshot> {
             })
             .collect(),
     });
-    Json(snap)
+    Ok(Json(snap))
 }
 
 #[derive(Deserialize, TS)]
@@ -288,13 +420,14 @@ async fn post_rename(
     State(s): State<AppState>,
     Json(req): Json<RenameRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&req.vaddr)?;
     let src = req
         .source
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::rename_function(&s.workspace, &s.events, v, &req.name, src)
+    project_store::rename_function(&ws, &s.events, v, &req.name, src)
         .map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -312,13 +445,14 @@ async fn post_comment(
     State(s): State<AppState>,
     Json(req): Json<CommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&req.vaddr)?;
     let src = req
         .source
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::add_comment(&s.workspace, &s.events, v, &req.text, src)
+    project_store::add_comment(&ws, &s.events, v, &req.text, src)
         .map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -337,13 +471,14 @@ async fn post_note(
     State(s): State<AppState>,
     Json(req): Json<NoteRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
     let v = req.vaddr.as_deref().map(parse_vaddr).transpose()?;
     let src = req
         .source
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    let note = project_store::add_note(&s.workspace, &s.events, &req.text, v, src)
+    let note = project_store::add_note(&ws, &s.events, &req.text, v, src)
         .map_err(ApiError::from)?;
     Ok(Json(json!({
         "id": note.id,
@@ -355,8 +490,9 @@ async fn delete_note(
     State(s): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
     let removed =
-        project_store::delete_note(&s.workspace, &s.events, id, Source::User).map_err(ApiError::from)?;
+        project_store::delete_note(&ws, &s.events, id, Source::User).map_err(ApiError::from)?;
     Ok(Json(json!({ "removed": removed })))
 }
 
@@ -373,13 +509,14 @@ async fn post_vuln_score(
     State(s): State<AppState>,
     Json(req): Json<VulnScoreRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
     let v = parse_vaddr(&req.vaddr)?;
     let src = req
         .source
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::set_vuln_score(&s.workspace, &s.events, v, req.score, src)
+    project_store::set_vuln_score(&ws, &s.events, v, req.score, src)
         .map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -454,11 +591,11 @@ struct VulnScanRequest {
 async fn start_vuln_scan(
     State(s): State<AppState>,
     Json(req): Json<VulnScanRequest>,
-) -> Json<Value> {
+) -> Result<Json<Value>, ApiError> {
     use crate::core::jobs::JobKind;
+    let ws = active(&s)?;
     let (job_id, _token) = s.jobs.register(JobKind::ScanVuln);
     let runner = s.jobs.clone();
-    let ws = s.workspace.clone();
     let id_for_task = job_id.0.clone();
     tokio::task::spawn_blocking(move || {
         match analysis::scan_vulnerabilities(&ws, req.max_fns) {
@@ -469,7 +606,7 @@ async fn start_vuln_scan(
             Err(e) => runner.fail(&crate::core::jobs::JobId(id_for_task), e.to_string()),
         }
     });
-    Json(json!({ "job_id": job_id.0 }))
+    Ok(Json(json!({ "job_id": job_id.0 })))
 }
 
 async fn list_jobs(State(s): State<AppState>) -> Json<Value> {
@@ -513,6 +650,12 @@ impl ApiError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         ApiError {
             status: StatusCode::NOT_FOUND,
+            message: msg.into(),
+        }
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
             message: msg.into(),
         }
     }

@@ -22,7 +22,7 @@ export type BusEvent =
   | { type: 'tool.call'; id: string; job_id?: string | null; name: string; source: Source; ts: number }
   | { type: 'tool.result'; id: string; name: string; ok: boolean; bytes: number; ts: number }
   | { type: 'navigation'; vaddr: string; source: Source; ts: number }
-  | { type: 'hello'; workspace: WorkspaceInfo }
+  | { type: 'hello'; workspace: WorkspaceInfo | null; registry?: { active: string | null; workspaces: WorkspaceInfo[] } }
   | { type: 'warning'; message: string };
 
 interface AppState {
@@ -33,14 +33,15 @@ interface AppState {
   timeline: BusEvent[];
   paletteOpen: boolean;
 
-  setWorkspace: (w: WorkspaceInfo) => void;
+  setWorkspace: (w: WorkspaceInfo | null) => void;
   setFunctions: (fns: FunctionEntry[]) => void;
-  setProject: (p: ProjectSnapshot) => void;
+  setProject: (p: ProjectSnapshot | null) => void;
   selectVaddr: (v: string | null) => void;
   pushEvent: (e: BusEvent) => void;
   openPalette: () => void;
   closePalette: () => void;
   applyEvent: (e: BusEvent) => void;
+  resetWorkspace: () => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -61,6 +62,14 @@ export const useStore = create<AppState>((set, get) => ({
 
   openPalette: () => set({ paletteOpen: true }),
   closePalette: () => set({ paletteOpen: false }),
+
+  resetWorkspace: () =>
+    set({
+      workspace: null,
+      selectedVaddr: null,
+      functions: [],
+      project: null,
+    }),
 
   // Apply a remote event to the local project snapshot so we don't have to
   // refetch the whole snapshot on every change.

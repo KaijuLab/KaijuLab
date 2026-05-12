@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { api, parseFunctionsText } from './api';
 import { useStore } from './state';
 import { useEventStream } from './hooks/useEventStream';
@@ -8,18 +8,25 @@ import { CenterWorkspace } from './components/CenterWorkspace';
 import { Inspector } from './components/Inspector';
 import { Timeline } from './components/Timeline';
 import { CommandPalette } from './components/CommandPalette';
+import { OpenBinary } from './components/OpenBinary';
 
 export default function App() {
   useEventStream();
-  const { setWorkspace, setFunctions, setProject, openPalette } = useStore();
+  const { workspace, setWorkspace, setFunctions, setProject, openPalette } = useStore();
 
-  useEffect(() => {
-    api.workspace().then(setWorkspace).catch(() => {});
+  const loadWorkspaceData = useCallback(() => {
+    api.activeWorkspace()
+      .then((w) => setWorkspace(w))
+      .catch(() => setWorkspace(null));
     api.listFunctionsText()
       .then((r) => setFunctions(parseFunctionsText(r.text)))
-      .catch(() => {});
+      .catch(() => setFunctions([]));
     api.project().then(setProject).catch(() => {});
   }, [setWorkspace, setFunctions, setProject]);
+
+  useEffect(() => {
+    loadWorkspaceData();
+  }, [loadWorkspaceData]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -34,14 +41,20 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-kaiju-bg text-kaiju-text">
-      <TopBar />
-      <div className="flex flex-1 min-h-0 border-t border-kaiju-border">
-        <LeftRail />
-        <CenterWorkspace />
-        <Inspector />
-      </div>
-      <Timeline />
-      <CommandPalette />
+      <TopBar onCloseWorkspace={() => loadWorkspaceData()} />
+      {workspace ? (
+        <>
+          <div className="flex flex-1 min-h-0 border-t border-kaiju-border">
+            <LeftRail />
+            <CenterWorkspace />
+            <Inspector />
+          </div>
+          <Timeline />
+          <CommandPalette />
+        </>
+      ) : (
+        <OpenBinary onOpened={loadWorkspaceData} />
+      )}
     </div>
   );
 }

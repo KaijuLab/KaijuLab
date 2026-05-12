@@ -14,11 +14,11 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::core::{EventBus, FindingStore, JobRunner, Workspace};
+use crate::core::{EventBus, FindingStore, JobRunner, WorkspaceRegistry};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub workspace: Workspace,
+    pub registry: WorkspaceRegistry,
     pub events: EventBus,
     pub jobs: JobRunner,
     pub findings: FindingStore,
@@ -26,7 +26,7 @@ pub struct AppState {
 }
 
 pub async fn serve(
-    workspace: Workspace,
+    registry: WorkspaceRegistry,
     events: EventBus,
     bind: SocketAddr,
     auth_token: Option<String>,
@@ -35,7 +35,7 @@ pub async fn serve(
     let findings = FindingStore::new();
 
     let state = AppState {
-        workspace: workspace.clone(),
+        registry: registry.clone(),
         events: events.clone(),
         jobs,
         findings,
@@ -49,11 +49,12 @@ pub async fn serve(
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
 
-    tracing::info!(
-        "kaijulab serve listening on http://{} (binary: {})",
-        bind,
-        workspace.binary_path_str()
-    );
+    tracing::info!("kaijulab serve listening on http://{}", bind);
+    if let Some(ws) = registry.active() {
+        tracing::info!("active workspace: {}", ws.binary_path_str());
+    } else {
+        tracing::info!("no active workspace — open one via the UI or POST /api/workspaces/open");
+    }
 
     let listener = tokio::net::TcpListener::bind(bind)
         .await

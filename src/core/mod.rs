@@ -14,4 +14,4 @@ pub mod workspace;
 pub use events::{Event, EventBus, Source};
 pub use findings::{Finding, FindingKind, FindingStatus, FindingStore, Severity};
 pub use jobs::{Job, JobId, JobKind, JobRunner, JobStatus};
-pub use workspace::Workspace;
+pub use workspace::{RegistrySnapshot, Workspace, WorkspaceRegistry};

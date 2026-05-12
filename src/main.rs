@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use core::workspace::{socket_path_for, WritePolicy, Workspace};
+use core::workspace::{socket_path_for, WorkspaceRegistry, WritePolicy, Workspace};
 
 #[derive(Parser)]
 #[command(
@@ -32,11 +32,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run the local web workbench daemon.  Opens a browser-driven RE
-    /// workspace and exposes a Unix socket for the `mcp` shim.
+    /// workspace and exposes a Unix socket for the `mcp` shim.  If no FILE
+    /// is given the daemon comes up empty — open a binary from the browser
+    /// via the path picker or drag-drop.
     Serve {
-        /// Binary to load on startup.
+        /// Binary to auto-open on startup (optional).
         #[arg(value_name = "FILE")]
-        file: PathBuf,
+        file: Option<PathBuf>,
 
         /// Address to bind.  Default: 127.0.0.1:7878.  Use `0.0.0.0` only
         /// alongside `--token` for remote access.
@@ -111,7 +113,7 @@ fn init_tracing() {
 }
 
 async fn run_serve(
-    file: PathBuf,
+    file: Option<PathBuf>,
     bind: String,
     token: Option<String>,
     allow_patch: bool,
@@ -121,21 +123,26 @@ async fn run_serve(
         allow_patch,
         allow_exec,
     };
-    let workspace = Workspace::open(&file, policy)?;
     let bus = core::EventBus::new(1024);
+    let registry = WorkspaceRegistry::new(bus.clone(), policy);
 
-    // Per-workspace Unix socket so any `kaijulab mcp` shim launched against
-    // the same binary attaches to this daemon.
-    let socket = socket_path_for(workspace.workspace_hash())?;
-    if let Err(e) = ipc::spawn_server(socket, workspace.clone(), bus.clone()) {
-        tracing::warn!("ipc socket disabled: {}", e);
+    if let Some(path) = file {
+        match registry.open(&path) {
+            Ok(ws) => {
+                let socket = socket_path_for(ws.workspace_hash())?;
+                if let Err(e) = ipc::spawn_server(socket, ws.clone(), bus.clone()) {
+                    tracing::warn!("ipc socket disabled: {}", e);
+                }
+            }
+            Err(e) => tracing::warn!("could not auto-open {}: {}", path.display(), e),
+        }
     }
 
     let addr: std::net::SocketAddr = bind
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid --bind '{}': {}", bind, e))?;
 
-    server::serve(workspace, bus, addr, token).await
+    server::serve(registry, bus, addr, token).await
 }
 
 async fn run_mcp(file: PathBuf) -> Result<()> {

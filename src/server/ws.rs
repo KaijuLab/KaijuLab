@@ -31,10 +31,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut event_rx = state.events.subscribe();
 
-    // Greet the client with a hello frame containing workspace info.
+    // Greet the client with a hello frame containing registry state.
+    let active_info = state.registry.active().map(|w| w.info());
     if let Ok(hello) = serde_json::to_string(&serde_json::json!({
         "type": "hello",
-        "workspace": state.workspace.info(),
+        "workspace": active_info,
+        "registry": state.registry.snapshot(),
     })) {
         let _ = sender.send(Message::Text(hello)).await;
     }

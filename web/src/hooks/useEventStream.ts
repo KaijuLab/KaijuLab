@@ -24,7 +24,7 @@ export function useEventStream() {
         try {
           const data = JSON.parse(msg.data) as BusEvent;
           if (data.type === 'hello') {
-            setWorkspace(data.workspace);
+            setWorkspace(data.workspace ?? null);
           } else {
             pushEvent(data);
             applyEvent(data);
