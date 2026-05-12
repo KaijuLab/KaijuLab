@@ -515,3 +515,4 @@ _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 [22:51:28] OBSERVE: read docs/web-mcp-architecture.md
 [22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/docs/web-mcp-architecture.md
 [22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/palette.rs
+[22:51:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs
