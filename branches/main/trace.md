@@ -416,3 +416,4 @@ _[Checkpoint: 6a03a652 — Added guided professional analysis playbooks]_
 [22:17:28] OBSERVE: read web/src/types/UpdateFinding.ts
 [22:17:28] OBSERVE: read web/src/components/Timeline.tsx
 [22:17:28] OBSERVE: read web/src/components/Timeline.tsx
+[22:17:28] OBSERVE: read web/src/types/Evidence.ts
