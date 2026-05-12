@@ -5,3 +5,4 @@
 [20:09:36] OBSERVE: listed files under .
 [20:09:36] OBSERVE: searched . for "AGENTS.md"
 [20:09:36] OBSERVE: listed files under .
+[20:09:36] OBSERVE: read README.md
