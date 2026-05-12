@@ -53,3 +53,4 @@ _[Checkpoint: 6a0389fb — Added Web + MCP architecture sketch covering product 
 _[Checkpoint: 6a038a58 — added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md]_
 ---
 
+[20:16:05] OBSERVE: docs/web-mcp-architecture.md exists (338 lines). Defines serve/mcp/analyze modes, REST surface, MCP resources+tools, agent bridge for claude/codex, Solid-free UI sketch. Gaps: no Finding schema, no event-delta design, agent bridge over-scoped, MCP resources duplicate tools, no auth/binding/cancellation.
