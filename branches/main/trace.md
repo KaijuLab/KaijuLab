@@ -88,3 +88,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:26:51] ACT: wrote web/dist/index.html
 [20:27:05] ACT: wrote src/ipc/mod.rs
 [20:27:12] ACT: wrote src/ipc/protocol.rs
+[20:27:30] ACT: wrote src/ipc/socket.rs
