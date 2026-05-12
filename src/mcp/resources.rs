@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use serde_json::json;
 
-use crate::core::workspace::Workspace;
+use crate::core::{findings, workspace::Workspace};
 
 pub fn list() -> serde_json::Value {
     json!([
@@ -32,9 +32,8 @@ pub fn read(workspace: &Workspace, uri: &str) -> Result<String> {
     match uri {
         "kaiju://workspace" => Ok(serde_json::to_string_pretty(&workspace.info())?),
         "kaiju://findings" => {
-            // Findings live in the daemon's FindingStore; standalone shim has
-            // no access.  Return an empty list when running standalone.
-            Ok("[]".into())
+            let findings = findings::list_findings(workspace);
+            Ok(serde_json::to_string_pretty(&findings)?)
         }
         "kaiju://project/notes" => {
             let notes = workspace.with_project(|p| p.notes.clone());

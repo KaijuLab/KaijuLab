@@ -24,7 +24,9 @@ use crate::{
     core::{
         analysis,
         events::Source,
-        findings::{CreateFinding, CreatedBy, Evidence, FindingKind, Severity, UpdateFinding},
+        findings::{
+            self, CreateFinding, CreatedBy, Evidence, Finding, FindingKind, Severity, UpdateFinding,
+        },
         playbooks::{self, PlaybookId, PlaybookRunRequest},
         project_store,
         workspace::{read_recent, socket_path_for, Workspace},
@@ -531,35 +533,29 @@ async fn post_vuln_score(
 
 // ─── Findings ────────────────────────────────────────────────────────────────
 
-async fn list_findings(State(s): State<AppState>) -> Json<Value> {
-    Json(json!(s.findings.list()))
+async fn list_findings(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    Ok(Json(json!(findings::list_findings(&ws))))
 }
 
 async fn get_finding(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    s.findings
-        .get(&id)
+    let ws = active(&s)?;
+    findings::get_finding(&ws, &id)
         .map(|f| Json(json!(f)))
         .ok_or_else(|| ApiError::not_found("finding not found"))
 }
 
-async fn create_finding(State(s): State<AppState>, Json(req): Json<CreateFinding>) -> Json<Value> {
-    use crate::core::events::{now_ts, Event};
-    let kind_str = serde_json::to_string(&req.kind).unwrap_or_else(|_| "custom".into());
-    let sev_str = serde_json::to_string(&req.severity).unwrap_or_else(|_| "info".into());
-    let f = s.findings.create(req);
-    s.events.emit(Event::FindingCreated {
-        id: f.id.clone(),
-        kind: kind_str.trim_matches('"').to_string(),
-        severity: sev_str.trim_matches('"').to_string(),
-        vaddr: f.vaddr.clone(),
-        rule: f.rule.clone(),
-        source: Source::Tool,
-        ts: now_ts(),
-    });
-    Json(json!(f))
+async fn create_finding(
+    State(s): State<AppState>,
+    Json(req): Json<CreateFinding>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let f = findings::create_finding(&ws, req).map_err(ApiError::from)?;
+    emit_finding_created(&s, &f, Source::Tool);
+    Ok(Json(json!(f)))
 }
 
 async fn update_finding(
@@ -575,9 +571,9 @@ async fn update_finding(
             .to_string()
     });
     let owner_clone = req.owner.clone();
-    let f = s
-        .findings
-        .update(&id, req)
+    let ws = active(&s)?;
+    let f = findings::update_finding(&ws, &id, req)
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::not_found("finding not found"))?;
     s.events.emit(Event::FindingUpdated {
         id: f.id.clone(),
@@ -587,6 +583,21 @@ async fn update_finding(
         ts: now_ts(),
     });
     Ok(Json(json!(f)))
+}
+
+fn emit_finding_created(s: &AppState, finding: &Finding, source: Source) {
+    use crate::core::events::{now_ts, Event};
+    let kind_str = serde_json::to_string(&finding.kind).unwrap_or_else(|_| "custom".into());
+    let sev_str = serde_json::to_string(&finding.severity).unwrap_or_else(|_| "info".into());
+    s.events.emit(Event::FindingCreated {
+        id: finding.id.clone(),
+        kind: kind_str.trim_matches('"').to_string(),
+        severity: sev_str.trim_matches('"').to_string(),
+        vaddr: finding.vaddr.clone(),
+        rule: finding.rule.clone(),
+        source,
+        ts: now_ts(),
+    });
 }
 
 // ─── Jobs ────────────────────────────────────────────────────────────────────
@@ -632,7 +643,7 @@ async fn run_playbook(
     let id = PlaybookId::parse(&id).map_err(|e| ApiError::bad_request(e.to_string()))?;
     let run = playbooks::run_playbook(&ws, id, req.max_functions).map_err(ApiError::from)?;
     let created_findings = if req.create_findings {
-        persist_playbook_findings(&s, &run)
+        persist_playbook_findings(&ws, &s, &run)?
     } else {
         Vec::new()
     };
@@ -642,39 +653,35 @@ async fn run_playbook(
     })))
 }
 
-fn persist_playbook_findings(s: &AppState, run: &playbooks::PlaybookRun) -> Vec<String> {
-    use crate::core::events::{now_ts, Event};
-
+fn persist_playbook_findings(
+    ws: &Workspace,
+    s: &AppState,
+    run: &playbooks::PlaybookRun,
+) -> Result<Vec<String>, ApiError> {
     let mut ids = Vec::new();
     for proposed in &run.proposed_findings {
         let kind = proposed.kind.clone();
         let severity = proposed.severity;
-        let finding = s.findings.create(CreateFinding {
-            kind,
-            severity,
-            vaddr: proposed.vaddr.clone(),
-            rule: proposed.rule.clone(),
-            rationale: proposed.rationale.clone(),
-            evidence: proposed.evidence.clone(),
-            suggested_actions: proposed.suggested_actions.clone(),
-            created_by: CreatedBy::Tool {
-                name: format!("{:?}", run.id),
+        let finding = findings::create_finding(
+            ws,
+            CreateFinding {
+                kind,
+                severity,
+                vaddr: proposed.vaddr.clone(),
+                rule: proposed.rule.clone(),
+                rationale: proposed.rationale.clone(),
+                evidence: proposed.evidence.clone(),
+                suggested_actions: proposed.suggested_actions.clone(),
+                created_by: CreatedBy::Tool {
+                    name: format!("{:?}", run.id),
+                },
             },
-        });
-        let kind_str = serde_json::to_string(&finding.kind).unwrap_or_else(|_| "custom".into());
-        let sev_str = serde_json::to_string(&finding.severity).unwrap_or_else(|_| "info".into());
-        s.events.emit(Event::FindingCreated {
-            id: finding.id.clone(),
-            kind: kind_str.trim_matches('"').to_string(),
-            severity: sev_str.trim_matches('"').to_string(),
-            vaddr: finding.vaddr.clone(),
-            rule: finding.rule.clone(),
-            source: Source::Tool,
-            ts: now_ts(),
-        });
+        )
+        .map_err(ApiError::from)?;
+        emit_finding_created(s, &finding, Source::Tool);
         ids.push(finding.id);
     }
-    ids
+    Ok(ids)
 }
 
 async fn list_jobs(State(s): State<AppState>) -> Json<Value> {
@@ -763,7 +770,8 @@ async fn run_agent(
             let mut applied = false;
             if matches!(req.kind, AgentRunKind::Triage) {
                 if let Ok(parsed) = parse_triage_output(&text) {
-                    let finding = create_agent_triage_finding(&s, &parsed, vaddr, &agent, source);
+                    let finding =
+                        create_agent_triage_finding(&ws, &s, &parsed, vaddr, &agent, source)?;
                     created_finding_id = Some(finding.id.clone());
                     if write_policy == AgentWritePolicy::Apply {
                         apply_triage_suggestions(&ws, &s, &parsed, vaddr, source)?;
@@ -853,50 +861,44 @@ fn parse_triage_output(text: &str) -> Result<TriageOutput, serde_json::Error> {
 }
 
 fn create_agent_triage_finding(
+    ws: &Workspace,
     s: &AppState,
     parsed: &TriageOutput,
     vaddr: u64,
     agent: &str,
     source: Source,
-) -> crate::core::Finding {
-    use crate::core::events::{now_ts, Event};
-
+) -> Result<crate::core::Finding, ApiError> {
     let severity = severity_from_str(&parsed.severity);
-    let f = s.findings.create(CreateFinding {
-        kind: FindingKind::Vuln,
-        severity,
-        vaddr: Some(format!("0x{:x}", vaddr)),
-        rule: format!("{}_triage", agent),
-        rationale: parsed.rationale.clone(),
-        evidence: vec![
-            Evidence::Decompile {
-                vaddr: format!("0x{:x}", vaddr),
+    let f = findings::create_finding(
+        ws,
+        CreateFinding {
+            kind: FindingKind::Vuln,
+            severity,
+            vaddr: Some(format!("0x{:x}", vaddr)),
+            rule: format!("{}_triage", agent),
+            rationale: parsed.rationale.clone(),
+            evidence: vec![
+                Evidence::Decompile {
+                    vaddr: format!("0x{:x}", vaddr),
+                },
+                Evidence::Disasm {
+                    vaddr: format!("0x{:x}", vaddr),
+                    length: 256,
+                },
+            ],
+            suggested_actions: parsed
+                .suggested_comments
+                .iter()
+                .map(|c| format!("comment {}: {}", c.vaddr, c.text))
+                .collect(),
+            created_by: CreatedBy::Agent {
+                agent: agent.to_string(),
             },
-            Evidence::Disasm {
-                vaddr: format!("0x{:x}", vaddr),
-                length: 256,
-            },
-        ],
-        suggested_actions: parsed
-            .suggested_comments
-            .iter()
-            .map(|c| format!("comment {}: {}", c.vaddr, c.text))
-            .collect(),
-        created_by: CreatedBy::Agent {
-            agent: agent.to_string(),
         },
-    });
-    let sev_str = serde_json::to_string(&severity).unwrap_or_else(|_| "info".into());
-    s.events.emit(Event::FindingCreated {
-        id: f.id.clone(),
-        kind: "vuln".into(),
-        severity: sev_str.trim_matches('"').to_string(),
-        vaddr: f.vaddr.clone(),
-        rule: f.rule.clone(),
-        source,
-        ts: now_ts(),
-    });
-    f
+    )
+    .map_err(ApiError::from)?;
+    emit_finding_created(s, &f, source);
+    Ok(f)
 }
 
 fn apply_triage_suggestions(

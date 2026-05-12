@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
+use crate::core::findings::Finding;
+
 // ─── Struct definitions ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -85,6 +87,8 @@ pub struct Project {
     pub vuln_scores: HashMap<u64, u8>,
     /// Analyst notes (free-form text, optionally anchored to a vaddr).
     pub notes: Vec<Note>,
+    /// Evidence-backed findings created by tools, agents, or analysts.
+    pub findings: Vec<Finding>,
 
     /// SQLite database path (not serialized — set at load time).
     #[serde(skip)]
@@ -115,7 +119,10 @@ fn vaddr_key(v: u64) -> String {
 }
 
 fn parse_vaddr(s: &str) -> u64 {
-    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let hex = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     u64::from_str_radix(hex, 16).unwrap_or(0)
 }
 
@@ -154,6 +161,11 @@ CREATE TABLE IF NOT EXISTS notes (
     text      TEXT    NOT NULL,
     timestamp TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS findings (
+    id         TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 ";
 
 impl Project {
@@ -191,7 +203,7 @@ impl Project {
     /// Checks for `.kaiju.db` first; falls back to `.kaiju.json` (migrating it
     /// automatically to SQLite on first load); returns an empty project if neither exists.
     pub fn load_for(binary: &str) -> Self {
-        let db   = Self::db_path(binary);
+        let db = Self::db_path(binary);
         let json = Self::project_path(binary);
 
         if db.exists() {
@@ -203,7 +215,7 @@ impl Project {
         if json.exists() {
             let mut p = Self::load_from_json(&json);
             p.db_path_field = Some(db.clone());
-            p.sidecar_path  = Some(json);
+            p.sidecar_path = Some(json);
             // Migrate JSON → SQLite (best-effort; ignore errors)
             let _ = p.save();
             return p;
@@ -212,7 +224,7 @@ impl Project {
         // No existing data
         Project {
             db_path_field: Some(db),
-            sidecar_path:  Some(json),
+            sidecar_path: Some(json),
             ..Default::default()
         }
     }
@@ -294,7 +306,8 @@ impl Project {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?;
             for row in rows.flatten() {
-                p.vuln_scores.insert(parse_vaddr(&row.0), row.1.clamp(0, 10) as u8);
+                p.vuln_scores
+                    .insert(parse_vaddr(&row.0), row.1.clamp(0, 10) as u8);
             }
         }
         // notes
@@ -304,16 +317,27 @@ impl Project {
                 .unwrap_or_else(|_| conn.prepare("SELECT 0, NULL, '', '' WHERE 0").unwrap());
             let rows = stmt.query_map([], |row| {
                 Ok(Note {
-                    id:        row.get::<_, i64>(0)?,
-                    vaddr:     row.get::<_, Option<String>>(1)?
-                                  .as_deref()
-                                  .map(parse_vaddr),
-                    text:      row.get::<_, String>(2)?,
+                    id: row.get::<_, i64>(0)?,
+                    vaddr: row.get::<_, Option<String>>(1)?.as_deref().map(parse_vaddr),
+                    text: row.get::<_, String>(2)?,
                     timestamp: row.get::<_, String>(3)?,
                 })
             });
             if let Ok(rows) = rows {
                 p.notes = rows.flatten().collect();
+            }
+        }
+        // findings
+        {
+            let mut stmt = conn
+                .prepare("SELECT data FROM findings ORDER BY updated_at DESC")
+                .unwrap_or_else(|_| conn.prepare("SELECT '' WHERE 0").unwrap());
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0));
+            if let Ok(rows) = rows {
+                p.findings = rows
+                    .flatten()
+                    .filter_map(|s| serde_json::from_str::<Finding>(&s).ok())
+                    .collect();
             }
         }
 
@@ -343,14 +367,17 @@ impl Project {
         Self::init_schema(&conn)?;
 
         // Clear and rewrite (simple; fine for project sizes we handle)
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             DELETE FROM renames;
             DELETE FROM comments;
             DELETE FROM var_renames;
             DELETE FROM signatures;
             DELETE FROM structs;
             DELETE FROM vuln_scores;
-        ")?;
+            DELETE FROM findings;
+        ",
+        )?;
 
         for (vaddr, name) in &self.renames {
             conn.execute(
@@ -394,6 +421,13 @@ impl Project {
         }
         // Notes are NOT cleared/rewritten on save — they are appended individually
         // via add_note() to preserve auto-increment IDs.
+        for finding in &self.findings {
+            let data = serde_json::to_string(finding)?;
+            conn.execute(
+                "INSERT INTO findings (id, data, updated_at) VALUES (?1, ?2, ?3)",
+                params![finding.id, data, finding.updated_at],
+            )?;
+        }
 
         Ok(())
     }
@@ -416,9 +450,18 @@ impl Project {
         )?;
         let id = conn.last_insert_rowid();
         let timestamp: String = conn
-            .query_row("SELECT timestamp FROM notes WHERE id = ?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT timestamp FROM notes WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
             .unwrap_or_else(|_| "unknown".to_string());
-        let note = Note { id, vaddr, text, timestamp };
+        let note = Note {
+            id,
+            vaddr,
+            text,
+            timestamp,
+        };
         self.notes.push(note.clone());
         Ok(note)
     }
@@ -455,10 +498,7 @@ impl Project {
 
     /// Set the return type for a function.
     pub fn set_return_type(&mut self, fn_vaddr: u64, type_str: String) {
-        self.signatures
-            .entry(fn_vaddr)
-            .or_default()
-            .return_type = Some(type_str);
+        self.signatures.entry(fn_vaddr).or_default().return_type = Some(type_str);
     }
 
     /// Set the type of the N-th parameter (1-indexed, matching arg_1, arg_2, …).
@@ -600,7 +640,8 @@ mod tests {
         let mut p = Project::default();
         p.set_return_type(0x401000, "int".to_string());
         assert_eq!(
-            p.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            p.get_signature(0x401000)
+                .and_then(|s| s.return_type.as_deref()),
             Some("int")
         );
     }
@@ -657,9 +698,24 @@ mod tests {
             name: "node".to_string(),
             total_size: 16,
             fields: vec![
-                StructField { offset: 0,  size: 8, name: "next".to_string(),  type_str: "struct node*".to_string() },
-                StructField { offset: 8,  size: 4, name: "value".to_string(), type_str: "int32_t".to_string() },
-                StructField { offset: 12, size: 4, name: "flags".to_string(), type_str: "uint32_t".to_string() },
+                StructField {
+                    offset: 0,
+                    size: 8,
+                    name: "next".to_string(),
+                    type_str: "struct node*".to_string(),
+                },
+                StructField {
+                    offset: 8,
+                    size: 4,
+                    name: "value".to_string(),
+                    type_str: "int32_t".to_string(),
+                },
+                StructField {
+                    offset: 12,
+                    size: 4,
+                    name: "flags".to_string(),
+                    type_str: "uint32_t".to_string(),
+                },
             ],
         });
         assert!(p.structs.contains_key("node"));
@@ -670,8 +726,16 @@ mod tests {
     #[test]
     fn struct_overwrite() {
         let mut p = Project::default();
-        p.define_struct(StructDef { name: "s".to_string(), total_size: 4, fields: vec![] });
-        p.define_struct(StructDef { name: "s".to_string(), total_size: 8, fields: vec![] });
+        p.define_struct(StructDef {
+            name: "s".to_string(),
+            total_size: 4,
+            fields: vec![],
+        });
+        p.define_struct(StructDef {
+            name: "s".to_string(),
+            total_size: 8,
+            fields: vec![],
+        });
         assert_eq!(p.structs["s"].total_size, 8);
     }
 
@@ -681,8 +745,18 @@ mod tests {
             name: "s".to_string(),
             total_size: 8,
             fields: vec![
-                StructField { offset: 0, size: 4, name: "a".to_string(), type_str: "int".to_string() },
-                StructField { offset: 4, size: 4, name: "b".to_string(), type_str: "int".to_string() },
+                StructField {
+                    offset: 0,
+                    size: 4,
+                    name: "a".to_string(),
+                    type_str: "int".to_string(),
+                },
+                StructField {
+                    offset: 4,
+                    size: 4,
+                    name: "b".to_string(),
+                    type_str: "int".to_string(),
+                },
             ],
         };
         assert_eq!(def.field_at(0).map(|f| f.name.as_str()), Some("a"));
@@ -697,8 +771,18 @@ mod tests {
             name: "point".to_string(),
             total_size: 8,
             fields: vec![
-                StructField { offset: 0, size: 4, name: "x".to_string(), type_str: "int".to_string() },
-                StructField { offset: 4, size: 4, name: "y".to_string(), type_str: "int".to_string() },
+                StructField {
+                    offset: 0,
+                    size: 4,
+                    name: "x".to_string(),
+                    type_str: "int".to_string(),
+                },
+                StructField {
+                    offset: 4,
+                    size: 4,
+                    name: "y".to_string(),
+                    type_str: "int".to_string(),
+                },
             ],
         };
         let c = def.to_c();
@@ -728,7 +812,8 @@ mod tests {
                 name: "ctx".to_string(),
                 total_size: 8,
                 fields: vec![StructField {
-                    offset: 0, size: 8,
+                    offset: 0,
+                    size: 8,
                     name: "ptr".to_string(),
                     type_str: "void*".to_string(),
                 }],
@@ -743,15 +828,63 @@ mod tests {
         assert_eq!(p2.get_comment(0x401010), Some("prologue"));
         assert_eq!(p2.var_renames[&0x401000]["arg_1"], "argc");
         assert_eq!(
-            p2.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            p2.get_signature(0x401000)
+                .and_then(|s| s.return_type.as_deref()),
             Some("int")
         );
         assert_eq!(
-            p2.get_signature(0x401000).and_then(|s| s.param_types[0].as_deref()),
+            p2.get_signature(0x401000)
+                .and_then(|s| s.param_types[0].as_deref()),
             Some("int")
         );
         assert!(p2.structs.contains_key("ctx"));
         assert_eq!(p2.get_vuln_score(0x401000), Some(8));
+
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn findings_save_load_roundtrip() {
+        use crate::core::findings::{
+            CreatedBy, Evidence, Finding, FindingKind, FindingStatus, Severity,
+        };
+
+        let bin = fake_bin_path();
+        let db = Project::db_path(&bin);
+
+        {
+            let mut p = Project::load_for(&bin);
+            p.findings.push(Finding {
+                id: "f_test".to_string(),
+                kind: FindingKind::Vuln,
+                severity: Severity::High,
+                vaddr: Some("0x401000".to_string()),
+                rule: "dangerous_api".to_string(),
+                rationale: "strcpy caller needs review".to_string(),
+                evidence: vec![Evidence::ToolOutput {
+                    tool: "scan_vulnerabilities".to_string(),
+                    args: serde_json::json!({}),
+                    snippet: "strcpy".to_string(),
+                }],
+                suggested_actions: vec!["open function_context".to_string()],
+                status: FindingStatus::Triaging,
+                owner: Some("analyst".to_string()),
+                created_by: CreatedBy::Tool {
+                    name: "test".to_string(),
+                },
+                notes: vec![1],
+                created_at: 10,
+                updated_at: 20,
+            });
+            p.save().expect("save failed");
+        }
+
+        let p2 = Project::load_for(&bin);
+        assert_eq!(p2.findings.len(), 1);
+        assert_eq!(p2.findings[0].id, "f_test");
+        assert_eq!(p2.findings[0].status, FindingStatus::Triaging);
+        assert_eq!(p2.findings[0].owner.as_deref(), Some("analyst"));
+        assert_eq!(p2.findings[0].evidence.len(), 1);
 
         let _ = std::fs::remove_file(&db);
     }
@@ -765,5 +898,6 @@ mod tests {
         assert!(p.signatures.is_empty());
         assert!(p.structs.is_empty());
         assert!(p.vuln_scores.is_empty());
+        assert!(p.findings.is_empty());
     }
 }

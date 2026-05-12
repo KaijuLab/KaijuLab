@@ -14,14 +14,13 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::core::{EventBus, FindingStore, JobRunner, WorkspaceRegistry};
+use crate::core::{EventBus, JobRunner, WorkspaceRegistry};
 
 #[derive(Clone)]
 pub struct AppState {
     pub registry: WorkspaceRegistry,
     pub events: EventBus,
     pub jobs: JobRunner,
-    pub findings: FindingStore,
     pub auth_token: Option<Arc<String>>,
 }
 
@@ -32,13 +31,11 @@ pub async fn serve(
     auth_token: Option<String>,
 ) -> Result<()> {
     let jobs = JobRunner::new(events.clone());
-    let findings = FindingStore::new();
 
     let state = AppState {
         registry: registry.clone(),
         events: events.clone(),
         jobs,
-        findings,
         auth_token: auth_token.map(Arc::new),
     };
 

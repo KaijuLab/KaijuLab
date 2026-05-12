@@ -1,12 +1,11 @@
 //! Findings — first-class actionable observations produced by tools, agents,
 //! or analysts.  The findings board is the platform's primary output queue.
 
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
+
+use super::workspace::Workspace;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -125,20 +124,11 @@ pub struct UpdateFinding {
     pub append_notes: Vec<i64>,
 }
 
-#[derive(Clone, Default)]
-pub struct FindingStore {
-    inner: Arc<RwLock<HashMap<String, Finding>>>,
-}
-
-impl FindingStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn create(&self, input: CreateFinding) -> Finding {
+pub fn create_finding(ws: &Workspace, input: CreateFinding) -> anyhow::Result<Finding> {
+    let finding = {
         let now = super::events::now_ts();
         let id = format!("f_{}", &Uuid::new_v4().simple().to_string()[..8]);
-        let finding = Finding {
+        Finding {
             id: id.clone(),
             kind: input.kind,
             severity: input.severity,
@@ -153,14 +143,20 @@ impl FindingStore {
             notes: Vec::new(),
             created_at: now,
             updated_at: now,
-        };
-        self.inner.write().unwrap().insert(id, finding.clone());
-        finding
-    }
+        }
+    };
+    ws.with_project(|p| p.findings.push(finding.clone()));
+    ws.save_project()?;
+    Ok(finding)
+}
 
-    pub fn update(&self, id: &str, patch: UpdateFinding) -> Option<Finding> {
-        let mut map = self.inner.write().unwrap();
-        let f = map.get_mut(id)?;
+pub fn update_finding(
+    ws: &Workspace,
+    id: &str,
+    patch: UpdateFinding,
+) -> anyhow::Result<Option<Finding>> {
+    let updated = ws.with_project(|p| {
+        let f = p.findings.iter_mut().find(|f| f.id == id)?;
         if let Some(s) = patch.status {
             f.status = s;
         }
@@ -174,15 +170,19 @@ impl FindingStore {
         }
         f.updated_at = super::events::now_ts();
         Some(f.clone())
+    });
+    if updated.is_some() {
+        ws.save_project()?;
     }
+    Ok(updated)
+}
 
-    pub fn get(&self, id: &str) -> Option<Finding> {
-        self.inner.read().unwrap().get(id).cloned()
-    }
+pub fn get_finding(ws: &Workspace, id: &str) -> Option<Finding> {
+    ws.with_project(|p| p.findings.iter().find(|f| f.id == id).cloned())
+}
 
-    pub fn list(&self) -> Vec<Finding> {
-        let mut v: Vec<Finding> = self.inner.read().unwrap().values().cloned().collect();
-        v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        v
-    }
+pub fn list_findings(ws: &Workspace) -> Vec<Finding> {
+    let mut v = ws.with_project(|p| p.findings.clone());
+    v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    v
 }

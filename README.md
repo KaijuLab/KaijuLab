@@ -145,10 +145,10 @@ In dev mode, the daemon serves UI assets from `web/dist` on disk; the Vite dev s
 
 ## Project state
 
-Per-binary annotations (renames, comments, notes, vuln scores, struct
-definitions, function signatures) persist to `<binary>.kaiju.db` (SQLite) next
-to the binary file. The daemon, the MCP shim, manual UI edits, and legacy TUI
-edits all share this same database.
+Per-binary annotations (renames, comments, notes, vuln scores, findings,
+struct definitions, function signatures) persist to `<binary>.kaiju.db`
+(SQLite) next to the binary file. The daemon, the MCP shim, manual UI edits,
+and legacy TUI edits all share this same database.
 
 ## Available tools
 

@@ -13,6 +13,6 @@ pub mod project_store;
 pub mod workspace;
 
 pub use events::{Event, EventBus, Source};
-pub use findings::{Finding, FindingKind, FindingStatus, FindingStore, Severity};
+pub use findings::{Finding, FindingKind, FindingStatus, Severity};
 pub use jobs::{Job, JobId, JobKind, JobRunner, JobStatus};
 pub use workspace::{RegistrySnapshot, Workspace, WorkspaceRegistry};
