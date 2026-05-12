@@ -75,3 +75,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:23:36] OBSERVE: read src/project.rs
 [20:23:41] ACT: edited src/core/workspace.rs
 [20:23:44] ACT: edited src/core/workspace.rs
+[20:23:48] ACT: edited src/core/workspace.rs
