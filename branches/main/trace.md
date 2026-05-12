@@ -157,3 +157,4 @@ _[Checkpoint: 6a039188 — wrote web/src/components/CommandPalette.tsx; wrote te
 _[Checkpoint: 6a039226 — implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + …]_
 ---
 
+[20:48:52] OBSERVE: read README.md
