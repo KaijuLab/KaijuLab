@@ -251,3 +251,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:15] NOTE: Implemented first maturity slice: real claude/codex bridge adapters, /api/agents/{agent}/run triage/report/yara route, inspector triage buttons, MCP hash matching + gated run_binary, patch_bytes arg fix. Full items 1-9 still require later durable findings/MCP store, graph UI, taint/slicing, patch review.
 [21:53:16] OBSERVE: listed files under .
 [21:53:16] OBSERVE: searched docs for "README.md"
+[21:53:16] OBSERVE: listed files under .
