@@ -459,3 +459,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 [22:22:28] OBSERVE: read src/mcp/resources.rs
 [22:22:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/mcp/resources.rs
 [22:22:28] OBSERVE: read 140
+[22:22:28] OBSERVE: read src/project.rs
