@@ -482,3 +482,4 @@ _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 [22:51:28] OBSERVE: searched src for "auth_token|token|Authorization|CorsLayer|middleware|from_fn|serve\("
 [22:51:28] OBSERVE: read web/src/api.ts
 [22:51:28] OBSERVE: read web/src/hooks/useEventStream.ts
+[22:51:28] OBSERVE: read web/src/api.ts
