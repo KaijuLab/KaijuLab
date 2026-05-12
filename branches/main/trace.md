@@ -84,3 +84,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:26:00] ACT: wrote src/server/routes.rs
 [20:26:09] ACT: wrote src/server/ws.rs
 [20:26:30] ACT: wrote src/server/palette.rs
+[20:26:41] ACT: wrote src/server/static_assets.rs
