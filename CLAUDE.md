@@ -479,3 +479,5 @@ Authorization: Bearer <oauth2_access_token>
 | `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
 | `KAIJULAB_MODEL` | All | Model ID override | backend-specific |
 | `VIRUSTOTAL_API_KEY` | — | Enable `virustotal_check` tool | — (optional) |
+
+@.claude/h5i.md
