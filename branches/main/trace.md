@@ -493,3 +493,4 @@ _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 [22:51:28] OBSERVE: searched web/src
 [22:51:28] OBSERVE: searched src/server/routes.rs
 [22:51:28] OBSERVE: searched routes.rs for "health|/api"
+[22:51:28] OBSERVE: searched web for "api\."
