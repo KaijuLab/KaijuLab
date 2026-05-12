@@ -78,3 +78,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:23:48] ACT: edited src/core/workspace.rs
 [20:24:08] ACT: wrote src/core/findings.rs
 [20:24:26] ACT: wrote src/core/jobs.rs
+[20:24:48] ACT: wrote src/core/analysis.rs
