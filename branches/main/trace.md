@@ -270,3 +270,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: read src/server/routes.rs
 [21:53:16] OBSERVE: read src/server/routes.rs
 [21:53:16] OBSERVE: read src/server/mod.rs
+[21:53:16] OBSERVE: read Cargo.toml
