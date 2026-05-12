@@ -11,7 +11,7 @@ pub mod project;
 mod server;
 mod tools;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -87,6 +87,26 @@ enum Commands {
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
     },
+
+    /// Install local hooks/config snippets for external tools.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommands {
+    /// Create or update .mcp.json in the current directory for Claude/Codex.
+    Setup {
+        /// Output path. Defaults to ./.mcp.json.
+        #[arg(long, default_value = ".mcp.json")]
+        output: PathBuf,
+
+        /// Command path to write. Defaults to this kaijulab executable.
+        #[arg(long)]
+        command: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -104,6 +124,7 @@ async fn main() -> Result<()> {
         Commands::Mcp { file } => run_mcp(file).await,
         Commands::Analyze { file } => run_analyze(file).await,
         Commands::Plugin { name, file } => run_plugin(name, file),
+        Commands::Hook { command } => run_hook(command),
     }
 }
 
@@ -194,5 +215,57 @@ fn run_plugin(name: String, file: Option<PathBuf>) -> Result<()> {
     if !out.text.is_empty() {
         print!("{}", out.text);
     }
+    Ok(())
+}
+
+fn run_hook(command: HookCommands) -> Result<()> {
+    match command {
+        HookCommands::Setup { output, command } => setup_mcp_hook(&output, command),
+    }
+}
+
+fn setup_mcp_hook(output: &Path, command: Option<PathBuf>) -> Result<()> {
+    let raw_command = command.unwrap_or(std::env::current_exe()?);
+    let command = raw_command
+        .canonicalize()
+        .unwrap_or_else(|_| raw_command.clone());
+
+    let mut root = if output.exists() {
+        let text = std::fs::read_to_string(output)?;
+        serde_json::from_str::<serde_json::Value>(&text)?
+    } else {
+        serde_json::json!({})
+    };
+
+    if !root.is_object() {
+        anyhow::bail!("{} exists but is not a JSON object", output.display());
+    }
+    let obj = root.as_object_mut().expect("checked object");
+    let servers = obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        anyhow::bail!("{}.mcpServers exists but is not a JSON object", output.display());
+    }
+    servers
+        .as_object_mut()
+        .expect("checked object")
+        .insert(
+            "kaijulab".to_string(),
+            serde_json::json!({
+                "command": command.to_string_lossy(),
+                "args": ["mcp"],
+            }),
+        );
+
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(output, format!("{}\n", serde_json::to_string_pretty(&root)?))?;
+    println!(
+        "Wrote {} with kaijulab MCP command: {} mcp",
+        output.display(),
+        command.display()
+    );
     Ok(())
 }

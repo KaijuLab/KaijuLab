@@ -42,6 +42,7 @@ cargo build --release   # rebuild so web/dist gets embedded into the binary
 |---|---|---|
 | **Workbench daemon** | `kaijulab serve [FILE]` | Run the local web UI + MCP-over-IPC daemon |
 | **MCP stdio shim** | `kaijulab mcp [FILE]` | Attach Claude Code / Codex to the active daemon workspace, or a specific binary |
+| **Hook setup** | `kaijulab hook setup` | Create or update project-local `.mcp.json` for Claude Code / Codex |
 | **One-shot analyze** | `kaijulab analyze <FILE>` | Print a JSON summary to stdout and exit |
 | **Run a Rhai plugin** | `kaijulab plugin <NAME> [FILE]` | Execute a `.rhai` script from `~/.kaiju/plugins/` |
 
@@ -88,6 +89,16 @@ Example Claude Code MCP config snippet:
   }
 }
 ```
+
+Or create that file automatically in the current directory:
+
+```bash
+kaijulab hook setup
+```
+
+This preserves any existing `.mcp.json` servers and updates only the
+`mcpServers.kaijulab` entry. Use `--output <PATH>` or `--command <PATH>` to
+override the target config file or binary path.
 
 ### `analyze` — one-shot
 
