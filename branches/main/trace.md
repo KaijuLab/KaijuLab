@@ -119,3 +119,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:35:02] ACT: wrote web/tsconfig.json
 [20:35:05] ACT: wrote web/tsconfig.node.json
 [20:35:08] ACT: wrote web/index.html
+[20:35:16] ACT: wrote web/tailwind.config.js
