@@ -9,11 +9,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] session ended (auto-checkpoint)
 - [x] Added Web + MCP architecture sketch covering product shape, backend modules, REST/WebSocket API, MCP resources/tools, agent bridge, UI layout, and migration plan.
 - [x] added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md
+- [x] edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 20:17 UTC] `main`: edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…
 - [2026-05-12 20:15 UTC] `main`: added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md
 - [2026-05-12 20:13 UTC] `main`: Added Web + MCP architecture sketch covering product shape, backend modules, REST/WebSocket API, MCP resources/tools, agent bridge, UI layout, and migration plan.
 - [2026-05-12 20:13 UTC] `main`: session ended (auto-checkpoint)

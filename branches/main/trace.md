@@ -57,3 +57,9 @@ _[Checkpoint: 6a038a58 — added docs/web-mcp-architecture.md; edited docs/web-m
 [20:16:09] THINK: Fold refinements into existing doc rather than write -v2.md — single source of truth, easier review. Keep doc's structure (Product Shape → Modules → Modes → Web API → MCP → Agent Bridge → UI → Migration → Milestone) and inject new sections (Finding schema, Events, Auth, Cancellation, Shared Types) at natural seams. Revise rather than append where the original is wrong (resource list, event payload shape, milestone definition).
 [20:17:41] ACT: wrote docs/web-mcp-architecture.md
 [20:17:47] ACT: rewrote docs/web-mcp-architecture.md: added daemon+shim process model with Unix socket, granular event deltas with source attribution, Finding schema as first-class type, narrowed agent bridge to schema-bound non-interactive jobs only, trimmed MCP resources to 3 truly browseable ones, added auth/bind/dev-mode, CancellationToken design, ts-rs shared types, command palette as power-user spine, revised first milestone around live multi-source editing.
+
+
+---
+_[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…]_
+---
+
