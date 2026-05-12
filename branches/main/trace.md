@@ -117,3 +117,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:34:49] ACT: wrote web/package.json
 [20:34:57] ACT: wrote web/vite.config.ts
 [20:35:02] ACT: wrote web/tsconfig.json
+[20:35:05] ACT: wrote web/tsconfig.node.json
