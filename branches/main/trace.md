@@ -127,3 +127,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:36:11] ACT: wrote web/src/state.ts
 [20:36:18] ACT: wrote web/src/hooks/useEventStream.ts
 [20:36:28] ACT: wrote web/src/App.tsx
+[20:36:34] ACT: wrote web/src/components/TopBar.tsx
