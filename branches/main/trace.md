@@ -381,3 +381,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:14:16] OBSERVE: searched src for "playbook|workflow|finding|scan|capability|triage|strings|imports|callgraph|cfg|jobs|palette"
 [22:14:16] OBSERVE: read src/core/mod.rs
 [22:14:16] OBSERVE: read web/src/App.tsx
+[22:14:16] OBSERVE: read web/src/components/LeftRail.tsx
