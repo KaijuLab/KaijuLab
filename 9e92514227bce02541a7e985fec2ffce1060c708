@@ -1,0 +1,1 @@
+{"git_oid":"9e92514227bce02541a7e985fec2ffce1060c708","parent_oid":"f373c2c6f654c8e322a676f6523ae20f5abfeb2c","ai_metadata":{"model_name":"claude-opus-4-7","prompt":"update README to reflect the web/MCP workbench pivot","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-05-12T20:51:35.752307361Z"}
