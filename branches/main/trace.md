@@ -388,3 +388,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:14:17] OBSERVE: read web/src/App.tsx
 [22:14:17] OBSERVE: read web/src/components/LeftRail.tsx
 [22:14:17] ACT: added /home/koukyosyumei/Dev/KaijuLab/src/core/playbooks.rs
+[22:14:17] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/mod.rs
