@@ -44,7 +44,7 @@ cargo build --release   # rebuild so web/dist gets embedded into the binary
 | **Workbench daemon** | `kaijulab serve <FILE>` | Run the local web UI + MCP-over-IPC daemon |
 | **MCP stdio shim** | `kaijulab mcp <FILE>` | Attach Claude Code / Codex to a running daemon |
 | **One-shot analyze** | `kaijulab analyze <FILE>` | Print a JSON summary to stdout and exit |
-| **Legacy TUI** | `kaijulab [flags]` (no subcommand) | The original ratatui TUI + direct LLM backends — still supported during migration; will be removed once parity is reached |
+| **Run a Rhai plugin** | `kaijulab plugin <NAME> [FILE]` | Execute a `.rhai` script from `~/.kaiju/plugins/` |
 
 ### `serve` — the workbench daemon
 
@@ -177,29 +177,17 @@ see [`docs/web-mcp-architecture.md`](docs/web-mcp-architecture.md).
 
 ## Environment variables
 
+KaijuLab itself does not require any API keys.  AI interactions happen
+through your own Claude Code / Codex installs, which authenticate
+themselves against your existing subscription — KaijuLab never sees a
+token.
+
 | Variable | Purpose | Default |
 |---|---|---|
 | `RUST_LOG` | Daemon log filter (`info`, `debug`, `trace`) | `info` |
 | `KAIJULAB_DEV` | Serve UI assets from disk instead of embed | unset |
+| `KAIJU_BINARY` | Default binary path picked up by `run_python` tool | unset |
 | `VIRUSTOTAL_API_KEY` | Enable `virustotal_check` tool | unset |
-
-### Legacy LLM backends
-
-The original TUI mode talks to hosted LLM APIs directly. These env vars are
-only consulted when no subcommand is given (legacy mode):
-
-| Variable | Backend | Purpose | Default |
-|---|---|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Gemini | Service-account JSON path | required |
-| `GOOGLE_PROJECT_ID` | Gemini | GCP project ID | required |
-| `GOOGLE_LOCATION` | Gemini | Vertex AI region | `us-central1` |
-| `OPENAI_API_KEY` | OpenAI | API key | required |
-| `OPENAI_BASE_URL` | OpenAI | API base URL | `https://api.openai.com/v1` |
-| `ANTHROPIC_API_KEY` | Anthropic | API key | required |
-| `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
-| `KAIJULAB_MODEL` | All | Model ID override | backend-specific |
-
-The legacy TUI will be removed once the web UI reaches parity for all manual workflows.
 
 ## Prerequisites
 
