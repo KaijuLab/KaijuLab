@@ -80,3 +80,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:24:26] ACT: wrote src/core/jobs.rs
 [20:24:48] ACT: wrote src/core/analysis.rs
 [20:24:58] ACT: wrote src/core/project_store.rs
+[20:25:11] ACT: wrote src/server/mod.rs
