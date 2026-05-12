@@ -13,3 +13,9 @@
 [20:09:36] OBSERVE: read src/agent.rs
 [20:09:36] OBSERVE: read src/agent.rs
 [20:09:36] OBSERVE: read src/tui.rs
+
+
+---
+_[Checkpoint: 6a038900 — Evaluated KaijuLab rebrand/refactor direction: web app primary, Claude/Codex integration via local CLI headless plus MCP server, app-owned durable context.]_
+---
+
