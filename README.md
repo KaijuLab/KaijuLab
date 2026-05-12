@@ -1,241 +1,210 @@
 # KaijuLab
 
-> **AI-Powered Reverse Engineering Lab**
+> **AI-native reverse engineering workbench — local web UI driven by your own Claude Code or Codex.**
 
 <p align="center">
   <a href="https://github.com/Koukyosyumei/" target="_blank">
-      <img src="https://github.com/KaijuLab/KaijuLab.github.io/blob/main/static/images/logo.png" alt="h5i Logo" height="126">
+      <img src="https://github.com/KaijuLab/KaijuLab.github.io/blob/main/static/images/logo.png" alt="KaijuLab Logo" height="126">
   </a>
 </p>
 
-KaijuLab is a terminal-based reverse-engineering environment where an AI agent acts as the analyst, using tools like disassembly, decompilation, cross-references, call graphs, YARA generation, and vulnerability scoring to autonomously investigate binaries and report findings in natural language.
+KaijuLab is a local reverse-engineering workbench. It runs as a single binary
+that opens a dense, trading-terminal-style web UI in your browser, and exposes
+the same analysis tools over the Model Context Protocol (MCP) so your Claude
+Code or Codex session can drive analysis directly. Both surfaces share live
+state — when Claude renames a function via MCP, your browser updates instantly,
+attributed to `source: claude` in the event timeline.
+
+**No API keys required for AI use.** KaijuLab does not call hosted LLM APIs;
+it uses the user's existing local Claude Code or Codex install through MCP /
+local-CLI bridges.
+
+## Quickstart
+
+```bash
+# 1. Build
+cargo build --release
+cd web && npm install && npm run build && cd ..
+cargo build --release   # rebuild so web/dist gets embedded into the binary
+
+# 2. Launch the workbench
+./target/release/kaijulab serve /path/to/binary
+#  → open http://127.0.0.1:7878 in your browser
+
+# 3. In another terminal, point Claude Code at the same workspace
+./target/release/kaijulab mcp /path/to/binary
+#  → Claude Code's MCP config sees `kaijulab` as a server; analysis happens
+#    in your normal Claude session, results appear live in the browser.
+```
+
+## Modes
+
+| Mode | Command | Purpose |
+|---|---|---|
+| **Workbench daemon** | `kaijulab serve <FILE>` | Run the local web UI + MCP-over-IPC daemon |
+| **MCP stdio shim** | `kaijulab mcp <FILE>` | Attach Claude Code / Codex to a running daemon |
+| **One-shot analyze** | `kaijulab analyze <FILE>` | Print a JSON summary to stdout and exit |
+| **Legacy TUI** | `kaijulab [flags]` (no subcommand) | The original ratatui TUI + direct LLM backends — still supported during migration; will be removed once parity is reached |
+
+### `serve` — the workbench daemon
+
+```bash
+kaijulab serve foo.bin                            # bind 127.0.0.1:7878
+kaijulab serve foo.bin --bind 0.0.0.0:7878 --token $(openssl rand -hex 32)
+kaijulab serve foo.bin --allow-patch              # enable patch_bytes MCP tool
+kaijulab serve foo.bin --allow-exec               # enable run_binary MCP tool
+```
+
+The daemon:
+
+- Serves the React UI at `http://<bind>/`.
+- Exposes REST endpoints under `/api/...` and a WebSocket event stream at `/api/events`.
+- Opens a per-workspace Unix socket at `~/.kaiju/run/<hash>.sock` so a co-located `kaijulab mcp` shim attaches automatically.
+
+Defaults to `127.0.0.1` only. For remote access, bind a non-loopback address and pass `--token`; all API calls and WS upgrades will then require `Authorization: Bearer <token>`.
+
+### `mcp` — the stdio shim
+
+```bash
+kaijulab mcp foo.bin
+```
+
+A minimal Model Context Protocol server over stdio. Implements
+`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`.
+
+- If a `serve` daemon is running for the same binary, the shim **proxies all calls to the daemon** — same in-memory caches, same project state, same event bus. Claude's writes fire WebSocket events that the browser sees instantly.
+- If no daemon is running, the shim runs standalone with its own state.
+
+Example Claude Code MCP config snippet:
+
+```json
+{
+  "mcpServers": {
+    "kaijulab": {
+      "command": "/path/to/kaijulab",
+      "args": ["mcp", "/path/to/binary"]
+    }
+  }
+}
+```
+
+### `analyze` — one-shot
+
+```bash
+kaijulab analyze foo.bin > report.json
+```
+
+Prints a JSON object with `workspace`, `file_info`, and `functions`. Useful in
+CI pipelines or for cold orientation before opening the workbench.
+
+## Web UI
+
+```
+┌─ Topbar ─────────────────────────────────────────────────────┐
+│  kaijulab  •  foo.bin (x86_64, ELF)  •  ⌘K palette          │
+├──────────┬─────────────────────────────┬────────────────────┤
+│ Function │  Disassembly  │  Decompile  │  Entity Inspector  │
+│ List     │  ──────────── │  ────────── │  ────────────────  │
+│ (search) │  cursor sync                │  rename / comment  │
+│ vuln     │  inline cmnt  │  renames    │  vuln score / note │
+│ badges   │               │             │                    │
+├──────────┴───────────────┴─────────────┴────────────────────┤
+│  Timeline — granular events, filterable by source           │
+│  → claude (3s ago): function.renamed 0x401200 → parse_hdr   │
+│  → user   (8s ago): comment.added 0x401204 "stack bof"      │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Command palette** (`Ctrl+K` / `Cmd+K`): `0x401000` jumps · `parse_header` fuzzy-finds · `/rename`, `/comment`, `/note`, `/scan vuln`, `/goto`, `/info`.
+- **Source attribution**: every mutation in the timeline shows whether it came from `user`, `claude`, `codex`, `plugin`, or `tool`. Filter the stream by source.
+- **Inspector**: shows the selected function's annotations, vuln score, notes. Edit in place; writes hit the same project DB as MCP writes.
+
+### Dev mode
+
+```bash
+KAIJULAB_DEV=1 kaijulab serve foo.bin
+# in another shell:
+cd web && npm run dev
+```
+
+In dev mode, the daemon serves UI assets from `web/dist` on disk; the Vite dev server (`localhost:5173`) proxies `/api` to the daemon, giving you instant React HMR without rebuilding the Rust binary.
+
+## Project state
+
+Per-binary annotations (renames, comments, notes, vuln scores, struct
+definitions, function signatures) persist to `<binary>.kaiju.db` (SQLite) next
+to the binary file. The daemon, the MCP shim, manual UI edits, and legacy TUI
+edits all share this same database.
+
+## Available tools
+
+Tools are available identically through REST (`/api/...`), MCP
+(`tools/call`), and the legacy TUI. The full list:
+
+### Binary info & disassembly
+`file_info`, `sections`, `imports`, `hexdump`, `read_section`,
+`strings_extract`, `section_entropy`, `disassemble`, `list_functions`,
+`resolve_plt`, `resolve_pe_imports`, `dwarf_info`, `load_pdb`.
+
+### Control flow & xrefs
+`xrefs_to`, `xrefs_data`, `cfg_view`, `callgraph`.
+
+### Decompilation
+`decompile`, `decompile_flat`, `function_context` (disasm + decompile + xrefs in one call).
+
+### Search & patch
+`search_bytes`, `patch_bytes` (writes `<file>.patched`; original untouched), `generate_yara_rule`.
+
+### Intelligence
+`scan_vulnerabilities`, `identify_library_functions`, `diff_binary`,
+`virustotal_check` (requires `VIRUSTOTAL_API_KEY`).
+
+### Function hash database (cross-binary)
+`register_function_hash`, `lookup_function_hash`, `match_all_functions`
+(`~/.kaiju/fn_hashes.db`).
+
+### Project annotations (persistent)
+`rename_function`, `add_comment`, `add_note`, `delete_note`,
+`set_vuln_score`, `rename_variable`, `set_return_type`, `set_param_type`,
+`set_param_name`, `define_struct`, `list_types`, `load_project`,
+`export_report`.
+
+### ELF / PE internals
+`elf_internals`, `pe_internals`, `run_binary` (gated by `--allow-exec`).
+
+For the full API shape (REST routes, WS event types, MCP tool schemas),
+see [`docs/web-mcp-architecture.md`](docs/web-mcp-architecture.md).
+
+## Environment variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `RUST_LOG` | Daemon log filter (`info`, `debug`, `trace`) | `info` |
+| `KAIJULAB_DEV` | Serve UI assets from disk instead of embed | unset |
+| `VIRUSTOTAL_API_KEY` | Enable `virustotal_check` tool | unset |
+
+### Legacy LLM backends
+
+The original TUI mode talks to hosted LLM APIs directly. These env vars are
+only consulted when no subcommand is given (legacy mode):
+
+| Variable | Backend | Purpose | Default |
+|---|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Gemini | Service-account JSON path | required |
+| `GOOGLE_PROJECT_ID` | Gemini | GCP project ID | required |
+| `GOOGLE_LOCATION` | Gemini | Vertex AI region | `us-central1` |
+| `OPENAI_API_KEY` | OpenAI | API key | required |
+| `OPENAI_BASE_URL` | OpenAI | API base URL | `https://api.openai.com/v1` |
+| `ANTHROPIC_API_KEY` | Anthropic | API key | required |
+| `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
+| `KAIJULAB_MODEL` | All | Model ID override | backend-specific |
+
+The legacy TUI will be removed once the web UI reaches parity for all manual workflows.
 
 ## Prerequisites
 
 - Rust toolchain (stable, 1.75+)
-- Credentials for at least one supported LLM backend　**or none** (no-LLM manual mode works without any API key)
-
-## Setup
-
-### 1. Install
-
-```bash
-cargo install --git https://github.com/KaijuLab/KaijuLab kaijulab
-```
-
-### 2. Choose a backend and set credentials
-
-**Gemini** — Vertex AI service account:
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json   # never commit this
-export GOOGLE_PROJECT_ID=my-gcp-project
-# optional: GOOGLE_LOCATION (default: us-central1)
-# optional: KAIJULAB_MODEL  (default: gemini-2.5-flash)
-kaijulab -- --backend gemini
-```
-
-**OpenAI**:
-```bash
-export OPENAI_API_KEY=sk-...
-# optional: OPENAI_BASE_URL (default: https://api.openai.com/v1)
-# optional: KAIJULAB_MODEL  (default: gpt-4o)
-kaijulab -- --backend openai
-```
-
-**Anthropic**:
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-# optional: KAIJULAB_MODEL (default: claude-opus-4-5)
-kaijulab -- --backend anthropic
-```
-
-**Ollama** (local, no key needed):
-```bash
-# optional: OLLAMA_BASE_URL (default: http://localhost:11434/v1)
-# optional: KAIJULAB_MODEL  (default: llama3.2)
-ollama serve   # in another terminal
-kaijulab -- --backend ollama --model llama3.2
-```
-
-## Usage
-
-### Interactive TUI (default)
-
-```bash
-kaijulab                                        # no LLM (manual mode)
-kaijulab -- --backend gemini                    # Gemini via Vertex AI
-kaijulab -- --backend openai                    # OpenAI
-kaijulab -- --backend anthropic                 # Anthropic Claude
-kaijulab -- --backend ollama --model llama3.2   # local Ollama
-```
-
-### Key bindings
-
-| Key | Action |
-|---|---|
-| `1`–`7` (empty input) | Jump to tab by number |
-| `Tab` / `Shift+Tab` | Cycle tabs forward / backward |
-| `↑` / `↓` | Scroll active panel one line |
-| `PgUp` / `PgDn` | Scroll active panel one page |
-| `g` / `G` (empty input) | Jump to top / bottom of panel |
-| `Enter` | Send message to agent |
-| `Ctrl+C` (empty input) | Quit |
-| `Ctrl+C` (non-empty) | Clear input without sending |
-| `↑` / `↓` (with text) | Navigate input history |
-| `Ctrl+L` | Clear chat history |
-| `s` (empty input) | Toggle split-pane view |
-| `x` (empty input) | Show cross-reference popup at cursor address |
-| `r` (empty input) | Rename function at cursor |
-| `y` (empty input) | Copy panel content to clipboard |
-| `:cmd` | Command palette — pre-fills input without sending |
-| `:file_info <path>` | Pre-fill a manual tool command |
-| `f` (Functions tab) | Filter function list |
-| `/` | Incremental search within active panel |
-| `n` / `N` | Jump to next / previous search match |
-| `Enter` (Functions tab) | Jump to Disasm for selected function |
-
-### One-shot analysis
-
-Pass a binary as a positional argument. KaijuLab analyses it and exits:
-
-```bash
-kaijulab -- /path/to/binary
-kaijulab -- --backend openai /path/to/binary
-kaijulab -- --backend gemini /path/to/binary --output-json   # structured JSON to stdout
-```
-
-### Script / batch mode
-
-Run a file of tool commands (one per line, `#` comments and blank lines ignored) and exit:
-
-```bash
-kaijulab -- --script analysis.txt
-```
-
-```
-# analysis.txt
-file_info /path/to/binary
-functions /path/to/binary 20
-disassemble /path/to/binary 0x401a50
-entropy /path/to/binary
-```
-
-### Headless mode
-
-Implies `--no-tui --output-json`. Useful in CI or automated pipelines:
-
-```bash
-kaijulab -- --headless --backend gemini /path/to/binary
-```
-
-### Plain-text REPL (`--no-tui`)
-
-For piping output or minimal environments:
-
-```bash
-kaijulab -- --no-tui
-```
-
-### Session persistence
-
-By default, conversation history is saved to `~/.kaiju/sessions/` keyed by binary path. On restart with the same binary, the previous session is restored automatically. Use `--no-session` to opt out:
-
-```bash
-kaijulab -- --no-session /path/to/binary
-```
-
-### CLI flags reference
-
-```
---backend     <NAME>    none (default) | gemini | openai | anthropic | ollama
---model       <ID>      Model ID override (backend-specific default)
---credentials <FILE>    [Gemini] Service-account JSON key path
---project     <ID>      [Gemini] GCP project ID
---location    <REGION>  [Gemini] Vertex AI region (default: us-central1)
---api-key     <KEY>     [OpenAI/Anthropic] API key
---base-url    <URL>     [OpenAI/Ollama] API base URL
---no-tui                Use plain-text REPL instead of the TUI
---output-json           [One-shot] Emit structured JSON to stdout
---script      <FILE>    Run commands from a script file, then exit
---headless              Implies --no-tui --output-json
---no-session            Disable session save/load for this run
-```
-
-## Available tools
-
-### Binary info
-
-| Tool | Description |
-|---|---|
-| `file_info` | Parse ELF / PE / Mach-O headers: format, arch, entry point, LOAD segment table (vaddr ↔ file offset), section table, imports |
-| `hexdump` | Hex + ASCII dump at an arbitrary file offset |
-| `read_section` | Hex dump of a named section (`.text`, `.rodata`, etc.) |
-| `strings_extract` | Extract printable ASCII strings; optional `section` filter (e.g. `.rodata`) to avoid code-byte noise |
-| `section_entropy` | Per-section Shannon entropy — detect packed / encrypted regions |
-
-### Disassembly & control flow
-
-| Tool | Description |
-|---|---|
-| `disassemble` | Disassemble x86 / x86-64 in Intel syntax; accepts `vaddr` (auto-translated via LOAD segments) or raw `offset` |
-| `list_functions` | List functions: symbol table for non-stripped binaries; prologue scan (`endbr64` / `push rbp; mov rbp,rsp`) for stripped ones |
-| `xrefs_to` | All call/jump sites that reference a given virtual address |
-| `callgraph` | Full static call graph of the binary (JSON edge list) |
-| `cfg` | Control-flow graph (basic-block edges) for a single function |
-| `byte_search` | Byte-pattern search with wildcard support (e.g. `E8 ?? ?? ?? ??`) |
-
-### Decompilation & symbols
-
-| Tool | Description |
-|---|---|
-| `decompile` | Lift a function to pseudo-C using the built-in p-code lifter |
-| `decompile_flat` | Decompile raw firmware or shellcode at an arbitrary base address |
-| `resolve_plt` | Map PLT stub addresses → imported symbol names (ELF `.rela.plt` + dynamic symbol table) |
-| `resolve_pe_imports` | Map PE import thunks → DLL!symbol strings |
-| `dwarf_info` | Parse DWARF debug information: source files, line info, variable names |
-| `load_pdb` | Load Windows PDB symbols and annotate functions |
-
-### Intelligence & generation
-
-| Tool | Description |
-|---|---|
-| `vuln_scan` | Heuristic vulnerability scan across the top N functions; emits risk scores |
-| `explain_function` | Ask the LLM to explain a specific function in plain language |
-| `generate_yara_rule` | Generate a YARA signature for a function, normalised for relocatability |
-| `identify_library` | FLIRT-style library recognition using normalised function hashes |
-| `auto_analysis` | Full automated analysis pass: functions → decompile → explain → score |
-| `virustotal_check` | Hash lookup against VirusTotal (requires `VIRUSTOTAL_API_KEY`) |
-
-### Patching & output
-
-| Tool | Description |
-|---|---|
-| `patch_bytes` | Patch bytes at a virtual address → writes `<file>.patched`; original untouched |
-| `diff_binaries` | Diff two binaries function-by-function by normalised hash |
-| `export_report` | Export a full HTML analysis report |
-
-### Project / annotations (persistent)
-
-| Tool | Description |
-|---|---|
-| `rename_function` | Attach a human-readable name to an address (saved to `~/.kaiju/`) |
-| `add_comment` | Attach a comment to an address |
-| `list_annotations` | Show all saved names and comments for a binary |
-| `list_types` | Show saved struct and function-signature definitions |
-
-## Environment variables
-
-| Variable | Backend | Purpose | Default |
-|---|---|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Gemini | Path to service-account JSON key | — (required) |
-| `GOOGLE_PROJECT_ID` | Gemini | GCP project ID | — (required) |
-| `GOOGLE_LOCATION` | Gemini | Vertex AI region | `us-central1` |
-| `OPENAI_API_KEY` | OpenAI | API key | — (required) |
-| `OPENAI_BASE_URL` | OpenAI | API base URL | `https://api.openai.com/v1` |
-| `ANTHROPIC_API_KEY` | Anthropic | API key | — (required) |
-| `OLLAMA_BASE_URL` | Ollama | Server base URL | `http://localhost:11434/v1` |
-| `KAIJULAB_MODEL` | All | Model ID override | backend-specific |
-| `VIRUSTOTAL_API_KEY` | — | VirusTotal hash lookup | — (optional) |
+- Node.js 18+ and npm (for the web UI build)
 
 ## License
 
