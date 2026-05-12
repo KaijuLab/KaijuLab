@@ -227,3 +227,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:32:34] OBSERVE: read README.md
 [21:32:41] OBSERVE: read web/src/App.tsx
 [21:32:41] OBSERVE: read web/src/components/OpenBinary.tsx
+[21:32:45] OBSERVE: read web/src/api.ts
