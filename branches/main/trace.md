@@ -40,3 +40,9 @@ _[Checkpoint: 6a0389cf — session ended (auto-checkpoint)]_
 [20:13:47] OBSERVE: read docs/web-mcp-architecture.md
 [20:13:47] OBSERVE: read docs/web-mcp-architecture.md
 [20:13:47] ACT: edited docs/web-mcp-architecture.md
+
+
+---
+_[Checkpoint: 6a0389fb — Added Web + MCP architecture sketch covering product shape, backend modules, REST/WebSocket API, MCP resources/tools, agent bridge, UI layout, and migration plan.]_
+---
+
