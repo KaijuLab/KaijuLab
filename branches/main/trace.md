@@ -426,3 +426,9 @@ _[Checkpoint: 6a03a652 — Added guided professional analysis playbooks]_
 [22:17:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/components/FindingsBoard.tsx
 [22:17:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
 [22:17:35] NOTE: Added findings board UI: web/src/components/FindingsBoard.tsx lists/filter findings, shows rationale/actions/evidence, goto address, updates status via PATCH /api/findings/:id. App renders board between workspace and timeline.
+
+
+---
+_[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
+---
+

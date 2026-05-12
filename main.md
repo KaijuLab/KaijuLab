@@ -22,11 +22,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Implemented agent bridge and UI/MCP maturity slice
 - [x] Added active-workspace MCP discovery for web-opened binaries
 - [x] Added guided professional analysis playbooks
+- [x] Added findings board and evidence review UI
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 22:17 UTC] `main`: Added findings board and evidence review UI
 - [2026-05-12 22:14 UTC] `main`: Added guided professional analysis playbooks
 - [2026-05-12 22:00 UTC] `main`: Added active-workspace MCP discovery for web-opened binaries
 - [2026-05-12 21:53 UTC] `main`: Implemented agent bridge and UI/MCP maturity slice
