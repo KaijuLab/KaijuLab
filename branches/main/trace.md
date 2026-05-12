@@ -438,3 +438,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 [22:22:28] OBSERVE: read src/project.rs
 [22:22:28] OBSERVE: read src/core/findings.rs
 [22:22:28] OBSERVE: read src/core/findings.rs
+[22:22:28] OBSERVE: read src/server/mod.rs
