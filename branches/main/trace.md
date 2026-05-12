@@ -171,3 +171,4 @@ _[Checkpoint: 6a0392e1 — edited .gitignore; edited .gitignore; wrote README.md
 _[Checkpoint: 6a03932a — edited .gitignore; edited .gitignore; wrote README.md]_
 ---
 
+[20:55:49] OBSERVE: read src/tools.rs
