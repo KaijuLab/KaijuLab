@@ -23,11 +23,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added active-workspace MCP discovery for web-opened binaries
 - [x] Added guided professional analysis playbooks
 - [x] Added findings board and evidence review UI
+- [x] Persisted findings in project database
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 22:23 UTC] `main`: Persisted findings in project database
 - [2026-05-12 22:17 UTC] `main`: Added findings board and evidence review UI
 - [2026-05-12 22:14 UTC] `main`: Added guided professional analysis playbooks
 - [2026-05-12 22:00 UTC] `main`: Added active-workspace MCP discovery for web-opened binaries
