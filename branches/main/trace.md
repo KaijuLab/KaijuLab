@@ -182,3 +182,4 @@ _[Checkpoint: 6a03932a — edited .gitignore; edited .gitignore; wrote README.md
 [20:59:30] ACT: edited README.md
 [20:59:39] ACT: edited README.md
 [21:00:11] ACT: wrote CLAUDE.md
+[21:00:34] ACT: purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent.rs (1295), src/ui.rs (103), src/config.rs (228), src/llm/*.rs (~1200). Stripped tools::all_definitions() (1124 LoC) and crate::llm::ToolDefinition import. Rewrote main.rs (1176 → 170 LoC) as subcommand-only dispatcher. Dropped deps: ratatui, crossterm, colored, indicatif, console, arboard, jsonwebtoken. Kept reqwest (virustotal_check), chrono (note timestamps), async-trait (McpBackend). Net: -3440 LoC, 127 tests pass.
