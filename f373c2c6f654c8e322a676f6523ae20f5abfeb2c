@@ -1,0 +1,1 @@
+{"git_oid":"f373c2c6f654c8e322a676f6523ae20f5abfeb2c","parent_oid":"a3be0cef73325c05ff8e56e05596358e87227831","ai_metadata":{"model_name":"claude-opus-4-7","prompt":"ignore web build artefacts produced by tsc -b","agent_id":"claude-code","usage":null},"test_metrics":null,"ast_hashes":null,"crdt_states":null,"timestamp":"2026-05-12T20:48:29.982785184Z"}
