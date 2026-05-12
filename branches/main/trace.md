@@ -71,3 +71,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:22:33] ACT: edited Cargo.toml
 [20:22:58] ACT: wrote src/core/mod.rs
 [20:23:12] ACT: wrote src/core/events.rs
+[20:23:30] ACT: wrote src/core/workspace.rs
