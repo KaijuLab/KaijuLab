@@ -203,3 +203,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:04:38] ACT: edited src/core/mod.rs
 [21:04:46] OBSERVE: read src/server/mod.rs
 [21:04:55] ACT: wrote src/server/mod.rs
+[21:05:11] OBSERVE: read src/server/routes.rs
