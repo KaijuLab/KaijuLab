@@ -27,3 +27,4 @@ _[Checkpoint: 6a0389cf — session ended (auto-checkpoint)]_
 
 [20:13:44] NOTE: Added docs/web-mcp-architecture.md sketch: local web server primary, MCP stdio surface, Claude/Codex local CLI adapters, project DB as durable truth, TUI removal after web parity.
 [20:13:47] OBSERVE: read Cargo.toml
+[20:13:47] OBSERVE: read src/tools.rs
