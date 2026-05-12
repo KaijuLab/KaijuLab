@@ -345,3 +345,4 @@ _[Checkpoint: 6a03a15f — Implemented agent bridge and UI/MCP maturity slice]_
 [22:00:25] OBSERVE: read src/mcp/mod.rs
 [22:00:25] OBSERVE: read src/mcp/server.rs
 [22:00:25] OBSERVE: read src/ipc/protocol.rs
+[22:00:25] OBSERVE: read src/core/workspace.rs
