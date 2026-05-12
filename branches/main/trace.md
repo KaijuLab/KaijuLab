@@ -143,3 +143,9 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 _[Checkpoint: 6a03917f — milestone-1 web/MCP scaffolding lands]_
 ---
 
+
+
+---
+_[Checkpoint: 6a039188 — wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…]_
+---
+

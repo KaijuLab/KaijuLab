@@ -11,11 +11,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md
 - [x] edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…
 - [x] milestone-1 web/MCP scaffolding lands
+- [x] wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 20:46 UTC] `main`: wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…
 - [2026-05-12 20:45 UTC] `main`: milestone-1 web/MCP scaffolding lands
 - [2026-05-12 20:17 UTC] `main`: edited docs/web-mcp-architecture.md; wrote docs/web-mcp-architecture.md; rewrote docs/web-mcp-architecture.md: added dae…
 - [2026-05-12 20:15 UTC] `main`: added docs/web-mcp-architecture.md; edited docs/web-mcp-architecture.md

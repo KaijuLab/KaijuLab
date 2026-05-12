@@ -82,3 +82,16 @@ All 11 sub-tasks complete: core service layer, axum REST+WS, Unix-socket IPC, MC
 
 ---
 
+## Commit 6a039188 — 2026-05-12 20:46 UTC
+
+### Branch Purpose
+Primary development branch
+
+### Previous Progress Summary
+All 11 sub-tasks complete: core service layer, axum REST+WS, Unix-socket IPC, MCP stdio shim with daemon discovery, agent_bridge stubs, serve/mcp/analyze subcommands, React+Vite UI, ts-rs type generation. End-to-end demo verified — MCP rename produces granular event with source:claude that reaches WS subscribers. Existing TUI/LLM paths untouched (Legacy mode).
+
+### This Commit's Contribution
+
+
+---
+
