@@ -149,3 +149,4 @@ _[Checkpoint: 6a03917f — milestone-1 web/MCP scaffolding lands]_
 _[Checkpoint: 6a039188 — wrote web/src/components/CommandPalette.tsx; wrote tests/gen_types.rs; implemented milestone 1: src/core (workspace/even…]_
 ---
 
+[20:47:33] ACT: edited .gitignore
