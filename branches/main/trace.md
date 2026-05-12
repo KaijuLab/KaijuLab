@@ -338,3 +338,4 @@ _[Checkpoint: 6a03a15f — Implemented agent bridge and UI/MCP maturity slice]_
 
 [22:00:25] THINK: Use one-time MCP config with pathless kaijulab mcp over auto-spawning per-binary MCP because MCP stdio server must be launched by Claude/Codex; daemon writes active workspace pointer for shim discovery.
 [22:00:25] OBSERVE: read web/vite.config.ts
+[22:00:25] OBSERVE: read web/vite.config.ts
