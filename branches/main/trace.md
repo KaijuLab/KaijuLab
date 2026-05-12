@@ -130,3 +130,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:36:34] ACT: wrote web/src/components/TopBar.tsx
 [20:36:47] ACT: wrote web/src/components/LeftRail.tsx
 [20:36:55] ACT: wrote web/src/components/CenterWorkspace.tsx
+[20:37:18] ACT: wrote web/src/components/Inspector.tsx
