@@ -196,3 +196,4 @@ _[Checkpoint: 6a03950d — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent…]_
 ---
 
+[21:02:53] THINK: Advanced workstation strategy: prioritize evidence graph, typed context packs, dynamic trace ingestion, type recovery, diffing, and reviewable agent mutations over more generic one-off tools.
