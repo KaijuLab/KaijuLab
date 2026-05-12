@@ -256,3 +256,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] OBSERVE: listed files under src
 [21:53:16] OBSERVE: searched web/src for "src"
 [21:53:16] OBSERVE: searched src for "agent_bridge|NotImplemented|claude|codex|Finding|findings|jobs|MCP|tool_definitions|dispatch|patch|semantic|similar|taint|slice"
+[21:53:16] OBSERVE: listed files under src
