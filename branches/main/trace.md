@@ -100,3 +100,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:29:32] ACT: wrote src/mcp/resources.rs
 [20:29:58] ACT: wrote src/mcp/server.rs
 [20:30:12] ACT: wrote src/agent_bridge/mod.rs
+[20:30:23] ACT: wrote src/agent_bridge/scope.rs
