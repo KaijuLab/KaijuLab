@@ -241,3 +241,9 @@ _[Checkpoint: 6a039cc4 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:43:39] OBSERVE: read src/tools.rs
 [21:43:45] OBSERVE: read src/core/analysis.rs
 [21:43:57] OBSERVE: read src/tools.rs
+
+
+---
+_[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/hooks/useEventStream.ts; added WorkspaceRegistry + path picker / dra…]_
+---
+
