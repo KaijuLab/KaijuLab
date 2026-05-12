@@ -221,3 +221,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:08:49] ACT: wrote web/src/App.tsx
 [21:08:58] ACT: wrote web/src/components/TopBar.tsx
 [21:09:02] ACT: edited web/src/hooks/useEventStream.ts
+[21:12:48] ACT: added WorkspaceRegistry + path picker / drag-drop. AppState.workspace → AppState.registry. New endpoints: GET/POST/DELETE /api/workspaces, POST /api/workspaces/upload (multipart), GET /api/workspaces/recent. main.rs: serve file arg now Option<PathBuf>. UI: OpenBinary picker component (path input + drag-drop zone + recent-files list) shown when no active workspace; TopBar gets a 'close' button. ~/.kaiju/recent.json maintained on every open; uploads land in ~/.kaiju/uploads/. End-to-end verified empty→open→work→close cycle.
