@@ -397,3 +397,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:14:17] OBSERVE: read src/mcp/tools.rs
 [22:14:17] OBSERVE: read src/mcp/tools.rs
 [22:14:17] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/mcp/tools.rs
+[22:14:17] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts
