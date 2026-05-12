@@ -456,3 +456,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 [22:22:28] OBSERVE: searched src for "\{|Default::default\(\)""
 [22:22:28] OBSERVE: searched src for "s\.findings|FindingStore|findings:|Project \{|Default::default\(\)"
 [22:22:28] OBSERVE: read src/mcp/resources.rs
+[22:22:28] OBSERVE: read src/mcp/resources.rs
