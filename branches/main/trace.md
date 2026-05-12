@@ -306,3 +306,4 @@ _[Checkpoint: 6a039f32 — wrote web/src/components/TopBar.tsx; edited web/src/h
 [21:53:16] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/mod.rs
 [21:53:16] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/claude.rs
 [21:53:16] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/codex.rs
+[21:53:16] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/prompts.rs
