@@ -190,3 +190,9 @@ _[Checkpoint: 6a03932a — edited .gitignore; edited .gitignore; wrote README.md
 _[Checkpoint: 6a03950d — edited README.md; wrote CLAUDE.md; purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent…]_
+---
+
