@@ -80,3 +80,30 @@ tempfile = "3"
 
 # POSIX process group control (run_python isolation)
 libc = "0.2"
+
+# ── Web / MCP stack ───────────────────────────────────────────────────────────
+
+# HTTP server
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tower = "0.4"
+
+# Embed web/dist into the binary in release builds
+include_dir = "0.7"
+
+# UUIDs for job/finding/event IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# TypeScript bindings generator (for Rust ↔ web shared types)
+ts-rs = { version = "10" }
+
+# Concurrent maps for in-memory caches
+dashmap = "6"
+
+# Path-based hashing (workspace identifier for sockets)
+sha2 = "0.10"
+hex = "0.4"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

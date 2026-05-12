@@ -1,12 +1,17 @@
 mod agent;
+mod agent_bridge;
 pub mod arch;
 mod config;
+pub mod core;
 pub mod decompiler;
 pub mod dwarf;
 pub mod hashdb;
+mod ipc;
 mod llm;
+mod mcp;
 pub mod plugin;
 pub mod project;
+mod server;
 mod tools;
 mod tui;
 mod ui;
@@ -15,10 +20,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+
+use core::workspace::{socket_path_for, WritePolicy, Workspace};
 
 use config::{BackendConfig, BackendKind, KaijuConfig};
 use llm::LlmBackend;
@@ -30,6 +37,11 @@ use llm::LlmBackend;
     version
 )]
 struct Cli {
+    /// New mode subcommand.  When omitted, falls through to the legacy
+    /// TUI / LLM-driven workflow described by the flat flags below.
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     // ── Backend selection ──────────────────────────────────────────────────────
 
     /// LLM backend to use: gemini, openai, anthropic, ollama, none
@@ -100,9 +112,68 @@ struct Cli {
     plugin: Option<String>,
 }
 
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the local web workbench daemon.  Opens a browser-driven RE
+    /// workspace and exposes a Unix socket for the `mcp` shim.
+    Serve {
+        /// Binary to load on startup.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+
+        /// Address to bind. Default: 127.0.0.1:7878.  Use `0.0.0.0` only
+        /// alongside `--token` for remote access.
+        #[arg(long, default_value = "127.0.0.1:7878")]
+        bind: String,
+
+        /// Bearer token required by all API calls and WebSocket upgrades when
+        /// bound to a non-loopback interface.
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Enable the `patch_bytes` MCP tool.
+        #[arg(long)]
+        allow_patch: bool,
+
+        /// Enable the `run_binary` MCP tool.
+        #[arg(long)]
+        allow_exec: bool,
+    },
+    /// Run an MCP stdio shim that attaches to a running `serve` daemon for
+    /// the same binary, or runs standalone if none is found.
+    Mcp {
+        /// Binary identifying the workspace.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+    /// One-shot analysis: load the binary, emit a JSON summary to stdout, and
+    /// exit.  Replaces the deprecated `--headless` flag.
+    Analyze {
+        /// Binary to analyse.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // ── New mode subcommands (web/MCP era) ───────────────────────────────────
+    if let Some(cmd) = &cli.command {
+        init_tracing();
+        return match cmd {
+            Commands::Serve {
+                file,
+                bind,
+                token,
+                allow_patch,
+                allow_exec,
+            } => run_serve(file.clone(), bind.clone(), token.clone(), *allow_patch, *allow_exec).await,
+            Commands::Mcp { file } => run_mcp(file.clone()).await,
+            Commands::Analyze { file } => run_analyze(file.clone()).await,
+        };
+    }
 
     // Load (or create) ~/.kaiju/config.toml
     KaijuConfig::write_default_if_missing();
@@ -1102,4 +1173,67 @@ fn build_backend(cfg: &BackendConfig) -> Result<Box<dyn LlmBackend>> {
             Ok(Box::new(b))
         }
     }
+}
+
+// ─── New mode handlers (web / MCP / analyze) ─────────────────────────────────
+
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt().with_env_filter(filter).with_target(false).try_init();
+}
+
+async fn run_serve(
+    file: PathBuf,
+    bind: String,
+    token: Option<String>,
+    allow_patch: bool,
+    allow_exec: bool,
+) -> Result<()> {
+    let policy = WritePolicy {
+        allow_patch,
+        allow_exec,
+    };
+    let workspace = Workspace::open(&file, policy)?;
+    let bus = core::EventBus::new(1024);
+
+    // Bring up the per-workspace Unix socket so any `kaijulab mcp` shim
+    // launched against the same binary attaches to this daemon.
+    let socket = socket_path_for(workspace.workspace_hash())?;
+    if let Err(e) = ipc::spawn_server(socket.clone(), workspace.clone(), bus.clone()) {
+        tracing::warn!("ipc socket disabled: {}", e);
+    }
+
+    let addr: std::net::SocketAddr = bind
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid --bind '{}': {}", bind, e))?;
+
+    server::serve(workspace, bus, addr, token).await
+}
+
+async fn run_mcp(file: PathBuf) -> Result<()> {
+    // MCP shim writes are persisted; binary-changing tools (`patch_bytes`,
+    // `run_binary`) are still gated by the workspace's WritePolicy.  When the
+    // shim attaches to a running daemon, the daemon's policy applies; in
+    // standalone mode the shim defaults to deny.
+    let policy = WritePolicy {
+        allow_patch: false,
+        allow_exec: false,
+    };
+    mcp::run(file, policy).await
+}
+
+async fn run_analyze(file: PathBuf) -> Result<()> {
+    let workspace = Workspace::open(&file, WritePolicy::default())?;
+    let info = core::analysis::file_info(&workspace).unwrap_or_default();
+    let functions = core::analysis::list_functions(&workspace, true).unwrap_or_default();
+    let parsed_fns: serde_json::Value =
+        serde_json::from_str(&functions).unwrap_or(serde_json::Value::String(functions));
+    let out = serde_json::json!({
+        "workspace": workspace.info(),
+        "file_info": info,
+        "functions": parsed_fns,
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
 }
