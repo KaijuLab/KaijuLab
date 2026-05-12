@@ -13,12 +13,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use ts_rs::TS;
 
-use crate::core::{
-    analysis,
-    events::Source,
-    findings::{CreateFinding, UpdateFinding},
-    project_store,
-    workspace::{read_recent, socket_path_for, Workspace},
+use crate::{
+    agent_bridge::{
+        claude::ClaudeAdapter,
+        codex::CodexAdapter,
+        prompts::{report_section_prompt, triage_prompt, yara_prompt, TriageOutput},
+        scope::{ContextPack, Target as AgentTarget},
+        WritePolicy as AgentWritePolicy,
+    },
+    core::{
+        analysis,
+        events::Source,
+        findings::{CreateFinding, CreatedBy, Evidence, FindingKind, Severity, UpdateFinding},
+        project_store,
+        workspace::{read_recent, socket_path_for, Workspace},
+    },
 };
 
 use super::AppState;
@@ -55,6 +64,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/findings", get(list_findings).post(create_finding))
         .route("/api/findings/:id", get(get_finding).patch(update_finding))
         .route("/api/scans/vuln", post(start_vuln_scan))
+        .route("/api/agents/:agent/run", post(run_agent))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/:id", get(get_job))
         .route("/api/jobs/:id/cancel", post(cancel_job))
@@ -123,9 +133,11 @@ async fn upload_workspace(
 ) -> Result<Json<Value>, ApiError> {
     let mut filename: Option<String> = None;
     let mut bytes: Option<Vec<u8>> = None;
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        ApiError::bad_request(format!("multipart: {}", e))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::bad_request(format!("multipart: {}", e)))?
+    {
         if field.name() == Some("file") {
             filename = field.file_name().map(|s| s.to_string());
             let data = field
@@ -135,8 +147,7 @@ async fn upload_workspace(
             bytes = Some(data.to_vec());
         }
     }
-    let filename =
-        filename.ok_or_else(|| ApiError::bad_request("missing file field"))?;
+    let filename = filename.ok_or_else(|| ApiError::bad_request("missing file field"))?;
     let bytes = bytes.ok_or_else(|| ApiError::bad_request("empty upload"))?;
 
     let upload_dir: PathBuf = {
@@ -173,10 +184,7 @@ async fn activate_workspace(
     }
 }
 
-async fn close_workspace(
-    State(s): State<AppState>,
-    Path(hash): Path<String>,
-) -> Json<Value> {
+async fn close_workspace(State(s): State<AppState>, Path(hash): Path<String>) -> Json<Value> {
     let removed = s.registry.close(&hash);
     Json(json!({ "removed": removed }))
 }
@@ -427,8 +435,7 @@ async fn post_rename(
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::rename_function(&ws, &s.events, v, &req.name, src)
-        .map_err(ApiError::from)?;
+    project_store::rename_function(&ws, &s.events, v, &req.name, src).map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -452,8 +459,7 @@ async fn post_comment(
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::add_comment(&ws, &s.events, v, &req.text, src)
-        .map_err(ApiError::from)?;
+    project_store::add_comment(&ws, &s.events, v, &req.text, src).map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -478,8 +484,8 @@ async fn post_note(
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    let note = project_store::add_note(&ws, &s.events, &req.text, v, src)
-        .map_err(ApiError::from)?;
+    let note =
+        project_store::add_note(&ws, &s.events, &req.text, v, src).map_err(ApiError::from)?;
     Ok(Json(json!({
         "id": note.id,
         "timestamp": note.timestamp,
@@ -516,8 +522,7 @@ async fn post_vuln_score(
         .as_deref()
         .map(Source::from_str_or_user)
         .unwrap_or(Source::User);
-    project_store::set_vuln_score(&ws, &s.events, v, req.score, src)
-        .map_err(ApiError::from)?;
+    project_store::set_vuln_score(&ws, &s.events, v, req.score, src).map_err(ApiError::from)?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -537,10 +542,7 @@ async fn get_finding(
         .ok_or_else(|| ApiError::not_found("finding not found"))
 }
 
-async fn create_finding(
-    State(s): State<AppState>,
-    Json(req): Json<CreateFinding>,
-) -> Json<Value> {
+async fn create_finding(State(s): State<AppState>, Json(req): Json<CreateFinding>) -> Json<Value> {
     use crate::core::events::{now_ts, Event};
     let kind_str = serde_json::to_string(&req.kind).unwrap_or_else(|_| "custom".into());
     let sev_str = serde_json::to_string(&req.severity).unwrap_or_else(|_| "info".into());
@@ -563,9 +565,12 @@ async fn update_finding(
     Json(req): Json<UpdateFinding>,
 ) -> Result<Json<Value>, ApiError> {
     use crate::core::events::{now_ts, Event};
-    let status_str = req
-        .status
-        .map(|st| serde_json::to_string(&st).unwrap_or_default().trim_matches('"').to_string());
+    let status_str = req.status.map(|st| {
+        serde_json::to_string(&st)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string()
+    });
     let owner_clone = req.owner.clone();
     let f = s
         .findings
@@ -597,15 +602,15 @@ async fn start_vuln_scan(
     let (job_id, _token) = s.jobs.register(JobKind::ScanVuln);
     let runner = s.jobs.clone();
     let id_for_task = job_id.0.clone();
-    tokio::task::spawn_blocking(move || {
-        match analysis::scan_vulnerabilities(&ws, req.max_fns) {
+    tokio::task::spawn_blocking(
+        move || match analysis::scan_vulnerabilities(&ws, req.max_fns) {
             Ok(text) => runner.finish(
                 &crate::core::jobs::JobId(id_for_task),
                 Some(format!("{} chars", text.len())),
             ),
             Err(e) => runner.fail(&crate::core::jobs::JobId(id_for_task), e.to_string()),
-        }
-    });
+        },
+    );
     Ok(Json(json!({ "job_id": job_id.0 })))
 }
 
@@ -626,6 +631,242 @@ async fn get_job(
 async fn cancel_job(State(s): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     let cancelled = s.jobs.cancel(&id);
     Json(json!({ "cancelled": cancelled }))
+}
+
+// ─── Agent bridge ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../web/src/types/")]
+pub enum AgentRunKind {
+    Triage,
+    ReportSection,
+    Yara,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[ts(export, export_to = "../web/src/types/")]
+pub struct AgentRunRequest {
+    pub kind: AgentRunKind,
+    pub vaddr: String,
+    #[serde(default)]
+    pub write_policy: Option<AgentWritePolicy>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../web/src/types/")]
+pub struct AgentRunResponse {
+    pub agent: String,
+    pub kind: String,
+    pub job_id: String,
+    pub text: String,
+    pub created_finding_id: Option<String>,
+    pub applied: bool,
+}
+
+async fn run_agent(
+    State(s): State<AppState>,
+    Path(agent): Path<String>,
+    Json(req): Json<AgentRunRequest>,
+) -> Result<Json<AgentRunResponse>, ApiError> {
+    use crate::core::jobs::{JobId, JobKind};
+
+    let ws = active(&s)?;
+    let vaddr = parse_vaddr(&req.vaddr)?;
+    let source = match agent.as_str() {
+        "claude" => Source::Claude,
+        "codex" => Source::Codex,
+        _ => return Err(ApiError::bad_request("agent must be claude or codex")),
+    };
+    let write_policy = req.write_policy.unwrap_or(AgentWritePolicy::Suggest);
+    let pack = build_context_pack(&ws, vaddr, write_policy)?;
+    let prompt = match req.kind {
+        AgentRunKind::Triage => triage_prompt(&pack),
+        AgentRunKind::ReportSection => report_section_prompt(&pack),
+        AgentRunKind::Yara => yara_prompt(&pack),
+    };
+
+    let (job_id, _token) = s.jobs.register(JobKind::AgentBridge);
+    let job = JobId(job_id.0.clone());
+    let result = match agent.as_str() {
+        "claude" => ClaudeAdapter::default().run(&prompt, &pack).await,
+        "codex" => CodexAdapter::default().run(&prompt, &pack).await,
+        _ => unreachable!(),
+    };
+
+    match result {
+        Ok(text) => {
+            let mut created_finding_id = None;
+            let mut applied = false;
+            if matches!(req.kind, AgentRunKind::Triage) {
+                if let Ok(parsed) = parse_triage_output(&text) {
+                    let finding = create_agent_triage_finding(&s, &parsed, vaddr, &agent, source);
+                    created_finding_id = Some(finding.id.clone());
+                    if write_policy == AgentWritePolicy::Apply {
+                        apply_triage_suggestions(&ws, &s, &parsed, vaddr, source)?;
+                        applied = true;
+                    }
+                }
+            }
+            s.jobs.finish(&job, Some(format!("{} chars", text.len())));
+            Ok(Json(AgentRunResponse {
+                agent,
+                kind: format!("{:?}", req.kind),
+                job_id: job_id.0,
+                text,
+                created_finding_id,
+                applied,
+            }))
+        }
+        Err(e) => {
+            s.jobs.fail(&job, e.to_string());
+            Err(ApiError::internal(e.to_string()))
+        }
+    }
+}
+
+fn build_context_pack(
+    ws: &Workspace,
+    vaddr: u64,
+    write_policy: AgentWritePolicy,
+) -> Result<ContextPack, ApiError> {
+    let function_context = analysis::function_context(ws, vaddr).unwrap_or_else(|e| e.to_string());
+    let project = ws.with_project(|p| {
+        json!({
+            "renames": p.renames,
+            "comments": p.comments,
+            "vuln_scores": p.vuln_scores,
+            "notes": p.notes,
+        })
+    });
+    Ok(ContextPack {
+        workspace_summary: format!("{} ({})", ws.info().display_name, ws.binary_path_str()),
+        target: AgentTarget::Function {
+            vaddr: format!("0x{:x}", vaddr),
+        },
+        annotations: json!({
+            "function_context": function_context,
+            "project": project,
+        }),
+        prior_findings: Vec::new(),
+        allowed_tools: vec![
+            "file_info".into(),
+            "list_functions".into(),
+            "disassemble".into(),
+            "decompile".into(),
+            "function_context".into(),
+            "xrefs_to".into(),
+            "create_finding".into(),
+        ],
+        write_policy,
+        output_schema: json!({
+            "type": "object",
+            "properties": {
+                "severity": { "type": "string" },
+                "rationale": { "type": "string" },
+                "suggested_name": { "type": ["string", "null"] },
+                "suggested_comments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "vaddr": { "type": "string" },
+                            "text": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }),
+    })
+}
+
+fn parse_triage_output(text: &str) -> Result<TriageOutput, serde_json::Error> {
+    if let Ok(v) = serde_json::from_str::<TriageOutput>(text.trim()) {
+        return Ok(v);
+    }
+    let start = text.find('{').unwrap_or(0);
+    let end = text.rfind('}').map(|i| i + 1).unwrap_or(text.len());
+    serde_json::from_str(&text[start..end])
+}
+
+fn create_agent_triage_finding(
+    s: &AppState,
+    parsed: &TriageOutput,
+    vaddr: u64,
+    agent: &str,
+    source: Source,
+) -> crate::core::Finding {
+    use crate::core::events::{now_ts, Event};
+
+    let severity = severity_from_str(&parsed.severity);
+    let f = s.findings.create(CreateFinding {
+        kind: FindingKind::Vuln,
+        severity,
+        vaddr: Some(format!("0x{:x}", vaddr)),
+        rule: format!("{}_triage", agent),
+        rationale: parsed.rationale.clone(),
+        evidence: vec![
+            Evidence::Decompile {
+                vaddr: format!("0x{:x}", vaddr),
+            },
+            Evidence::Disasm {
+                vaddr: format!("0x{:x}", vaddr),
+                length: 256,
+            },
+        ],
+        suggested_actions: parsed
+            .suggested_comments
+            .iter()
+            .map(|c| format!("comment {}: {}", c.vaddr, c.text))
+            .collect(),
+        created_by: CreatedBy::Agent {
+            agent: agent.to_string(),
+        },
+    });
+    let sev_str = serde_json::to_string(&severity).unwrap_or_else(|_| "info".into());
+    s.events.emit(Event::FindingCreated {
+        id: f.id.clone(),
+        kind: "vuln".into(),
+        severity: sev_str.trim_matches('"').to_string(),
+        vaddr: f.vaddr.clone(),
+        rule: f.rule.clone(),
+        source,
+        ts: now_ts(),
+    });
+    f
+}
+
+fn apply_triage_suggestions(
+    ws: &Workspace,
+    s: &AppState,
+    parsed: &TriageOutput,
+    target_vaddr: u64,
+    source: Source,
+) -> Result<(), ApiError> {
+    if let Some(name) = parsed
+        .suggested_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        project_store::rename_function(ws, &s.events, target_vaddr, name, source)
+            .map_err(ApiError::from)?;
+    }
+    for comment in &parsed.suggested_comments {
+        let v = parse_vaddr(&comment.vaddr)?;
+        project_store::add_comment(ws, &s.events, v, &comment.text, source)
+            .map_err(ApiError::from)?;
+    }
+    Ok(())
+}
+
+fn severity_from_str(s: &str) -> Severity {
+    match s.to_lowercase().as_str() {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "med" | "medium" => Severity::Med,
+        "low" => Severity::Low,
+        _ => Severity::Info,
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

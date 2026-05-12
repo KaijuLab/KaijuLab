@@ -1,6 +1,8 @@
-//! `codex exec --json` adapter (skeleton).  See claude.rs for status.
+//! `codex exec --json` adapter for schema-bound, non-interactive bridge jobs.
 
-use anyhow::{anyhow, Result};
+use std::time::Duration;
+
+use anyhow::Result;
 
 use super::scope::ContextPack;
 
@@ -11,9 +13,31 @@ pub struct CodexAdapter {
 }
 
 impl CodexAdapter {
-    pub async fn run(&self, _prompt: &str, _pack: &ContextPack) -> Result<String> {
-        Err(anyhow!(
-            "codex bridge not yet implemented; configure `codex` CLI and pass --enable-bridge to serve"
-        ))
+    pub async fn run(&self, prompt: &str, pack: &ContextPack) -> Result<String> {
+        let full_prompt = bridge_prompt(prompt, pack);
+        let timeout = Duration::from_secs(super::timeout_secs(180, self.timeout_secs));
+        let out = super::run_with_stdin(
+            self.binary.as_ref(),
+            "codex",
+            &[
+                "exec",
+                "--json",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "-",
+            ],
+            &full_prompt,
+            timeout,
+        )
+        .await?;
+        Ok(super::final_text_from_jsonish(&out))
     }
+}
+
+fn bridge_prompt(prompt: &str, pack: &ContextPack) -> String {
+    format!(
+        "{prompt}\n\nContext pack JSON:\n{}\n\nReturn only the requested output shape.",
+        serde_json::to_string_pretty(pack).unwrap_or_default()
+    )
 }

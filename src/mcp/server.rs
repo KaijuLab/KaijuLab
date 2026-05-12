@@ -64,12 +64,22 @@ pub struct ProxyBackend {
     client: IpcClient,
     /// Workspace kept around so we can answer trivial questions if the daemon
     /// is briefly unreachable.
-    workspace: Workspace,
+    workspace: Option<Workspace>,
 }
 
 impl ProxyBackend {
     pub fn new(client: IpcClient, workspace: Workspace) -> Self {
-        ProxyBackend { client, workspace }
+        ProxyBackend {
+            client,
+            workspace: Some(workspace),
+        }
+    }
+
+    pub fn active(client: IpcClient) -> Self {
+        ProxyBackend {
+            client,
+            workspace: None,
+        }
     }
 }
 
@@ -104,7 +114,13 @@ impl McpBackend for ProxyBackend {
         // Prefer the daemon's view; fall back to local on error.
         match self.client.request(IpcOp::WorkspaceInfo).await {
             Ok(v) => Ok(v),
-            Err(_) => Ok(serde_json::to_value(self.workspace.info())?),
+            Err(e) => {
+                if let Some(workspace) = &self.workspace {
+                    Ok(serde_json::to_value(workspace.info())?)
+                } else {
+                    Err(e)
+                }
+            }
         }
     }
 }

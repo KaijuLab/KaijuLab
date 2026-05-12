@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::core::workspace::{socket_path_for, WritePolicy, Workspace};
+use crate::core::workspace::{read_active_workspace, socket_path_for, WritePolicy, Workspace};
 
 pub async fn run(binary_path: PathBuf, policy: WritePolicy) -> Result<()> {
     let workspace = Workspace::open(&binary_path, policy)?;
@@ -43,4 +43,23 @@ pub async fn run(binary_path: PathBuf, policy: WritePolicy) -> Result<()> {
     };
 
     server::run_stdio(backend).await
+}
+
+pub async fn run_active() -> Result<()> {
+    let active = read_active_workspace()?;
+    let socket = PathBuf::from(&active.socket_path);
+    if !socket.exists() {
+        anyhow::bail!(
+            "active KaijuLab workspace socket is not available: {}. Open a binary in the web UI first.",
+            socket.display()
+        );
+    }
+
+    let client = crate::ipc::socket::IpcClient::connect(&socket).await?;
+    tracing::info!(
+        "mcp: connected to active daemon workspace {} at {}",
+        active.workspace_hash,
+        socket.display()
+    );
+    server::run_stdio(Box::new(server::ProxyBackend::active(client))).await
 }

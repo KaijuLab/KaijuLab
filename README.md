@@ -27,22 +27,21 @@ cargo build --release
 cd web && npm install && npm run build && cd ..
 cargo build --release   # rebuild so web/dist gets embedded into the binary
 
-# 2. Launch the workbench
-./target/release/kaijulab serve /path/to/binary
+# 2. Launch the workbench; open or drag-drop a binary in the browser
+./target/release/kaijulab serve
 #  → open http://127.0.0.1:7878 in your browser
 
-# 3. In another terminal, point Claude Code at the same workspace
-./target/release/kaijulab mcp /path/to/binary
-#  → Claude Code's MCP config sees `kaijulab` as a server; analysis happens
-#    in your normal Claude session, results appear live in the browser.
+# 3. Configure Claude Code / Codex once to launch the MCP shim
+./target/release/kaijulab mcp
+#  → the shim attaches to the active workspace last opened by the web UI.
 ```
 
 ## Modes
 
 | Mode | Command | Purpose |
 |---|---|---|
-| **Workbench daemon** | `kaijulab serve <FILE>` | Run the local web UI + MCP-over-IPC daemon |
-| **MCP stdio shim** | `kaijulab mcp <FILE>` | Attach Claude Code / Codex to a running daemon |
+| **Workbench daemon** | `kaijulab serve [FILE]` | Run the local web UI + MCP-over-IPC daemon |
+| **MCP stdio shim** | `kaijulab mcp [FILE]` | Attach Claude Code / Codex to the active daemon workspace, or a specific binary |
 | **One-shot analyze** | `kaijulab analyze <FILE>` | Print a JSON summary to stdout and exit |
 | **Run a Rhai plugin** | `kaijulab plugin <NAME> [FILE]` | Execute a `.rhai` script from `~/.kaiju/plugins/` |
 
@@ -66,13 +65,15 @@ Defaults to `127.0.0.1` only. For remote access, bind a non-loopback address and
 ### `mcp` — the stdio shim
 
 ```bash
-kaijulab mcp foo.bin
+kaijulab mcp          # attach to the active workspace opened by the web UI
+kaijulab mcp foo.bin  # attach to that binary's daemon, or run standalone
 ```
 
 A minimal Model Context Protocol server over stdio. Implements
 `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`.
 
-- If a `serve` daemon is running for the same binary, the shim **proxies all calls to the daemon** — same in-memory caches, same project state, same event bus. Claude's writes fire WebSocket events that the browser sees instantly.
+- With no `FILE`, the shim reads `~/.kaiju/run/active.json` and attaches to the workspace most recently opened or activated in the web UI.
+- If a `serve` daemon is running for the selected binary, the shim **proxies all calls to the daemon** — same in-memory caches, same project state, same event bus. Claude's writes fire WebSocket events that the browser sees instantly.
 - If no daemon is running, the shim runs standalone with its own state.
 
 Example Claude Code MCP config snippet:
@@ -82,7 +83,7 @@ Example Claude Code MCP config snippet:
   "mcpServers": {
     "kaijulab": {
       "command": "/path/to/kaijulab",
-      "args": ["mcp", "/path/to/binary"]
+      "args": ["mcp"]
     }
   }
 }

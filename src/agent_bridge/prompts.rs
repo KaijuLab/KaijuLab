@@ -1,10 +1,10 @@
 //! Schema-bound prompt templates for the three permitted bridge jobs.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::scope::ContextPack;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriageOutput {
     pub severity: String,
     pub rationale: String,
@@ -12,7 +12,7 @@ pub struct TriageOutput {
     pub suggested_comments: Vec<SuggestedComment>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuggestedComment {
     pub vaddr: String,
     pub text: String,

@@ -1,10 +1,8 @@
-//! `claude -p --output-format=stream-json` adapter (skeleton).
-//!
-//! The full implementation parses streaming JSON, captures session IDs for
-//! retry/continue, and emits `agent.delta` events.  PR #1 wires the interface
-//! and returns a NotImplemented stub so the REST endpoint shape is locked in.
+//! `claude -p` adapter for schema-bound, non-interactive bridge jobs.
 
-use anyhow::{anyhow, Result};
+use std::time::Duration;
+
+use anyhow::Result;
 
 use super::scope::ContextPack;
 
@@ -16,9 +14,31 @@ pub struct ClaudeAdapter {
 }
 
 impl ClaudeAdapter {
-    pub async fn run(&self, _prompt: &str, _pack: &ContextPack) -> Result<String> {
-        Err(anyhow!(
-            "claude bridge not yet implemented; configure `claude` CLI and pass --enable-bridge to serve"
-        ))
+    pub async fn run(&self, prompt: &str, pack: &ContextPack) -> Result<String> {
+        let full_prompt = bridge_prompt(prompt, pack);
+        let timeout = Duration::from_secs(super::timeout_secs(120, self.timeout_secs));
+        let out = super::run_with_stdin(
+            self.binary.as_ref(),
+            "claude",
+            &[
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--include-partial-messages",
+                "--permission-mode",
+                "dontAsk",
+            ],
+            &full_prompt,
+            timeout,
+        )
+        .await?;
+        Ok(super::final_text_from_jsonish(&out))
     }
+}
+
+fn bridge_prompt(prompt: &str, pack: &ContextPack) -> String {
+    format!(
+        "{prompt}\n\nContext pack JSON:\n{}\n\nReturn only the requested output shape.",
+        serde_json::to_string_pretty(pack).unwrap_or_default()
+    )
 }

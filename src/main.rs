@@ -62,9 +62,10 @@ enum Commands {
     /// Run an MCP stdio shim that attaches to a running `serve` daemon for
     /// the same binary, or runs standalone if none is found.
     Mcp {
-        /// Binary identifying the workspace.
+        /// Binary identifying the workspace. If omitted, attach to the active
+        /// workspace most recently opened by the web daemon.
         #[arg(value_name = "FILE")]
-        file: PathBuf,
+        file: Option<PathBuf>,
     },
 
     /// One-shot analysis: load the binary, emit a JSON summary to stdout,
@@ -145,7 +146,10 @@ async fn run_serve(
     server::serve(registry, bus, addr, token).await
 }
 
-async fn run_mcp(file: PathBuf) -> Result<()> {
+async fn run_mcp(file: Option<PathBuf>) -> Result<()> {
+    let Some(file) = file else {
+        return mcp::run_active().await;
+    };
     // Standalone MCP defaults to deny for binary-mutating tools.  When the
     // shim attaches to a daemon, the daemon's WritePolicy applies instead.
     let policy = WritePolicy {

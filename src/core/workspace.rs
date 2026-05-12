@@ -45,6 +45,14 @@ pub struct WorkspaceInfo {
     pub allow_exec: bool,
 }
 
+/// Runtime pointer consumed by `kaijulab mcp` when no binary path is passed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveWorkspace {
+    pub workspace_hash: String,
+    pub binary_path: String,
+    pub socket_path: String,
+}
+
 impl Workspace {
     pub fn open(path: impl AsRef<Path>, policy: WritePolicy) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -135,6 +143,36 @@ pub fn socket_path_for(hash: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{}.sock", hash)))
 }
 
+pub fn active_workspace_path() -> Result<PathBuf> {
+    Ok(runtime_dir()?.join("active.json"))
+}
+
+pub fn read_active_workspace() -> Result<ActiveWorkspace> {
+    let path = active_workspace_path()?;
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("read active workspace {}", path.display()))?;
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn write_active_workspace(ws: &Workspace) -> Result<()> {
+    let active = ActiveWorkspace {
+        workspace_hash: ws.workspace_hash().to_string(),
+        binary_path: ws.binary_path_str(),
+        socket_path: socket_path_for(ws.workspace_hash())?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let path = active_workspace_path()?;
+    std::fs::write(path, serde_json::to_string_pretty(&active)?)?;
+    Ok(())
+}
+
+fn clear_active_workspace() {
+    if let Ok(path) = active_workspace_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 // ─── Workspace registry ──────────────────────────────────────────────────────
 
 /// Holds every workspace the daemon has opened, plus a server-wide notion of
@@ -189,6 +227,7 @@ impl WorkspaceRegistry {
         let path_str = entry.binary_path_str();
         drop(g);
         let _ = append_recent(&path_str);
+        let _ = write_active_workspace(&entry);
         Ok(entry)
     }
 
@@ -197,6 +236,17 @@ impl WorkspaceRegistry {
         let removed = g.workspaces.remove(hash).is_some();
         if g.active.as_deref() == Some(hash) {
             g.active = g.workspaces.keys().next().cloned();
+        }
+        let next_active = g
+            .active
+            .as_deref()
+            .and_then(|h| g.workspaces.get(h))
+            .cloned();
+        drop(g);
+        if let Some(ws) = next_active {
+            let _ = write_active_workspace(&ws);
+        } else {
+            clear_active_workspace();
         }
         // Tear down the per-workspace socket file (the listener task exits
         // because the listener was bound to a path that no longer exists once
@@ -212,6 +262,11 @@ impl WorkspaceRegistry {
         let mut g = self.inner.write().unwrap();
         if g.workspaces.contains_key(hash) {
             g.active = Some(hash.to_string());
+            let ws = g.workspaces.get(hash).cloned();
+            drop(g);
+            if let Some(ws) = ws {
+                let _ = write_active_workspace(&ws);
+            }
             true
         } else {
             false

@@ -26,6 +26,19 @@ export interface FunctionEntry {
   size?: number;
 }
 
+export type AgentName = 'claude' | 'codex';
+export type AgentRunKind = 'triage' | 'report_section' | 'yara';
+export type AgentWritePolicy = 'suggest' | 'apply' | 'none';
+
+export interface AgentRunResponse {
+  agent: string;
+  kind: string;
+  job_id: string;
+  text: string;
+  created_finding_id?: string | null;
+  applied: boolean;
+}
+
 async function jget<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -92,6 +105,17 @@ export const api = {
     jpost('/api/project/notes', { text, vaddr, source: 'user' }),
   setVulnScore: (vaddr: string, score: number) =>
     jpost('/api/project/vuln-scores', { vaddr, score, source: 'user' }),
+  runAgent: (
+    agent: AgentName,
+    kind: AgentRunKind,
+    vaddr: string,
+    write_policy: AgentWritePolicy = 'suggest',
+  ) =>
+    jpost<AgentRunResponse>(`/api/agents/${agent}/run`, {
+      kind,
+      vaddr,
+      write_policy,
+    }),
   paletteExec: (input: string, current_vaddr?: string) =>
     jpost<PaletteResult>('/api/palette/exec', { input, current_vaddr }),
 };

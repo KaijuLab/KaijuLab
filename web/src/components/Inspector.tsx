@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api } from '../api';
+import { AgentName, api } from '../api';
 import { useStore } from '../state';
 
 export function Inspector() {
@@ -7,6 +7,8 @@ export function Inspector() {
   const [editingName, setEditingName] = useState<string>('');
   const [commentDraft, setCommentDraft] = useState<string>('');
   const [scoreDraft, setScoreDraft] = useState<string>('');
+  const [agentBusy, setAgentBusy] = useState<AgentName | null>(null);
+  const [agentResult, setAgentResult] = useState<string>('');
 
   const currentName = useMemo(() => {
     if (!selectedVaddr) return '';
@@ -57,6 +59,28 @@ export function Inspector() {
       const n = Math.min(10, Math.max(0, parseInt(scoreDraft, 10)));
       api.setVulnScore(selectedVaddr, n).catch(() => {});
       setScoreDraft('');
+    }
+  };
+
+  const runTriage = async (agent: AgentName) => {
+    if (!selectedVaddr) return;
+    setAgentBusy(agent);
+    setAgentResult('');
+    try {
+      const result = await api.runAgent(agent, 'triage', selectedVaddr, 'suggest');
+      setAgentResult(
+        [
+          `${result.agent} ${result.kind}`,
+          result.created_finding_id ? `finding: ${result.created_finding_id}` : '',
+          result.text,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      );
+    } catch (e) {
+      setAgentResult(String(e));
+    } finally {
+      setAgentBusy(null);
     }
   };
 
@@ -127,6 +151,31 @@ export function Inspector() {
           </div>
         ))}
         <NoteAdder vaddr={selectedVaddr} />
+      </Section>
+
+      <Section title="Agent triage">
+        <div className="grid grid-cols-2 gap-1">
+          <button
+            onClick={() => runTriage('claude')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-claude disabled:opacity-50"
+          >
+            Claude
+          </button>
+          <button
+            onClick={() => runTriage('codex')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-codex disabled:opacity-50"
+          >
+            Codex
+          </button>
+        </div>
+        {agentBusy && <div className="mt-2 text-xs text-kaiju-accent">{agentBusy} running...</div>}
+        {agentResult && (
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-kaiju-border bg-kaiju-bg p-2 text-[11px] leading-relaxed">
+            {agentResult}
+          </pre>
+        )}
       </Section>
     </aside>
   );

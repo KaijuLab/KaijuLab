@@ -14,9 +14,17 @@ use crate::core::{analysis, events::Source, project_store, workspace::Workspace,
 pub fn tool_definitions() -> Value {
     json!([
         // ── read tools ────────────────────────────────────────────────
-        def("file_info", "Format, arch, entry point, sections, imports.", obj_no_args()),
+        def(
+            "file_info",
+            "Format, arch, entry point, sections, imports.",
+            obj_no_args()
+        ),
         def("sections", "List binary sections.", obj_no_args()),
-        def("imports", "List imported symbols (ELF PLT or PE imports).", obj_no_args()),
+        def(
+            "imports",
+            "List imported symbols (ELF PLT or PE imports).",
+            obj_no_args()
+        ),
         def(
             "list_functions",
             "Symbol table or prologue-scan function list.",
@@ -107,6 +115,35 @@ pub fn tool_definitions() -> Value {
             })
         ),
         def(
+            "match_all_functions",
+            "Match function fingerprints against the local hash database.",
+            json!({
+                "type": "object",
+                "properties": { "max_results": { "type": "integer" } }
+            })
+        ),
+        def(
+            "lookup_function_hash",
+            "Lookup known names for a function fingerprint.",
+            json!({
+                "type": "object",
+                "properties": { "vaddr": { "type": "string" } },
+                "required": ["vaddr"]
+            })
+        ),
+        def(
+            "register_function_hash",
+            "Register a function fingerprint under a known name.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "vaddr": { "type": "string" },
+                    "name": { "type": "string" }
+                },
+                "required": ["vaddr", "name"]
+            })
+        ),
+        def(
             "search_bytes",
             "Hex byte-pattern search with `??` wildcards.",
             json!({
@@ -115,7 +152,6 @@ pub fn tool_definitions() -> Value {
                 "required": ["pattern"]
             })
         ),
-
         // ── write tools (carry implicit source=claude/codex) ──────────
         def(
             "rename_function",
@@ -177,6 +213,18 @@ pub fn tool_definitions() -> Value {
                 "required": ["vaddr", "bytes_hex"]
             })
         ),
+        def(
+            "run_binary",
+            "Execute the active binary with optional argv/stdin. Requires --allow-exec on serve.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "args": { "type": "array", "items": { "type": "string" } },
+                    "stdin": { "type": "string" },
+                    "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 30 }
+                }
+            })
+        ),
     ])
 }
 
@@ -209,12 +257,18 @@ pub fn dispatch_mcp(
         "sections" => analysis::sections(workspace),
         "imports" => analysis::imports(workspace),
         "list_functions" => {
-            let as_json = args.get("as_json").and_then(|v| v.as_bool()).unwrap_or(false);
+            let as_json = args
+                .get("as_json")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             analysis::list_functions(workspace, as_json)
         }
         "disassemble" => {
             let v = vaddr_arg(args, "vaddr")?;
-            let len = args.get("length").and_then(|v| v.as_u64()).map(|x| x as u32);
+            let len = args
+                .get("length")
+                .and_then(|v| v.as_u64())
+                .map(|x| x as u32);
             analysis::disassemble(workspace, v, len)
         }
         "decompile" => {
@@ -235,7 +289,10 @@ pub fn dispatch_mcp(
         }
         "strings_extract" => {
             let section = args.get("section").and_then(|v| v.as_str());
-            let min_len = args.get("min_len").and_then(|v| v.as_u64()).map(|x| x as u32);
+            let min_len = args
+                .get("min_len")
+                .and_then(|v| v.as_u64())
+                .map(|x| x as u32);
             analysis::strings_extract(workspace, section, min_len)
         }
         "cfg_view" => {
@@ -243,12 +300,50 @@ pub fn dispatch_mcp(
             analysis::cfg_view(workspace, v)
         }
         "callgraph" => {
-            let d = args.get("max_depth").and_then(|v| v.as_u64()).map(|x| x as u32);
+            let d = args
+                .get("max_depth")
+                .and_then(|v| v.as_u64())
+                .map(|x| x as u32);
             analysis::call_graph(workspace, d)
         }
         "scan_vulnerabilities" => {
-            let m = args.get("max_fns").and_then(|v| v.as_u64()).map(|x| x as u32);
+            let m = args
+                .get("max_fns")
+                .and_then(|v| v.as_u64())
+                .map(|x| x as u32);
             analysis::scan_vulnerabilities(workspace, m)
+        }
+        "match_all_functions" => {
+            let max_results = args
+                .get("max_results")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .min(500) as usize;
+            let result = crate::tools::dispatch(
+                "match_all_functions",
+                &json!({ "path": workspace.binary_path_str(), "max_results": max_results }),
+            );
+            Ok(result.output)
+        }
+        "lookup_function_hash" => {
+            let v = vaddr_arg(args, "vaddr")?;
+            let result = crate::tools::dispatch(
+                "lookup_function_hash",
+                &json!({ "path": workspace.binary_path_str(), "vaddr": v }),
+            );
+            Ok(result.output)
+        }
+        "register_function_hash" => {
+            let v = vaddr_arg(args, "vaddr")?;
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing name"))?;
+            let result = crate::tools::dispatch(
+                "register_function_hash",
+                &json!({ "path": workspace.binary_path_str(), "vaddr": v, "name": name }),
+            );
+            Ok(result.output)
         }
         "search_bytes" => {
             let p = args
@@ -344,7 +439,31 @@ pub fn dispatch_mcp(
                 &json!({
                     "path": workspace.binary_path_str(),
                     "vaddr": v,
-                    "bytes_hex": bytes,
+                    "hex_bytes": bytes,
+                }),
+            );
+            Ok(result.output)
+        }
+        "run_binary" => {
+            if !workspace.policy().allow_exec {
+                anyhow::bail!("run_binary blocked: daemon was started without --allow-exec");
+            }
+            let argv: Vec<String> = args
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let result = crate::tools::dispatch(
+                "run_binary",
+                &json!({
+                    "path": workspace.binary_path_str(),
+                    "args": argv,
+                    "stdin": args.get("stdin").and_then(|v| v.as_str()),
+                    "timeout_secs": args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(10),
                 }),
             );
             Ok(result.output)
@@ -365,4 +484,3 @@ fn parse_vaddr(s: &str) -> Option<u64> {
     let hex = s.trim().trim_start_matches("0x").trim_start_matches("0X");
     u64::from_str_radix(hex, 16).ok()
 }
-
