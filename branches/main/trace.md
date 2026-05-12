@@ -197,3 +197,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 ---
 
 [21:02:53] THINK: Advanced workstation strategy: prioritize evidence graph, typed context packs, dynamic trace ingestion, type recovery, diffing, and reviewable agent mutations over more generic one-off tools.
+[21:04:07] OBSERVE: read src/core/workspace.rs
