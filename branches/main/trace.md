@@ -409,3 +409,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 _[Checkpoint: 6a03a652 — Added guided professional analysis playbooks]_
 ---
 
+[22:17:28] OBSERVE: read web/src/api.ts
