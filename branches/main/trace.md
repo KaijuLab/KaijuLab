@@ -9,3 +9,4 @@
 [20:09:36] OBSERVE: read src/main.rs
 [20:09:36] OBSERVE: read src/main.rs
 [20:09:36] OBSERVE: read README.md
+[20:09:36] OBSERVE: read src/tui.rs
