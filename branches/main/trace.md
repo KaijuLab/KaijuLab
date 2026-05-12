@@ -473,3 +473,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 _[Checkpoint: 6a03a85f — Persisted findings in project database]_
 ---
 
+[22:50:17] THINK: Enforce serve --token at API router layer, leave static UI public, use bearer REST plus /api/events query token because browser WebSocket cannot set Authorization header.
