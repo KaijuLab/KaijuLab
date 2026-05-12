@@ -94,3 +94,4 @@ _[Checkpoint: 6a038af6 — edited docs/web-mcp-architecture.md; wrote docs/web-m
 [20:28:46] ACT: edited src/ipc/socket.rs
 [20:28:50] ACT: edited src/ipc/socket.rs
 [20:28:55] ACT: edited src/mcp/tools.rs
+[20:29:03] ACT: edited src/mcp/tools.rs
