@@ -1,0 +1,1 @@
+{"nodes":[{"id":"2ae06849","parent_ids":[],"kind":"THINK","content":"Prefer web-server UI + MCP/CLI adapters over TUI-only because reverse-engineering needs dense graphs/timelines and Claude/Codex already provide logged-in local agent runtimes.","timestamp":"20:09:33"}]}
