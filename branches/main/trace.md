@@ -450,3 +450,4 @@ _[Checkpoint: 6a03a6ff — Added findings board and evidence review UI]_
 [22:22:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/routes.rs
 [22:22:28] OBSERVE: searched src/server/routes.rs for "create_agent""
 [22:22:28] OBSERVE: searched routes.rs for "create_agent_triage_finding|persist_playbook_findings|s\.findings|findings::|fn create_agent"
+[22:22:28] OBSERVE: read src/server/routes.rs
