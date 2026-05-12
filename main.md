@@ -15,11 +15,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + …
 - [x] edited .gitignore; edited .gitignore; wrote README.md
 - [x] edited .gitignore; edited .gitignore; wrote README.md
+- [x] edited README.md; wrote CLAUDE.md; purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-12 21:01 UTC] `main`: edited README.md; wrote CLAUDE.md; purged legacy TUI + hosted-LLM-backend path. Deleted src/tui.rs (3865 LoC), src/agent…
 - [2026-05-12 20:52 UTC] `main`: edited .gitignore; edited .gitignore; wrote README.md
 - [2026-05-12 20:51 UTC] `main`: edited .gitignore; edited .gitignore; wrote README.md
 - [2026-05-12 20:48 UTC] `main`: implemented milestone 1: src/core (workspace/events/jobs/findings/analysis/project_store), src/server (axum REST + WS + …
