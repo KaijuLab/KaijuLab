@@ -360,3 +360,4 @@ _[Checkpoint: 6a03a15f — Implemented agent bridge and UI/MCP maturity slice]_
 _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened binaries]_
 ---
 
+[22:05:54] NOTE: Added kaijulab hook setup: writes/merges .mcp.json mcpServers.kaijulab with current executable command and args [mcp]; --output and --command overrides.
