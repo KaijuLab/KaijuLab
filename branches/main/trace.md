@@ -225,3 +225,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:12:48] THINK: kept jobs+findings shared across workspaces rather than per-workspace for v1 — simpler refactor (~200 LoC vs 600). Per-workspace scoping is a future PR. The single-active-workspace model still matches IDA's tab-of-the-moment model; multi-binary tabs can come later without changing the API shape (just add Query<WorkspaceQuery> to handlers).
 [21:32:34] OBSERVE: read src/main.rs
 [21:32:34] OBSERVE: read README.md
+[21:32:41] OBSERVE: read web/src/App.tsx
