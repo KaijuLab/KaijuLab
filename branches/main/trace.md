@@ -210,3 +210,4 @@ _[Checkpoint: 6a039543 — edited README.md; wrote CLAUDE.md; purged legacy TUI 
 [21:06:50] ACT: wrote src/server/palette.rs
 [21:06:56] ACT: edited src/server/ws.rs
 [21:07:08] ACT: edited src/main.rs
+[21:07:12] ACT: edited src/main.rs
