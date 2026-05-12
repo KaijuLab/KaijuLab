@@ -373,3 +373,4 @@ _[Checkpoint: 6a03a30a — Added active-workspace MCP discovery for web-opened b
 [22:05:54] OBSERVE: searched README.md for "hook|mcpServers|Modes|mcp"
 [22:05:54] OBSERVE: read README.md
 [22:05:54] OBSERVE: read README.md
+[22:05:54] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
