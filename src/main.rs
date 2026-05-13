@@ -1892,6 +1892,8 @@ fn decompiler_benchmark_json(
     let mut machine_facts = 0usize;
     let mut dataflow_facts = 0usize;
     let mut phi_candidates = 0usize;
+    let mut memory_accesses = 0usize;
+    let mut variable_candidates = 0usize;
     let mut blockers = std::collections::BTreeSet::<String>::new();
 
     for binary in candidates {
@@ -1905,6 +1907,8 @@ fn decompiler_benchmark_json(
                 machine_facts += report.functions_with_machine_facts;
                 dataflow_facts += report.functions_with_dataflow_facts;
                 phi_candidates += report.total_phi_candidates;
+                memory_accesses += report.total_memory_accesses;
+                variable_candidates += report.total_variable_candidates;
                 for blocker in &report.blockers {
                     blockers.insert(blocker.clone());
                 }
@@ -1943,6 +1947,8 @@ fn decompiler_benchmark_json(
             "functions_with_machine_facts": machine_facts,
             "functions_with_dataflow_facts": dataflow_facts,
             "total_phi_candidates": phi_candidates,
+            "total_memory_accesses": memory_accesses,
+            "total_variable_candidates": variable_candidates,
         },
         "blockers": blockers.into_iter().collect::<Vec<_>>(),
         "reports": reports,

@@ -76,6 +76,8 @@ pub struct DataFlowFacts {
     pub tracked_registers: Vec<String>,
     pub definitions: Vec<RegisterDefinition>,
     pub uses: Vec<RegisterUse>,
+    pub memory_accesses: Vec<MemoryAccess>,
+    pub variable_candidates: Vec<VariableCandidate>,
     pub block_inputs: Vec<BlockDataFlow>,
     pub phi_candidates: Vec<PhiCandidate>,
     pub notes: Vec<String>,
@@ -95,6 +97,26 @@ pub struct RegisterUse {
     pub register: String,
     pub version: Option<u32>,
     pub instruction: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryAccess {
+    pub vaddr: String,
+    pub kind: String,
+    pub access: String,
+    pub location: String,
+    pub base: Option<String>,
+    pub offset: Option<i64>,
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VariableCandidate {
+    pub name: String,
+    pub kind: String,
+    pub location: String,
+    pub access_count: usize,
+    pub first_seen: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,6 +148,8 @@ pub struct DecompilerQualityReport {
     pub functions_with_machine_facts: usize,
     pub functions_with_dataflow_facts: usize,
     pub total_phi_candidates: usize,
+    pub total_memory_accesses: usize,
+    pub total_variable_candidates: usize,
     pub total_blocks: usize,
     pub total_edges: usize,
     pub total_irreducible_sccs: usize,
@@ -146,6 +170,8 @@ pub struct FunctionQuality {
     pub goto_pressure: usize,
     pub has_machine_facts: bool,
     pub has_dataflow_facts: bool,
+    pub memory_accesses: usize,
+    pub variable_candidates: usize,
     pub phi_candidates: usize,
     pub legacy_decompile_ok: bool,
     pub notes: Vec<String>,
@@ -164,6 +190,8 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_machine_facts = 0usize;
     let mut functions_with_dataflow_facts = 0usize;
     let mut total_phi_candidates = 0usize;
+    let mut total_memory_accesses = 0usize;
+    let mut total_variable_candidates = 0usize;
     let mut total_blocks = 0usize;
     let mut total_edges = 0usize;
     let mut total_irreducible_sccs = 0usize;
@@ -198,6 +226,8 @@ pub fn decompiler_quality_report_path(
             functions_with_dataflow_facts += 1;
         }
         total_phi_candidates += dataflow.phi_candidates.len();
+        total_memory_accesses += dataflow.memory_accesses.len();
+        total_variable_candidates += dataflow.variable_candidates.len();
         total_blocks += cfg.block_count;
         total_edges += cfg.edge_count;
         total_irreducible_sccs += cfg.irreducible_sccs;
@@ -231,6 +261,8 @@ pub fn decompiler_quality_report_path(
             goto_pressure: cfg.goto_pressure,
             has_machine_facts,
             has_dataflow_facts,
+            memory_accesses: dataflow.memory_accesses.len(),
+            variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
             legacy_decompile_ok: legacy_ok,
             notes,
@@ -245,6 +277,7 @@ pub fn decompiler_quality_report_path(
         reducible_functions,
         functions_with_machine_facts,
         functions_with_dataflow_facts,
+        total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
     );
@@ -255,6 +288,7 @@ pub fn decompiler_quality_report_path(
         reducible_functions,
         functions_with_machine_facts,
         functions_with_dataflow_facts,
+        total_variable_candidates,
         total_irreducible_sccs,
     );
 
@@ -270,6 +304,8 @@ pub fn decompiler_quality_report_path(
         functions_with_machine_facts,
         functions_with_dataflow_facts,
         total_phi_candidates,
+        total_memory_accesses,
+        total_variable_candidates,
         total_blocks,
         total_edges,
         total_irreducible_sccs,
@@ -279,7 +315,7 @@ pub fn decompiler_quality_report_path(
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
             "Build SSA over recovered CFG and insert phi nodes at dominance frontiers".to_string(),
-            "Recover stack/global variables from memory SSA and escaped-frame analysis".to_string(),
+            "Promote heuristic stack/global variable candidates into memory SSA".to_string(),
             "Infer call signatures/calling conventions before expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
                 .to_string(),
@@ -295,6 +331,7 @@ fn decompiler_score(
     reducible: usize,
     machine_facts: usize,
     dataflow_facts: usize,
+    variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
 ) -> u32 {
@@ -307,6 +344,7 @@ fn decompiler_score(
     let reducible_score = 20.0 * reducible as f64 / analyzed;
     let machine_score = 15.0 * machine_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
+    let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
         (irreducible_sccs as f64 * 5.0 + goto_pressure as f64 * 2.0).min(20.0);
     let foundation_score = 25.0;
@@ -315,14 +353,21 @@ fn decompiler_score(
         + reducible_score
         + machine_score
         + dataflow_score
+        + variable_score
         + foundation_score
         - structuring_penalty)
         .round()
         .clamp(0.0, 100.0) as u32;
-    // Register SSA facts are still a first slice, not production decompiler
-    // semantics. Keep the cap explicit until memory SSA and type propagation
-    // are part of the scored engine.
-    let cap = if dataflow_facts > 0 { 55 } else { 45 };
+    // Register and memory facts are still pre-IR facts, not production
+    // decompiler semantics. Keep the cap explicit until memory SSA and type
+    // propagation are part of the scored engine.
+    let cap = if variable_candidates > 0 {
+        65
+    } else if dataflow_facts > 0 {
+        55
+    } else {
+        45
+    };
     surface_score.min(cap)
 }
 
@@ -333,6 +378,7 @@ fn decompiler_blockers(
     reducible: usize,
     machine_facts: usize,
     dataflow_facts: usize,
+    variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
     let mut blockers = Vec::new();
@@ -352,12 +398,18 @@ fn decompiler_blockers(
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
-    } else {
+    } else if variable_candidates == 0 {
         blockers.push(
-            "data-flow gate is first-pass register SSA only; no memory SSA/type inference yet"
+            "data-flow gate has register SSA but no stack/global variable candidates yet"
                 .to_string(),
         );
-        blockers.push("score is capped at 55 until memory SSA/type inference land".to_string());
+        blockers.push("score is capped at 55 until memory facts land".to_string());
+    } else {
+        blockers.push(
+            "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
+                .to_string(),
+        );
+        blockers.push("score is capped at 65 until memory SSA/type inference land".to_string());
     }
     blockers
 }
@@ -417,12 +469,24 @@ pub fn decompile_enhanced_path(path: &Path, vaddr: u64) -> Result<String> {
 }
 
 fn find_function(index: &RecoveryIndex, vaddr: u64) -> Option<&RecoveredFunction> {
-    index.functions.iter().find(|function| {
-        let Some(start) = parse_addr(&function.start) else {
-            return false;
-        };
-        vaddr == start || (vaddr > start && vaddr < start.saturating_add(function.size))
-    })
+    if let Some(exact) = index
+        .functions
+        .iter()
+        .find(|function| parse_addr(&function.start) == Some(vaddr))
+    {
+        return Some(exact);
+    }
+
+    index
+        .functions
+        .iter()
+        .filter(|function| {
+            let Some(start) = parse_addr(&function.start) else {
+                return false;
+            };
+            vaddr > start && vaddr < start.saturating_add(function.size)
+        })
+        .min_by_key(|function| function.size)
 }
 
 fn analyze_cfg(function: &RecoveredFunction) -> CfgDiagnostics {
@@ -600,6 +664,7 @@ fn analyze_dataflow(path: &Path, function: &RecoveredFunction) -> Result<DataFlo
     let mut block_out_versions = BTreeMap::<String, BTreeMap<String, u32>>::new();
     let mut definitions = Vec::new();
     let mut uses = Vec::new();
+    let mut memory_accesses = Vec::new();
     let mut instruction_count = 0usize;
 
     while decoder.can_decode() {
@@ -611,6 +676,7 @@ fn analyze_dataflow(path: &Path, function: &RecoveredFunction) -> Result<DataFlo
         let display = text.replace(',', ", ");
         let block = block_for_ip(ip, &blocks).unwrap_or_else(|| function.start.clone());
         let (used_regs, defined_regs) = dataflow_regs_for_instruction(&normalized, &tracked);
+        memory_accesses.extend(memory_accesses_for_instruction(ip, &normalized, &display));
         instruction_count += 1;
 
         if let Some(flow) = block_flows.get_mut(&block) {
@@ -688,6 +754,7 @@ fn analyze_dataflow(path: &Path, function: &RecoveredFunction) -> Result<DataFlo
             }
         }
     }
+    let variable_candidates = variable_candidates_from_memory(&memory_accesses);
 
     Ok(DataFlowFacts {
         available: !definitions.is_empty() || !uses.is_empty(),
@@ -696,11 +763,13 @@ fn analyze_dataflow(path: &Path, function: &RecoveredFunction) -> Result<DataFlo
         tracked_registers: tracked,
         definitions,
         uses,
+        memory_accesses,
+        variable_candidates,
         block_inputs,
         phi_candidates,
         notes: vec![
             "linear register SSA approximation; not dominance-frontier SSA yet".to_string(),
-            "memory operands are treated as register uses only; no memory SSA or alias analysis yet"
+            "memory operands produce stack/global variable candidates; no memory SSA or alias analysis yet"
                 .to_string(),
         ],
     })
@@ -711,6 +780,207 @@ fn block_for_ip(ip: u64, blocks: &[(u64, u64, String)]) -> Option<String> {
         .iter()
         .find(|(start, end, _)| ip >= *start && ip < *end)
         .map(|(_, _, label)| label.clone())
+}
+
+fn memory_accesses_for_instruction(ip: u64, text: &str, display: &str) -> Vec<MemoryAccess> {
+    let access = if text.starts_with("lea") {
+        "address".to_string()
+    } else if let Some((dst, src)) = instruction_operands(text) {
+        match (dst.contains('['), src.contains('[')) {
+            (true, false) => "write".to_string(),
+            (false, true) => "read".to_string(),
+            (true, true) => "readwrite".to_string(),
+            (false, false) => "access".to_string(),
+        }
+    } else {
+        "access".to_string()
+    };
+
+    bracket_operands(text)
+        .into_iter()
+        .map(|operand| {
+            let (kind, base, offset, location) = classify_memory_operand(&operand);
+            MemoryAccess {
+                vaddr: format!("0x{ip:x}"),
+                kind,
+                access: access.clone(),
+                location,
+                base,
+                offset,
+                instruction: display.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn bracket_operands(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find(']') else {
+            break;
+        };
+        out.push(after_start[..end].to_string());
+        rest = &after_start[end + 1..];
+    }
+    out
+}
+
+fn classify_memory_operand(operand: &str) -> (String, Option<String>, Option<i64>, String) {
+    let normalized = operand.replace(' ', "");
+    let base = ["rbp", "rsp", "ebp", "esp"]
+        .iter()
+        .find(|base| {
+            normalized == **base
+                || normalized.starts_with(&format!("{base}+"))
+                || normalized.starts_with(&format!("{base}-"))
+                || normalized.contains(&format!("+{base}"))
+                || normalized.contains(&format!("-{base}"))
+        })
+        .map(|base| (*base).to_string());
+    if let Some(base) = base {
+        let offset = stack_offset(&normalized, &base);
+        let location = match offset {
+            Some(offset) if offset < 0 => format!("[{base}-0x{:x}]", offset.unsigned_abs()),
+            Some(offset) if offset > 0 => format!("[{base}+0x{offset:x}]"),
+            Some(_) | None => format!("[{base}]"),
+        };
+        return ("stack".to_string(), Some(base), offset, location);
+    }
+
+    if let Some(address) = absolute_memory_address(&normalized) {
+        return (
+            "global".to_string(),
+            None,
+            Some(address as i64),
+            format!("[0x{address:x}]"),
+        );
+    }
+
+    (
+        "unknown".to_string(),
+        register_mentions(
+            &normalized,
+            &[
+                "rax".to_string(),
+                "rbx".to_string(),
+                "rcx".to_string(),
+                "rdx".to_string(),
+                "rsi".to_string(),
+                "rdi".to_string(),
+                "eax".to_string(),
+                "ebx".to_string(),
+                "ecx".to_string(),
+                "edx".to_string(),
+                "esi".to_string(),
+                "edi".to_string(),
+            ],
+        )
+        .into_iter()
+        .next(),
+        None,
+        format!("[{normalized}]"),
+    )
+}
+
+fn stack_offset(operand: &str, base: &str) -> Option<i64> {
+    let pos = operand.find(base)?;
+    let rest = &operand[pos + base.len()..];
+    if let Some(hex) = rest.strip_prefix("-0x") {
+        let end = hex
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap_or(hex.len());
+        return i64::from_str_radix(&hex[..end], 16)
+            .ok()
+            .map(|value| -value);
+    }
+    if let Some(hex) = rest.strip_prefix("+0x") {
+        let end = hex
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap_or(hex.len());
+        return i64::from_str_radix(&hex[..end], 16).ok();
+    }
+    if let Some(raw) = rest.strip_prefix('-') {
+        return parse_stack_offset_value(raw).map(|value| -value);
+    }
+    if let Some(raw) = rest.strip_prefix('+') {
+        return parse_stack_offset_value(raw);
+    }
+    Some(0)
+}
+
+fn parse_stack_offset_value(text: &str) -> Option<i64> {
+    let end = text
+        .find(|c: char| !c.is_ascii_hexdigit() && c != 'h' && c != 'H')
+        .unwrap_or(text.len());
+    let raw = &text[..end];
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(hex) = raw.strip_suffix('h').or_else(|| raw.strip_suffix('H')) {
+        return i64::from_str_radix(hex, 16).ok();
+    }
+    raw.parse::<i64>().ok()
+}
+
+fn absolute_memory_address(operand: &str) -> Option<u64> {
+    let cleaned = operand
+        .trim_start_matches("rel")
+        .trim_start_matches("ds:")
+        .trim_start_matches("cs:")
+        .trim_start_matches("qwordptr")
+        .trim_start_matches("dwordptr")
+        .trim_start_matches("wordptr")
+        .trim_start_matches("byteptr");
+    if cleaned.contains('+') || cleaned.contains('-') || cleaned.contains('*') {
+        return None;
+    }
+    parse_num(cleaned)
+}
+
+fn instruction_operands<'a>(text: &'a str) -> Option<(&'a str, &'a str)> {
+    let opcode_end = text.find(|c: char| !c.is_ascii_alphabetic())?;
+    let operands = &text[opcode_end..];
+    let mut parts = operands.splitn(2, ',');
+    Some((parts.next()?.trim(), parts.next()?.trim()))
+}
+
+fn variable_candidates_from_memory(memory_accesses: &[MemoryAccess]) -> Vec<VariableCandidate> {
+    let mut grouped = BTreeMap::<(String, String), (usize, String)>::new();
+    for access in memory_accesses
+        .iter()
+        .filter(|access| access.kind == "stack" || access.kind == "global")
+    {
+        let key = (access.kind.clone(), access.location.clone());
+        grouped
+            .entry(key)
+            .and_modify(|(count, _)| *count += 1)
+            .or_insert((1, access.vaddr.clone()));
+    }
+
+    grouped
+        .into_iter()
+        .map(|((kind, location), (access_count, first_seen))| {
+            let name = if kind == "stack" {
+                let suffix = location
+                    .trim_matches(['[', ']'])
+                    .replace("+0x", "_p")
+                    .replace("-0x", "_m")
+                    .replace(['+', '-'], "_");
+                format!("var_{suffix}")
+            } else {
+                format!("global_{}", location.trim_matches(['[', ']']))
+            };
+            VariableCandidate {
+                name,
+                kind,
+                location,
+                access_count,
+                first_seen,
+            }
+        })
+        .collect()
 }
 
 fn dataflow_regs_for_instruction(
@@ -1072,14 +1342,22 @@ fn render_enhanced(
         ));
     }
     out.push_str(&format!(
-        "   dataflow: available={} arch={} insns={} defs={} uses={} phi_candidates={}\n",
+        "   dataflow: available={} arch={} insns={} defs={} uses={} memory={} vars={} phi_candidates={}\n",
         dataflow.available,
         dataflow.architecture,
         dataflow.instruction_count,
         dataflow.definitions.len(),
         dataflow.uses.len(),
+        dataflow.memory_accesses.len(),
+        dataflow.variable_candidates.len(),
         dataflow.phi_candidates.len()
     ));
+    for variable in dataflow.variable_candidates.iter().take(8) {
+        out.push_str(&format!(
+            "     var {} {} accesses={} first_seen={}\n",
+            variable.kind, variable.location, variable.access_count, variable.first_seen
+        ));
+    }
     for phi in dataflow.phi_candidates.iter().take(8) {
         out.push_str(&format!(
             "     phi {} {} <- {}\n",
@@ -1536,6 +1814,24 @@ mod tests {
                 .uses
                 .iter()
                 .any(|use_| use_.register == "esp")
+        );
+    }
+
+    #[test]
+    fn calc_sample_reports_memory_variable_candidates() {
+        let path = Path::new("samples/PwnableTW/calc/calc");
+        if !path.exists() {
+            return;
+        }
+        let analysis = decompile_analysis_path(path, 0x8048ee1).expect("calc eval analysis");
+        assert!(!analysis.dataflow.memory_accesses.is_empty());
+        assert!(!analysis.dataflow.variable_candidates.is_empty());
+        assert!(
+            analysis
+                .dataflow
+                .variable_candidates
+                .iter()
+                .any(|candidate| candidate.kind == "stack" || candidate.kind == "global")
         );
     }
 }
