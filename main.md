@@ -39,11 +39,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.
 - [x] Fixed Agent Console response rendering for bare carriage-return progress lines; npm build passed.
 - [x] Reflected MCP function read calls into UI navigation; cargo test server and npm build passed.
+- [x] Fixed stale Agent Console attach/restart and gray command input state; cargo test server and web build passed.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 04:32 UTC] `main`: Fixed stale Agent Console attach/restart and gray command input state; cargo test server and web build passed.
 - [2026-05-13 04:27 UTC] `main`: Reflected MCP function read calls into UI navigation; cargo test server and npm build passed.
 - [2026-05-13 04:15 UTC] `main`: Fixed Agent Console response rendering for bare carriage-return progress lines; npm build passed.
 - [2026-05-13 04:12 UTC] `main`: Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.
