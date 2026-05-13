@@ -617,3 +617,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:58:29] OBSERVE: searched web for "TODO|FIXME|catch\(\(\) => \{\}\)|any\)|window.prompt|No findings|Select a function|Run a playbook|TODO follow-ups|brittle|lacks"
 [02:58:29] OBSERVE: read web/src/components/TopBar.tsx
 [02:58:29] OBSERVE: read web/src/components/TopBar.tsx
+[02:58:29] OBSERVE: read web/src/hooks/useEventStream.ts
