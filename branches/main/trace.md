@@ -1879,3 +1879,4 @@ _[Checkpoint: 6a04be4e — Added KIR SSA v1 dominance data: successors, dominato
 [18:13:02] OBSERVE: read src/core/decompile.rs
 [18:13:02] OBSERVE: read src/decompiler/ir/kir.rs
 [18:13:02] OBSERVE: read src/core/decompile.rs
+[18:13:02] OBSERVE: read src/core/decompile.rs
