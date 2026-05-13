@@ -48,11 +48,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…
 - [x] Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.
+- [x] Committed current bot-friendly API and agent console CLI status.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 12:37 UTC] `main`: Committed current bot-friendly API and agent console CLI status.
 - [2026-05-13 12:36 UTC] `main`: Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.
 - [2026-05-13 12:34 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…
 - [2026-05-13 12:18 UTC] `main`: Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.

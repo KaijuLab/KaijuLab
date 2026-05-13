@@ -1102,3 +1102,9 @@ _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a047031 — Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a047099 — Committed current bot-friendly API and agent console CLI status.]_
+---
+
