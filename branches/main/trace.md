@@ -1856,3 +1856,4 @@ _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonic
 [18:08:57] OBSERVE: read src/core/decompile.rs
 [18:08:57] OBSERVE: read src/core/decompile.rs
 [18:08:57] OBSERVE: read src/core/recovery.rs
+[18:08:57] OBSERVE: read src/core/recovery.rs
