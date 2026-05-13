@@ -74,11 +74,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.…
 - [x] Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.
+- [x] Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:46 UTC] `main`: Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
 - [2026-05-13 18:41 UTC] `main`: Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.
 - [2026-05-13 18:35 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.…
 - [2026-05-13 18:35 UTC] `main`: Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.

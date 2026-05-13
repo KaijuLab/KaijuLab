@@ -2097,3 +2097,9 @@ _[Checkpoint: 6a04c5cf — Added typed KIR expression preview to enhanced decomp
 [18:46:38] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:46:38] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:46:38] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.]_
+---
+
