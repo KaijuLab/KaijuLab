@@ -1269,3 +1269,4 @@ _[Checkpoint: 6a047e5e — Extended debug-probe after gdb-multiarch install: for
 ---
 
 [13:39:47] THINK: Implement production foundations as structured CLI/API manifests over full subsystem rewrite because gives usable contracts for seven roadmap areas while keeping build/test scope bounded.
+[13:44:35] OBSERVE: listed files under src/core
