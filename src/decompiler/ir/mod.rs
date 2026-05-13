@@ -29,6 +29,7 @@ pub mod basic_block;
 pub mod control_flow_graph;
 pub mod expression;
 pub mod high_function;
+pub mod kir;
 pub mod program_tree_structure;
 pub mod scope;
 pub mod type_system;

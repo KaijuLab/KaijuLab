@@ -1891,6 +1891,8 @@ fn decompiler_benchmark_json(
     let mut reducible = 0usize;
     let mut machine_facts = 0usize;
     let mut dataflow_facts = 0usize;
+    let mut kir_facts = 0usize;
+    let mut kir_ops = 0usize;
     let mut phi_candidates = 0usize;
     let mut memory_accesses = 0usize;
     let mut variable_candidates = 0usize;
@@ -1906,6 +1908,8 @@ fn decompiler_benchmark_json(
                 reducible += report.reducible_functions;
                 machine_facts += report.functions_with_machine_facts;
                 dataflow_facts += report.functions_with_dataflow_facts;
+                kir_facts += report.functions_with_kir;
+                kir_ops += report.total_kir_ops;
                 phi_candidates += report.total_phi_candidates;
                 memory_accesses += report.total_memory_accesses;
                 variable_candidates += report.total_variable_candidates;
@@ -1946,6 +1950,8 @@ fn decompiler_benchmark_json(
             "reducible_functions": reducible,
             "functions_with_machine_facts": machine_facts,
             "functions_with_dataflow_facts": dataflow_facts,
+            "functions_with_kir": kir_facts,
+            "total_kir_ops": kir_ops,
             "total_phi_candidates": phi_candidates,
             "total_memory_accesses": memory_accesses,
             "total_variable_candidates": variable_candidates,

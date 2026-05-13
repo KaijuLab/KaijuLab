@@ -8,11 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic, OpKind, Register};
 use object::{Architecture, Object, ObjectSection};
 use serde::Serialize;
 
-use crate::tools;
+use crate::{decompiler::ir::kir, tools};
 
 use super::recovery::{self, RecoveredFunction, RecoveryIndex};
 
@@ -39,6 +39,7 @@ pub struct DecompileAnalysis {
     pub cfg: CfgDiagnostics,
     pub machine: FunctionInsights,
     pub dataflow: DataFlowFacts,
+    pub kir: kir::KirFunction,
     pub references: Vec<String>,
 }
 
@@ -147,6 +148,8 @@ pub struct DecompilerQualityReport {
     pub reducible_functions: usize,
     pub functions_with_machine_facts: usize,
     pub functions_with_dataflow_facts: usize,
+    pub functions_with_kir: usize,
+    pub total_kir_ops: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -170,6 +173,8 @@ pub struct FunctionQuality {
     pub goto_pressure: usize,
     pub has_machine_facts: bool,
     pub has_dataflow_facts: bool,
+    pub has_kir: bool,
+    pub kir_ops: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -189,6 +194,8 @@ pub fn decompiler_quality_report_path(
     let mut reducible_functions = 0usize;
     let mut functions_with_machine_facts = 0usize;
     let mut functions_with_dataflow_facts = 0usize;
+    let mut functions_with_kir = 0usize;
+    let mut total_kir_ops = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -207,11 +214,16 @@ pub fn decompiler_quality_report_path(
             notes: vec![format!("data-flow unavailable: {err}")],
             ..Default::default()
         });
+        let kir = lift_kir(path, function).unwrap_or_else(|err| kir::KirFunction {
+            diagnostics: vec![format!("kir unavailable: {err}")],
+            ..Default::default()
+        });
         let has_machine_facts = !machine.calls.is_empty()
             || !machine.syscalls.is_empty()
             || !machine.stack_accesses.is_empty()
             || machine.frame_size > 0;
         let has_dataflow_facts = dataflow.available && !dataflow.definitions.is_empty();
+        let has_kir = kir.available && !kir.ops.is_empty();
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -225,6 +237,10 @@ pub fn decompiler_quality_report_path(
         if has_dataflow_facts {
             functions_with_dataflow_facts += 1;
         }
+        if has_kir {
+            functions_with_kir += 1;
+        }
+        total_kir_ops += kir.ops.len();
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -251,6 +267,12 @@ pub fn decompiler_quality_report_path(
         if !dataflow.notes.is_empty() {
             notes.extend(dataflow.notes.clone());
         }
+        if !has_kir {
+            notes.push("KIR unavailable or empty".to_string());
+        }
+        if !kir.diagnostics.is_empty() {
+            notes.extend(kir.diagnostics.clone());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -261,6 +283,8 @@ pub fn decompiler_quality_report_path(
             goto_pressure: cfg.goto_pressure,
             has_machine_facts,
             has_dataflow_facts,
+            has_kir,
+            kir_ops: kir.ops.len(),
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -277,6 +301,7 @@ pub fn decompiler_quality_report_path(
         reducible_functions,
         functions_with_machine_facts,
         functions_with_dataflow_facts,
+        functions_with_kir,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -288,6 +313,7 @@ pub fn decompiler_quality_report_path(
         reducible_functions,
         functions_with_machine_facts,
         functions_with_dataflow_facts,
+        functions_with_kir,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -303,6 +329,8 @@ pub fn decompiler_quality_report_path(
         reducible_functions,
         functions_with_machine_facts,
         functions_with_dataflow_facts,
+        functions_with_kir,
+        total_kir_ops,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -331,6 +359,7 @@ fn decompiler_score(
     reducible: usize,
     machine_facts: usize,
     dataflow_facts: usize,
+    kir_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -343,6 +372,7 @@ fn decompiler_score(
     let legacy_score = 20.0 * legacy_ok as f64 / analyzed;
     let reducible_score = 20.0 * reducible as f64 / analyzed;
     let machine_score = 15.0 * machine_facts as f64 / analyzed;
+    let kir_score = 10.0 * kir_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -352,6 +382,7 @@ fn decompiler_score(
         + legacy_score
         + reducible_score
         + machine_score
+        + kir_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -361,7 +392,9 @@ fn decompiler_score(
     // Register and memory facts are still pre-IR facts, not production
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
-    let cap = if variable_candidates > 0 {
+    let cap = if variable_candidates > 0 && kir_facts > 0 {
+        70
+    } else if variable_candidates > 0 {
         65
     } else if dataflow_facts > 0 {
         55
@@ -378,6 +411,7 @@ fn decompiler_blockers(
     reducible: usize,
     machine_facts: usize,
     dataflow_facts: usize,
+    kir_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -395,6 +429,9 @@ fn decompiler_blockers(
     if machine_facts < analyzed_functions {
         blockers.push("machine facts are heuristic and missing for some functions".to_string());
     }
+    if kir_facts < analyzed_functions {
+        blockers.push("KIR lifter coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -409,7 +446,14 @@ fn decompiler_blockers(
             "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
                 .to_string(),
         );
-        blockers.push("score is capped at 65 until memory SSA/type inference land".to_string());
+        if kir_facts > 0 {
+            blockers.push(
+                "score is capped at 70 until KIR-backed SSA/memory SSA/type inference land"
+                    .to_string(),
+            );
+        } else {
+            blockers.push("score is capped at 65 until memory SSA/type inference land".to_string());
+        }
     }
     blockers
 }
@@ -437,6 +481,10 @@ pub fn decompile_analysis_path(path: &Path, vaddr: u64) -> Result<DecompileAnaly
         cfg: analyze_cfg(&function),
         dataflow: analyze_dataflow(path, &function).unwrap_or_else(|err| DataFlowFacts {
             notes: vec![format!("data-flow unavailable: {err}")],
+            ..Default::default()
+        }),
+        kir: lift_kir(path, &function).unwrap_or_else(|err| kir::KirFunction {
+            diagnostics: vec![format!("kir unavailable: {err}")],
             ..Default::default()
         }),
         function,
@@ -773,6 +821,354 @@ fn analyze_dataflow(path: &Path, function: &RecoveredFunction) -> Result<DataFlo
                 .to_string(),
         ],
     })
+}
+
+fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunction> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let obj = object::File::parse(&*data).with_context(|| format!("parse {}", path.display()))?;
+    let arch = obj.architecture();
+    let (bits, architecture) = match arch {
+        Architecture::I386 => (32, "i386".to_string()),
+        Architecture::X86_64 | Architecture::X86_64_X32 => (64, "x86_64".to_string()),
+        _ => {
+            return Ok(kir::KirFunction {
+                diagnostics: vec![format!("architecture {arch:?} not supported by KIR lifter")],
+                ..Default::default()
+            });
+        }
+    };
+
+    let sections = executable_sections(&obj)?;
+    let start = parse_addr(&function.start).ok_or_else(|| anyhow!("bad function start"))?;
+    let size = function.size.max(1).min(0x20000);
+    let bytes = bytes_at(&sections, start, size)
+        .ok_or_else(|| anyhow!("function bytes unavailable at 0x{start:x}"))?;
+    let mut blocks = function
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            Some((
+                parse_addr(&block.start)?,
+                parse_addr(&block.end)?,
+                block.start.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    blocks.sort_by_key(|(start, _, _)| *start);
+    if blocks.is_empty() {
+        blocks.push((start, start.saturating_add(size), function.start.clone()));
+    }
+
+    let mut decoder = Decoder::with_ip(bits, bytes, start, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut ops = Vec::new();
+    let mut block_ops = BTreeMap::<String, Vec<usize>>::new();
+    let mut instruction_count = 0usize;
+
+    while decoder.can_decode() {
+        let instr = decoder.decode();
+        let ip = instr.ip();
+        let mut text = String::new();
+        formatter.format(&instr, &mut text);
+        let id = ops.len();
+        let block = block_for_ip(ip, &blocks).unwrap_or_else(|| function.start.clone());
+        block_ops.entry(block).or_default().push(id);
+        ops.push(kir_op_from_instruction(id, ip, &text, &instr));
+        instruction_count += 1;
+    }
+
+    let blocks = blocks
+        .into_iter()
+        .map(|(_, _, start)| kir::KirBlock {
+            op_ids: block_ops.remove(&start).unwrap_or_default(),
+            start,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(kir::KirFunction {
+        available: !ops.is_empty(),
+        architecture,
+        entry: function.start.clone(),
+        instruction_count,
+        op_count: ops.len(),
+        blocks,
+        ops,
+        diagnostics: vec![
+            "KIR v0: iced-x86 semantic skeleton; flags and precise operand sizes are partial"
+                .to_string(),
+        ],
+    })
+}
+
+fn kir_op_from_instruction(
+    id: usize,
+    ip: u64,
+    text: &str,
+    instr: &iced_x86::Instruction,
+) -> kir::KirOp {
+    let mnemonic = instr.mnemonic();
+    let opcode = kir_opcode(mnemonic, instr);
+    let mut operands = (0..instr.op_count())
+        .map(|index| kir_value_for_operand(instr, index, text))
+        .collect::<Vec<_>>();
+    let mut outputs = Vec::new();
+    let mut inputs = Vec::new();
+    let mut effects = Vec::new();
+
+    match opcode {
+        kir::KirOpcode::Store => {
+            if let Some(dst) = operands.first().cloned() {
+                outputs.push(dst);
+                effects.push(kir::KirEffect::WriteMemory);
+            }
+            inputs.extend(operands.into_iter().skip(1));
+        }
+        kir::KirOpcode::Load | kir::KirOpcode::Copy | kir::KirOpcode::AddressOf => {
+            if let Some(dst) = operands.first().cloned() {
+                if let kir::KirValue::Register { name, .. } = &dst {
+                    effects.push(kir::KirEffect::WriteRegister(name.clone()));
+                }
+                outputs.push(dst);
+            }
+            for input in operands.into_iter().skip(1) {
+                collect_kir_read_effects(&input, &mut effects);
+                inputs.push(input);
+            }
+        }
+        kir::KirOpcode::IntAdd
+        | kir::KirOpcode::IntSub
+        | kir::KirOpcode::IntMul
+        | kir::KirOpcode::IntAnd
+        | kir::KirOpcode::IntOr
+        | kir::KirOpcode::IntXor => {
+            if let Some(dst) = operands.first().cloned() {
+                collect_kir_read_effects(&dst, &mut effects);
+                if let kir::KirValue::Register { name, .. } = &dst {
+                    effects.push(kir::KirEffect::WriteRegister(name.clone()));
+                }
+                outputs.push(dst.clone());
+                inputs.push(dst);
+            }
+            for input in operands.into_iter().skip(1) {
+                collect_kir_read_effects(&input, &mut effects);
+                inputs.push(input);
+            }
+            effects.push(kir::KirEffect::ClobberFlags);
+        }
+        kir::KirOpcode::Compare => {
+            for input in operands {
+                collect_kir_read_effects(&input, &mut effects);
+                inputs.push(input);
+            }
+            effects.push(kir::KirEffect::ClobberFlags);
+        }
+        kir::KirOpcode::Call => {
+            inputs.append(&mut operands);
+            effects.push(kir::KirEffect::Call);
+        }
+        kir::KirOpcode::Branch => {
+            inputs.append(&mut operands);
+            effects.push(kir::KirEffect::Branch);
+        }
+        kir::KirOpcode::Return => {
+            inputs.append(&mut operands);
+            effects.push(kir::KirEffect::Return);
+        }
+        kir::KirOpcode::Syscall => {
+            inputs.append(&mut operands);
+            effects.push(kir::KirEffect::Syscall);
+        }
+        kir::KirOpcode::StackPush => {
+            for input in operands {
+                collect_kir_read_effects(&input, &mut effects);
+                inputs.push(input);
+            }
+            outputs.push(kir::KirValue::Memory {
+                base: Some("sp".to_string()),
+                index: None,
+                scale: 1,
+                displacement: 0,
+                size_bits: None,
+            });
+            effects.push(kir::KirEffect::ReadRegister("sp".to_string()));
+            effects.push(kir::KirEffect::WriteRegister("sp".to_string()));
+            effects.push(kir::KirEffect::WriteMemory);
+        }
+        kir::KirOpcode::StackPop => {
+            if let Some(dst) = operands.first().cloned() {
+                if let kir::KirValue::Register { name, .. } = &dst {
+                    effects.push(kir::KirEffect::WriteRegister(name.clone()));
+                }
+                outputs.push(dst);
+            }
+            inputs.push(kir::KirValue::Memory {
+                base: Some("sp".to_string()),
+                index: None,
+                scale: 1,
+                displacement: 0,
+                size_bits: None,
+            });
+            effects.push(kir::KirEffect::ReadRegister("sp".to_string()));
+            effects.push(kir::KirEffect::WriteRegister("sp".to_string()));
+            effects.push(kir::KirEffect::ReadMemory);
+        }
+        kir::KirOpcode::Nop => {}
+        kir::KirOpcode::Unknown => {
+            for input in operands {
+                collect_kir_read_effects(&input, &mut effects);
+                inputs.push(input);
+            }
+        }
+    }
+
+    effects.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    effects.dedup_by(|a, b| format!("{a:?}") == format!("{b:?}"));
+
+    kir::KirOp {
+        id,
+        vaddr: format!("0x{ip:x}"),
+        opcode,
+        outputs,
+        inputs,
+        effects,
+        instruction: text.replace(',', ", "),
+    }
+}
+
+fn kir_opcode(mnemonic: Mnemonic, instr: &iced_x86::Instruction) -> kir::KirOpcode {
+    match mnemonic {
+        Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsx => {
+            if instr.op0_kind() == OpKind::Memory {
+                kir::KirOpcode::Store
+            } else if instr.op1_kind() == OpKind::Memory {
+                kir::KirOpcode::Load
+            } else {
+                kir::KirOpcode::Copy
+            }
+        }
+        Mnemonic::Lea => kir::KirOpcode::AddressOf,
+        Mnemonic::Add | Mnemonic::Inc => kir::KirOpcode::IntAdd,
+        Mnemonic::Sub | Mnemonic::Dec | Mnemonic::Neg => kir::KirOpcode::IntSub,
+        Mnemonic::Imul | Mnemonic::Mul => kir::KirOpcode::IntMul,
+        Mnemonic::And => kir::KirOpcode::IntAnd,
+        Mnemonic::Or => kir::KirOpcode::IntOr,
+        Mnemonic::Xor => kir::KirOpcode::IntXor,
+        Mnemonic::Cmp | Mnemonic::Test => kir::KirOpcode::Compare,
+        Mnemonic::Push => kir::KirOpcode::StackPush,
+        Mnemonic::Pop => kir::KirOpcode::StackPop,
+        Mnemonic::Call => kir::KirOpcode::Call,
+        Mnemonic::Jmp
+        | Mnemonic::Ja
+        | Mnemonic::Jae
+        | Mnemonic::Jb
+        | Mnemonic::Jbe
+        | Mnemonic::Je
+        | Mnemonic::Jg
+        | Mnemonic::Jge
+        | Mnemonic::Jl
+        | Mnemonic::Jle
+        | Mnemonic::Jne
+        | Mnemonic::Jno
+        | Mnemonic::Jnp
+        | Mnemonic::Jns
+        | Mnemonic::Jo
+        | Mnemonic::Jp
+        | Mnemonic::Js => kir::KirOpcode::Branch,
+        Mnemonic::Ret | Mnemonic::Retf => kir::KirOpcode::Return,
+        Mnemonic::Syscall | Mnemonic::Int => kir::KirOpcode::Syscall,
+        Mnemonic::Nop => kir::KirOpcode::Nop,
+        _ => kir::KirOpcode::Unknown,
+    }
+}
+
+fn kir_value_for_operand(instr: &iced_x86::Instruction, index: u32, text: &str) -> kir::KirValue {
+    match instr.op_kind(index) {
+        OpKind::Register => {
+            let register = instr.op_register(index);
+            kir::KirValue::Register {
+                name: register_name(register),
+                size_bits: register_size_bits(register),
+            }
+        }
+        OpKind::Memory => kir::KirValue::Memory {
+            base: optional_register_name(instr.memory_base()),
+            index: optional_register_name(instr.memory_index()),
+            scale: instr.memory_index_scale(),
+            displacement: instr.memory_displacement64() as i64,
+            size_bits: None,
+        },
+        OpKind::Immediate8
+        | OpKind::Immediate8to16
+        | OpKind::Immediate8to32
+        | OpKind::Immediate8to64
+        | OpKind::Immediate16
+        | OpKind::Immediate32
+        | OpKind::Immediate32to64
+        | OpKind::Immediate64 => kir::KirValue::Immediate {
+            value: operand_text(text, index).unwrap_or_else(|| "?".to_string()),
+            size_bits: None,
+        },
+        OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 => {
+            kir::KirValue::BranchTarget {
+                target: format!("0x{:x}", instr.near_branch_target()),
+            }
+        }
+        OpKind::FarBranch16 | OpKind::FarBranch32 => kir::KirValue::BranchTarget {
+            target: operand_text(text, index).unwrap_or_else(|| "?".to_string()),
+        },
+        _ => kir::KirValue::Unknown {
+            text: operand_text(text, index).unwrap_or_else(|| "?".to_string()),
+        },
+    }
+}
+
+fn collect_kir_read_effects(value: &kir::KirValue, effects: &mut Vec<kir::KirEffect>) {
+    match value {
+        kir::KirValue::Register { name, .. } => {
+            effects.push(kir::KirEffect::ReadRegister(name.clone()))
+        }
+        kir::KirValue::Memory { .. } => effects.push(kir::KirEffect::ReadMemory),
+        _ => {}
+    }
+}
+
+fn operand_text(text: &str, index: u32) -> Option<String> {
+    let (_, operands) = text.split_once(' ')?;
+    operands
+        .split(',')
+        .nth(index as usize)
+        .map(|operand| operand.trim().to_string())
+}
+
+fn optional_register_name(register: Register) -> Option<String> {
+    (register != Register::None).then(|| register_name(register))
+}
+
+fn register_name(register: Register) -> String {
+    format!("{register:?}").to_ascii_lowercase()
+}
+
+fn register_size_bits(register: Register) -> Option<u32> {
+    let name = register_name(register);
+    if matches!(
+        name.as_str(),
+        "al" | "ah" | "bl" | "bh" | "cl" | "ch" | "dl" | "dh"
+    ) || name.ends_with('b')
+    {
+        Some(8)
+    } else if matches!(
+        name.as_str(),
+        "ax" | "bx" | "cx" | "dx" | "si" | "di" | "sp" | "bp"
+    ) || name.ends_with('w')
+    {
+        Some(16)
+    } else if name.starts_with('e') || name.ends_with('d') {
+        Some(32)
+    } else if name.starts_with('r') {
+        Some(64)
+    } else {
+        None
+    }
 }
 
 fn block_for_ip(ip: u64, blocks: &[(u64, u64, String)]) -> Option<String> {
@@ -1801,6 +2197,14 @@ mod tests {
 
         let analysis = decompile_analysis_path(path, 0x8048060).expect("structured analysis");
         assert!(analysis.dataflow.available);
+        assert!(analysis.kir.available);
+        assert!(
+            analysis
+                .kir
+                .ops
+                .iter()
+                .any(|op| matches!(op.opcode, kir::KirOpcode::Syscall))
+        );
         assert!(
             analysis
                 .dataflow
@@ -1824,8 +2228,16 @@ mod tests {
             return;
         }
         let analysis = decompile_analysis_path(path, 0x8048ee1).expect("calc eval analysis");
+        assert_eq!(analysis.function.start, "0x8048ee1");
         assert!(!analysis.dataflow.memory_accesses.is_empty());
         assert!(!analysis.dataflow.variable_candidates.is_empty());
+        assert!(
+            analysis
+                .kir
+                .ops
+                .iter()
+                .any(|op| matches!(op.opcode, kir::KirOpcode::Load))
+        );
         assert!(
             analysis
                 .dataflow
