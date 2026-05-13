@@ -1860,3 +1860,4 @@ _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonic
 [18:08:57] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/decompiler/ir/kir.rs
 [18:08:57] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:08:58] OBSERVE: read src/core/decompile.rs
+[18:08:58] OBSERVE: read src/core/decompile.rs
