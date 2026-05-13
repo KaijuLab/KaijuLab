@@ -1415,3 +1415,4 @@ _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-own
 [15:01:14] OBSERVE: read src/main.rs
 [15:01:14] OBSERVE: read src/main.rs
 [15:01:14] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts
+[15:01:14] ACT: added /home/koukyosyumei/Dev/KaijuLab/web/src/components/DebugWorkbench.tsx
