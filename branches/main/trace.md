@@ -1626,3 +1626,4 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 [16:07:23] OBSERVE: searched decompiler for "struct|enum|pub fn|fn decompile|ssa|domin|phi|DataFlow|Liveness|Type"
 [16:07:23] OBSERVE: read ../reko/README.md
 [16:07:23] OBSERVE: read ../reko/README.md
+[16:07:23] OBSERVE: listed files under ../reko/src
