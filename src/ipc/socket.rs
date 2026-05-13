@@ -91,6 +91,13 @@ async fn handle_op(workspace: &Workspace, bus: &EventBus, req: &IpcRequest) -> I
                         bytes: text.len(),
                         ts: now_ts(),
                     });
+                    if let Some(vaddr) = tool_vaddr(args) {
+                        bus.emit(Event::Navigation {
+                            vaddr,
+                            source: Source::Claude,
+                            ts: now_ts(),
+                        });
+                    }
                     IpcResponse::ok(id, Value::String(text))
                 }
                 Err(e) => {
@@ -110,6 +117,18 @@ async fn handle_op(workspace: &Workspace, bus: &EventBus, req: &IpcRequest) -> I
             Err(e) => IpcResponse::err(id, e.to_string()),
         },
     }
+}
+
+fn tool_vaddr(args: &Value) -> Option<String> {
+    let s = args.get("vaddr")?.as_str()?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some(if s.starts_with("0x") || s.starts_with("0X") {
+        s.to_string()
+    } else {
+        format!("0x{s}")
+    })
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────

@@ -88,6 +88,10 @@ export const useStore = create<AppState>((set, get) => ({
   // Apply a remote event to the local project snapshot so we don't have to
   // refetch the whole snapshot on every change.
   applyEvent: (e) => {
+    if (e.type === 'navigation') {
+      set({ selectedVaddr: e.vaddr });
+      return;
+    }
     const project = get().project;
     if (!project) return;
     const next = { ...project };
