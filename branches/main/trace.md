@@ -2105,3 +2105,4 @@ _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhan
 
 [18:52:14] THINK: KIR call facts before interprocedural signatures because ABI register arguments make syscalls/calls readable in enhanced output while stack args and callee types remain future work.
 [18:52:15] OBSERVE: searched src/core/decompile.rs for "src/decompiler/ir/kir.rs"
+[18:52:15] OBSERVE: read src/decompiler/ir/kir.rs
