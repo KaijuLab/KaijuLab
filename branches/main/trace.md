@@ -2122,3 +2122,9 @@ _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhan
 [18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/returns, enhanced output section, benchmark counters, and tests. cargo test passed; PwnableTW benchmark aggregate 84.]_
+---
+
