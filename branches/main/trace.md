@@ -909,3 +909,4 @@ _[Checkpoint: 6a03fa41 — Restructured web UI into IDA/Ghidra-style workbench w
 _[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carriage-return progress lines; npm build passed.]_
 ---
 
+[04:26:50] NOTE: MCP-to-UI reflection: successful IPC tool calls with vaddr emit navigation event; web applyEvent selects vaddr so center disasm/decompile/context panes refresh from structured APIs.
