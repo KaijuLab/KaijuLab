@@ -745,3 +745,4 @@ _[Checkpoint: 6a03f1bb — Hardened embedded Claude/Codex agent console with ses
 ---
 
 [03:43:14] NOTE: Agent console input fix: terminal pane now focusable keyboard surface sends raw PTY chars/control sequences/paste; command input remains fallback; error frames no longer disable live input.
+[03:43:14] OBSERVE: read web/src/components/AgentConsole.tsx
