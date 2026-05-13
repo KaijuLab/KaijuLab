@@ -704,3 +704,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:22:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
 [03:22:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/docs/web-mcp-architecture.md
 [03:29:31] NOTE: Matured Agent Console: daemon session registry, reconnect/attach, transcript tail + ~/.kaiju/agent-console logs, browser resize->PTY resize, detach vs stop, guided prompts, session list API, command override env vars KAIJULAB_AGENT_CONSOLE_{CLAUDE,CODEX}_CMD.
+[03:29:45] OBSERVE: read src/server/agent_console.rs
