@@ -1949,3 +1949,4 @@ _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, p
 [18:28:03] OBSERVE: read src/core/decompile.rs
 [18:28:03] OBSERVE: read src/core/decompile.rs
 [18:28:03] OBSERVE: read src/core/decompile.rs
+[18:28:03] OBSERVE: read src/core/decompile.rs
