@@ -1665,3 +1665,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 [16:23:17] OBSERVE: searched binaries|collect_.*binary" for "benchmark|benchmark_plan|benchmark_run_json|candidate"
 [16:23:17] OBSERVE: read src/main.rs
 [16:23:17] OBSERVE: read src/core/workstation.rs
+[16:23:17] OBSERVE: searched main.rs for "fn benchmark|benchmark_plan|benchmark_run_json|candidate binaries|collect_.*binary"
