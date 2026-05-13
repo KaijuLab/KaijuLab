@@ -1443,3 +1443,4 @@ _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run,
 ---
 
 [15:13:53] OBSERVE: searched src/core for "Project|ProjectStore|sqlite|rusqlite|knowledge|finding|evidence|xrefs|functions""
+[15:13:53] OBSERVE: searched core for "struct Project|ProjectStore|sqlite|rusqlite|knowledge|finding|evidence|xrefs|functions"
