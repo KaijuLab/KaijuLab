@@ -1784,3 +1784,9 @@ _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuris
 [17:41:07] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
 [17:41:07] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/decompiler/ir/kir.rs
 [17:41:07] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.]_
+---
+

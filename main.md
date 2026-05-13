@@ -65,11 +65,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.
 - [x] Added first-pass decompiler register SSA/data-flow facts, exposed them in decompile-analysis/enhanced output, scored coverage in decompiler benchmark, and verified build/tests/PwnableTW benchmark.
 - [x] Committed register data-flow slice, then added heuristic memory accesses/variable candidates, exact-start function selection, benchmark memory totals, docs, and verified build/tests/CLI benchmark.
+- [x] Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 17:41 UTC] `main`: Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.
 - [2026-05-13 16:54 UTC] `main`: Committed register data-flow slice, then added heuristic memory accesses/variable candidates, exact-start function selection, benchmark memory totals, docs, and verified build/tests/CLI benchmark.
 - [2026-05-13 16:46 UTC] `main`: Added first-pass decompiler register SSA/data-flow facts, exposed them in decompile-analysis/enhanced output, scored coverage in decompiler benchmark, and verified build/tests/PwnableTW benchmark.
 - [2026-05-13 16:09 UTC] `main`: Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.
