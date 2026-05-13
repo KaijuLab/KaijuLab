@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent, type ClipboardEvent, useEffect, useRef, useState } from 'react';
 import { api, getAuthToken, type AgentConsoleSessionInfo } from '../api';
 import { useStore } from '../state';
 
@@ -16,6 +16,22 @@ const GUIDED_PROMPTS = [
   'Explain the currently selected function from KaijuLab context. Cite addresses, imports, strings, or xrefs for every claim.',
   'Review the current findings. Separate confirmed evidence from hypotheses and list what I should verify manually.',
 ];
+
+const TERMINAL_KEYS: Record<string, string> = {
+  Enter: '\r',
+  Backspace: '\x7f',
+  Tab: '\t',
+  Escape: '\x1b',
+  ArrowUp: '\x1b[A',
+  ArrowDown: '\x1b[B',
+  ArrowRight: '\x1b[C',
+  ArrowLeft: '\x1b[D',
+  Home: '\x1b[H',
+  End: '\x1b[F',
+  Delete: '\x1b[3~',
+  PageUp: '\x1b[5~',
+  PageDown: '\x1b[6~',
+};
 
 export function AgentConsole() {
   const { workspace, selectedVaddr, notify } = useStore();
@@ -62,7 +78,10 @@ export function AgentConsole() {
 
     ws.onopen = () => {
       setStatus('live');
-      setTimeout(sendResize, 0);
+      setTimeout(() => {
+        sendResize();
+        outputRef.current?.focus();
+      }, 0);
     };
     ws.onclose = () => {
       setStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
@@ -77,11 +96,11 @@ export function AgentConsole() {
         const parsed = JSON.parse(String(msg.data)) as ServerMessage;
         if (parsed.type === 'status') {
           setCurrentSession(parsed.data);
+          if (parsed.data.running && ws.readyState === WebSocket.OPEN) setStatus('live');
           refreshSessions();
           return;
         }
         if (parsed.type === 'error') {
-          setStatus('error');
           notify('error', parsed.data);
         }
         setOutput((prev) => trimOutput(prev + normalizeTerminal(parsed.data)));
@@ -126,6 +145,35 @@ export function AgentConsole() {
     const enriched = selectedVaddr && line.includes('{selected}') ? line.split('{selected}').join(selectedVaddr) : line;
     wsRef.current.send(JSON.stringify({ type: 'input', data: `${enriched}\r` }));
     setOutput((prev) => trimOutput(prev + `\r\n> ${enriched}\r\n`));
+  };
+
+  const sendRaw = (data: string) => {
+    if (!data || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'input', data }));
+  };
+
+  const handleTerminalKeyDown = (e: KeyboardEvent<HTMLPreElement>) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN || e.metaKey || e.altKey) return;
+    let data = '';
+    if (e.ctrlKey && e.key.length === 1) {
+      const code = e.key.toUpperCase().charCodeAt(0);
+      if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64);
+    } else {
+      data =
+        TERMINAL_KEYS[e.key] ??
+        (e.key.length === 1 ? e.key : '');
+    }
+    if (!data) return;
+    e.preventDefault();
+    sendRaw(data);
+  };
+
+  const handleTerminalPaste = (e: ClipboardEvent<HTMLPreElement>) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    const text = e.clipboardData.getData('text');
+    if (!text) return;
+    e.preventDefault();
+    sendRaw(text.replace(/\r?\n/g, '\r'));
   };
 
   const sendInput = () => {
@@ -207,17 +255,25 @@ export function AgentConsole() {
         <div className="grid min-w-0 grid-rows-[1fr_auto]">
           <pre
             ref={outputRef}
-            className="mono min-h-0 overflow-auto whitespace-pre-wrap bg-black p-3 text-[11px] leading-relaxed text-zinc-100"
+            tabIndex={status === 'live' ? 0 : -1}
+            onKeyDown={handleTerminalKeyDown}
+            onPaste={handleTerminalPaste}
+            onMouseDown={() => outputRef.current?.focus()}
+            className="mono min-h-0 overflow-auto whitespace-pre-wrap bg-black p-3 text-[11px] leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-kaiju-accent"
           >
             {output ||
-              'Start or attach to a Claude/Codex terminal session. Browser reloads detach but do not kill the daemon session. MCP tool calls and project writes remain visible through KaijuLab timeline/findings/inspector.'}
+              'Start or attach to a Claude/Codex terminal session. Click this terminal pane to type directly, or use the command box below.'}
           </pre>
           <div className="flex gap-2 border-t border-kaiju-border p-2">
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') sendInput();
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  sendInput();
+                  outputRef.current?.focus();
+                }
               }}
               disabled={status !== 'live'}
               placeholder="type a terminal line and press Enter"
