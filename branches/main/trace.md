@@ -2563,3 +2563,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 [23:30:40] OBSERVE: read src/decompiler/ir/high_function.rs
 [23:30:40] OBSERVE: searched get for "to"
 [23:30:40] OBSERVE: read src/decompiler/ir/high_function.rs
+[23:30:40] OBSERVE: searched decompiler for "Unable to get IR at function start|from_function|HighFunction"
