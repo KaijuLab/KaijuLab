@@ -1036,3 +1036,4 @@ _[Checkpoint: 6a046a71 — Verified KaijuLab+Claude on PwnableTW Start; fixed Cl
 
 [12:14:01] THINK: Expose Agent Console over CLI WebSocket because automation should drive same daemon-owned PTY as WebUI; keep agent-run for stateless one-shot bridge.
 [12:18:05] OBSERVE: read src/server/agent_console.rs
+[12:18:05] OBSERVE: read web/src/components/AgentConsole.tsx
