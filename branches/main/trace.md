@@ -2218,3 +2218,9 @@ _[Checkpoint: 6a04ca28 — Added agent-decompile-loop CLI integration for Agent 
 _[Checkpoint: 6a04cb40 — Fixed kaijulab serve white page by rebuilding web/dist hash references, rebuilding the embedded binary, and making missing asset paths return 404 instead of SPA fallback HTML.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a04cc9a — edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/st…]_
+---
+
