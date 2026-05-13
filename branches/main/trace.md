@@ -2108,3 +2108,4 @@ _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhan
 [18:52:15] OBSERVE: read src/decompiler/ir/kir.rs
 [18:52:15] OBSERVE: read src/decompiler/ir/kir.rs
 [18:52:15] OBSERVE: searched kir.rs for "Call|Syscall|calling|signature|KirFunction|KirTypeFacts|FunctionQuality|DecompilerQualityReport"
+[18:52:15] OBSERVE: read src/core/decompile.rs
