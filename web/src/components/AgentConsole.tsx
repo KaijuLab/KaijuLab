@@ -159,13 +159,13 @@ export function AgentConsole() {
   const sendLine = (line: string) => {
     if (!line || wsRef.current?.readyState !== WebSocket.OPEN) return;
     const enriched = selectedVaddr && line.includes('{selected}') ? line.split('{selected}').join(selectedVaddr) : line;
-    wsRef.current.send(JSON.stringify({ type: 'input', data: `${enriched}\n` }));
+    wsRef.current.send(JSON.stringify({ type: 'input', data: `${enriched}\r` }));
     terminalRef.current?.focus();
   };
 
   const sendRaw = (data: string) => {
     if (!data || wsRef.current?.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'input', data: normalizeTerminalInput(data) }));
+    wsRef.current.send(JSON.stringify({ type: 'input', data }));
   };
 
   const sendInput = () => {
@@ -319,8 +319,4 @@ function statusClass(status: ConsoleStatus): string {
     default:
       return 'text-kaiju-muted';
   }
-}
-
-function normalizeTerminalInput(data: string): string {
-  return data.replace(/\r/g, '\n');
 }
