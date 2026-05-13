@@ -76,11 +76,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.
 - [x] Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
 - [x] Added KIR call facts with ABI register arguments/returns, enhanced output section, benchmark counters, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
+- [x] Added agent-decompile-loop CLI integration for Agent Console with enhanced decompile/KIR context, docs, tests, and commit 47404c62.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:59 UTC] `main`: Added agent-decompile-loop CLI integration for Agent Console with enhanced decompile/KIR context, docs, tests, and commit 47404c62.
 - [2026-05-13 18:52 UTC] `main`: Added KIR call facts with ABI register arguments/returns, enhanced output section, benchmark counters, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
 - [2026-05-13 18:46 UTC] `main`: Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.
 - [2026-05-13 18:41 UTC] `main`: Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.
