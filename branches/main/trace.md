@@ -899,3 +899,4 @@ _[Checkpoint: 6a03fa41 — Restructured web UI into IDA/Ghidra-style workbench w
 
 [04:15:07] NOTE: Agent console output CR fix: bare carriage returns in agent output normalized to CR + ESC[K before xterm.write to prevent stale status/progress text; input remains raw.
 [04:15:07] OBSERVE: searched web/src/components/AgentConsole.tsx
+[04:15:07] OBSERVE: searched AgentConsole.tsx for "terminalRef\.current\?\.write|sendRaw|sendLine"
