@@ -149,7 +149,11 @@ pub struct DecompilerQualityReport {
     pub functions_with_machine_facts: usize,
     pub functions_with_dataflow_facts: usize,
     pub functions_with_kir: usize,
+    pub functions_with_kir_ssa: usize,
     pub total_kir_ops: usize,
+    pub total_kir_ssa_definitions: usize,
+    pub total_kir_ssa_uses: usize,
+    pub total_kir_phi_nodes: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -174,7 +178,10 @@ pub struct FunctionQuality {
     pub has_machine_facts: bool,
     pub has_dataflow_facts: bool,
     pub has_kir: bool,
+    pub has_kir_ssa: bool,
     pub kir_ops: usize,
+    pub kir_ssa_definitions: usize,
+    pub kir_phi_nodes: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -195,7 +202,11 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_machine_facts = 0usize;
     let mut functions_with_dataflow_facts = 0usize;
     let mut functions_with_kir = 0usize;
+    let mut functions_with_kir_ssa = 0usize;
     let mut total_kir_ops = 0usize;
+    let mut total_kir_ssa_definitions = 0usize;
+    let mut total_kir_ssa_uses = 0usize;
+    let mut total_kir_phi_nodes = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -224,6 +235,7 @@ pub fn decompiler_quality_report_path(
             || machine.frame_size > 0;
         let has_dataflow_facts = dataflow.available && !dataflow.definitions.is_empty();
         let has_kir = kir.available && !kir.ops.is_empty();
+        let has_kir_ssa = kir.ssa.available && kir.ssa.definition_count > 0;
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -240,7 +252,13 @@ pub fn decompiler_quality_report_path(
         if has_kir {
             functions_with_kir += 1;
         }
+        if has_kir_ssa {
+            functions_with_kir_ssa += 1;
+        }
         total_kir_ops += kir.ops.len();
+        total_kir_ssa_definitions += kir.ssa.definition_count;
+        total_kir_ssa_uses += kir.ssa.use_count;
+        total_kir_phi_nodes += kir.ssa.phi_count;
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -273,6 +291,12 @@ pub fn decompiler_quality_report_path(
         if !kir.diagnostics.is_empty() {
             notes.extend(kir.diagnostics.clone());
         }
+        if !has_kir_ssa {
+            notes.push("KIR SSA unavailable or empty".to_string());
+        }
+        if !kir.ssa.diagnostics.is_empty() {
+            notes.extend(kir.ssa.diagnostics.clone());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -284,7 +308,10 @@ pub fn decompiler_quality_report_path(
             has_machine_facts,
             has_dataflow_facts,
             has_kir,
+            has_kir_ssa,
             kir_ops: kir.ops.len(),
+            kir_ssa_definitions: kir.ssa.definition_count,
+            kir_phi_nodes: kir.ssa.phi_count,
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -302,6 +329,7 @@ pub fn decompiler_quality_report_path(
         functions_with_machine_facts,
         functions_with_dataflow_facts,
         functions_with_kir,
+        functions_with_kir_ssa,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -314,6 +342,7 @@ pub fn decompiler_quality_report_path(
         functions_with_machine_facts,
         functions_with_dataflow_facts,
         functions_with_kir,
+        functions_with_kir_ssa,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -330,7 +359,11 @@ pub fn decompiler_quality_report_path(
         functions_with_machine_facts,
         functions_with_dataflow_facts,
         functions_with_kir,
+        functions_with_kir_ssa,
         total_kir_ops,
+        total_kir_ssa_definitions,
+        total_kir_ssa_uses,
+        total_kir_phi_nodes,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -360,6 +393,7 @@ fn decompiler_score(
     machine_facts: usize,
     dataflow_facts: usize,
     kir_facts: usize,
+    kir_ssa_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -373,6 +407,7 @@ fn decompiler_score(
     let reducible_score = 20.0 * reducible as f64 / analyzed;
     let machine_score = 15.0 * machine_facts as f64 / analyzed;
     let kir_score = 10.0 * kir_facts as f64 / analyzed;
+    let kir_ssa_score = 10.0 * kir_ssa_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -383,6 +418,7 @@ fn decompiler_score(
         + reducible_score
         + machine_score
         + kir_score
+        + kir_ssa_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -392,7 +428,9 @@ fn decompiler_score(
     // Register and memory facts are still pre-IR facts, not production
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
-    let cap = if variable_candidates > 0 && kir_facts > 0 {
+    let cap = if variable_candidates > 0 && kir_ssa_facts > 0 {
+        75
+    } else if variable_candidates > 0 && kir_facts > 0 {
         70
     } else if variable_candidates > 0 {
         65
@@ -412,6 +450,7 @@ fn decompiler_blockers(
     machine_facts: usize,
     dataflow_facts: usize,
     kir_facts: usize,
+    kir_ssa_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -432,6 +471,9 @@ fn decompiler_blockers(
     if kir_facts < analyzed_functions {
         blockers.push("KIR lifter coverage is incomplete".to_string());
     }
+    if kir_ssa_facts < analyzed_functions {
+        blockers.push("KIR SSA coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -446,7 +488,12 @@ fn decompiler_blockers(
             "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
                 .to_string(),
         );
-        if kir_facts > 0 {
+        if kir_ssa_facts > 0 {
+            blockers.push(
+                "score is capped at 75 until KIR dominance-frontier SSA/memory SSA/type inference land"
+                    .to_string(),
+            );
+        } else if kir_facts > 0 {
             blockers.push(
                 "score is capped at 70 until KIR-backed SSA/memory SSA/type inference land"
                     .to_string(),
@@ -885,7 +932,7 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         })
         .collect::<Vec<_>>();
 
-    Ok(kir::KirFunction {
+    let mut function_kir = kir::KirFunction {
         available: !ops.is_empty(),
         architecture,
         entry: function.start.clone(),
@@ -893,11 +940,325 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         op_count: ops.len(),
         blocks,
         ops,
+        ssa: kir::KirSsaFacts::default(),
         diagnostics: vec![
             "KIR v0: iced-x86 semantic skeleton; flags and precise operand sizes are partial"
                 .to_string(),
         ],
-    })
+    };
+    function_kir.ssa = analyze_kir_ssa(&function_kir, function);
+    Ok(function_kir)
+}
+
+#[derive(Default)]
+struct KirBlockSsaTemp {
+    predecessors: Vec<String>,
+    live_in: BTreeSet<String>,
+    defined: BTreeSet<String>,
+}
+
+fn analyze_kir_ssa(
+    kir_function: &kir::KirFunction,
+    function: &RecoveredFunction,
+) -> kir::KirSsaFacts {
+    if kir_function.ops.is_empty() {
+        return kir::KirSsaFacts {
+            diagnostics: vec!["KIR SSA unavailable: no KIR ops".to_string()],
+            ..Default::default()
+        };
+    }
+
+    let mut block_ranges = function
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            Some((
+                parse_addr(&block.start)?,
+                parse_addr(&block.end)?,
+                block.start.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    block_ranges.sort_by_key(|(start, _, _)| *start);
+
+    let mut op_to_block = BTreeMap::<usize, String>::new();
+    for block in &kir_function.blocks {
+        for op_id in &block.op_ids {
+            op_to_block.insert(*op_id, block.start.clone());
+        }
+    }
+
+    let mut predecessors = BTreeMap::<String, BTreeSet<String>>::new();
+    for edge in &function.edges {
+        let from = parse_addr(&edge.from)
+            .and_then(|addr| block_for_ip(addr, &block_ranges))
+            .unwrap_or_else(|| edge.from.clone());
+        let to = parse_addr(&edge.to)
+            .and_then(|addr| block_for_ip(addr, &block_ranges))
+            .unwrap_or_else(|| edge.to.clone());
+        predecessors.entry(to).or_default().insert(from);
+    }
+
+    let mut block_states = BTreeMap::<String, KirBlockSsaTemp>::new();
+    for block in &kir_function.blocks {
+        block_states.insert(
+            block.start.clone(),
+            KirBlockSsaTemp {
+                predecessors: predecessors
+                    .get(&block.start)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        );
+    }
+
+    let mut versions = BTreeMap::<String, u32>::new();
+    let mut block_out_versions = BTreeMap::<String, BTreeMap<String, u32>>::new();
+    let mut definitions = Vec::new();
+    let mut uses = Vec::new();
+
+    for op in &kir_function.ops {
+        let block = op_to_block
+            .get(&op.id)
+            .cloned()
+            .unwrap_or_else(|| kir_function.entry.clone());
+        let read_regs = kir_read_registers(op, &kir_function.architecture);
+        let write_regs = kir_write_registers(op, &kir_function.architecture);
+
+        if let Some(state) = block_states.get_mut(&block) {
+            for reg in &read_regs {
+                if !state.defined.contains(reg) {
+                    state.live_in.insert(reg.clone());
+                }
+            }
+        }
+
+        for reg in read_regs {
+            uses.push(kir::KirSsaUse {
+                op_id: op.id,
+                vaddr: op.vaddr.clone(),
+                name: reg.clone(),
+                version: versions.get(&reg).copied(),
+                source: op.instruction.clone(),
+            });
+        }
+
+        if let Some(state) = block_states.get_mut(&block) {
+            for reg in &write_regs {
+                state.defined.insert(reg.clone());
+            }
+        }
+
+        for reg in write_regs {
+            let version = versions.get(&reg).copied().unwrap_or(0).saturating_add(1);
+            versions.insert(reg.clone(), version);
+            definitions.push(kir::KirSsaDefinition {
+                op_id: op.id,
+                vaddr: op.vaddr.clone(),
+                name: reg,
+                version,
+                source: op.instruction.clone(),
+            });
+        }
+        block_out_versions.insert(block, versions.clone());
+    }
+
+    let mut block_state_facts = block_states
+        .into_iter()
+        .map(|(block, state)| {
+            let out_versions = block_out_versions
+                .get(&block)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(name, version)| kir::KirRegisterVersion { name, version })
+                .collect::<Vec<_>>();
+            kir::KirBlockSsa {
+                block,
+                predecessors: state.predecessors,
+                live_in: state.live_in.into_iter().collect(),
+                defined: state.defined.into_iter().collect(),
+                out_versions,
+            }
+        })
+        .collect::<Vec<_>>();
+    block_state_facts.sort_by(|a, b| a.block.cmp(&b.block));
+
+    let mut phi_nodes = Vec::new();
+    for block in &block_state_facts {
+        if block.predecessors.len() < 2 {
+            continue;
+        }
+        let mut candidates = BTreeSet::<String>::new();
+        for predecessor in &block.predecessors {
+            if let Some(out) = block_out_versions.get(predecessor) {
+                candidates.extend(out.keys().cloned());
+            }
+        }
+        for name in candidates {
+            let mut incoming_versions = block
+                .predecessors
+                .iter()
+                .filter_map(|predecessor| {
+                    block_out_versions
+                        .get(predecessor)
+                        .and_then(|out| out.get(&name).copied())
+                        .map(|version| format!("{predecessor}:{name}_{version}"))
+                })
+                .collect::<Vec<_>>();
+            incoming_versions.sort();
+            incoming_versions.dedup();
+            if incoming_versions.len() >= 2 {
+                phi_nodes.push(kir::KirPhiNode {
+                    block: block.block.clone(),
+                    name,
+                    incoming_versions,
+                    reason: "multiple predecessor KIR register versions reach this block"
+                        .to_string(),
+                });
+            }
+        }
+    }
+
+    kir::KirSsaFacts {
+        available: !definitions.is_empty() || !uses.is_empty(),
+        definition_count: definitions.len(),
+        use_count: uses.len(),
+        phi_count: phi_nodes.len(),
+        definitions,
+        uses,
+        block_states: block_state_facts,
+        phi_nodes,
+        diagnostics: vec![
+            "KIR SSA v0: linear rename over recovered block order; dominance-frontier phi insertion pending"
+                .to_string(),
+        ],
+    }
+}
+
+fn kir_read_registers(op: &kir::KirOp, architecture: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for value in &op.inputs {
+        collect_kir_value_registers(value, architecture, &mut out);
+    }
+    for effect in &op.effects {
+        if let kir::KirEffect::ReadRegister(name) = effect {
+            out.insert(kir_canonical_register(name, architecture));
+        }
+    }
+    out
+}
+
+fn kir_write_registers(op: &kir::KirOp, architecture: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for value in &op.outputs {
+        if let kir::KirValue::Register { name, .. } = value {
+            out.insert(kir_canonical_register(name, architecture));
+        }
+    }
+    for effect in &op.effects {
+        if let kir::KirEffect::WriteRegister(name) = effect {
+            out.insert(kir_canonical_register(name, architecture));
+        }
+    }
+    out
+}
+
+fn collect_kir_value_registers(
+    value: &kir::KirValue,
+    architecture: &str,
+    out: &mut BTreeSet<String>,
+) {
+    match value {
+        kir::KirValue::Register { name, .. } => {
+            out.insert(kir_canonical_register(name, architecture));
+        }
+        kir::KirValue::Memory { base, index, .. } => {
+            if let Some(base) = base {
+                out.insert(kir_canonical_register(base, architecture));
+            }
+            if let Some(index) = index {
+                out.insert(kir_canonical_register(index, architecture));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn kir_canonical_register(name: &str, architecture: &str) -> String {
+    let name = name.to_ascii_lowercase();
+    let wide = architecture.contains("64");
+    let canonical = match name.as_str() {
+        "al" | "ah" | "ax" | "eax" | "rax" => {
+            if wide {
+                "rax"
+            } else {
+                "eax"
+            }
+        }
+        "bl" | "bh" | "bx" | "ebx" | "rbx" => {
+            if wide {
+                "rbx"
+            } else {
+                "ebx"
+            }
+        }
+        "cl" | "ch" | "cx" | "ecx" | "rcx" => {
+            if wide {
+                "rcx"
+            } else {
+                "ecx"
+            }
+        }
+        "dl" | "dh" | "dx" | "edx" | "rdx" => {
+            if wide {
+                "rdx"
+            } else {
+                "edx"
+            }
+        }
+        "si" | "esi" | "rsi" => {
+            if wide {
+                "rsi"
+            } else {
+                "esi"
+            }
+        }
+        "di" | "edi" | "rdi" => {
+            if wide {
+                "rdi"
+            } else {
+                "edi"
+            }
+        }
+        "sp" | "esp" | "rsp" => {
+            if wide {
+                "rsp"
+            } else {
+                "esp"
+            }
+        }
+        "bp" | "ebp" | "rbp" => {
+            if wide {
+                "rbp"
+            } else {
+                "ebp"
+            }
+        }
+        "r8b" | "r8w" | "r8d" | "r8" => "r8",
+        "r9b" | "r9w" | "r9d" | "r9" => "r9",
+        "r10b" | "r10w" | "r10d" | "r10" => "r10",
+        "r11b" | "r11w" | "r11d" | "r11" => "r11",
+        "r12b" | "r12w" | "r12d" | "r12" => "r12",
+        "r13b" | "r13w" | "r13d" | "r13" => "r13",
+        "r14b" | "r14w" | "r14d" | "r14" => "r14",
+        "r15b" | "r15w" | "r15d" | "r15" => "r15",
+        _ => name.as_str(),
+    };
+    canonical.to_string()
 }
 
 fn kir_op_from_instruction(
@@ -2205,6 +2566,32 @@ mod tests {
                 .iter()
                 .any(|op| matches!(op.opcode, kir::KirOpcode::Syscall))
         );
+        assert!(analysis.kir.ssa.available);
+        assert!(analysis.kir.ssa.definition_count > 0);
+        assert!(
+            analysis
+                .kir
+                .ssa
+                .definitions
+                .iter()
+                .any(|def| def.name == "eax")
+        );
+        assert!(
+            analysis
+                .kir
+                .ssa
+                .definitions
+                .iter()
+                .all(|def| !matches!(def.name.as_str(), "al" | "bl" | "dl" | "sp"))
+        );
+        assert!(
+            analysis
+                .kir
+                .ssa
+                .uses
+                .iter()
+                .all(|use_| !matches!(use_.name.as_str(), "al" | "bl" | "dl" | "sp"))
+        );
         assert!(
             analysis
                 .dataflow
@@ -2238,6 +2625,8 @@ mod tests {
                 .iter()
                 .any(|op| matches!(op.opcode, kir::KirOpcode::Load))
         );
+        assert!(analysis.kir.ssa.available);
+        assert!(analysis.kir.ssa.phi_count > 0);
         assert!(
             analysis
                 .dataflow

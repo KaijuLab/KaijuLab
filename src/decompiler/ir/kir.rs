@@ -16,6 +16,7 @@ pub struct KirFunction {
     pub op_count: usize,
     pub blocks: Vec<KirBlock>,
     pub ops: Vec<KirOp>,
+    pub ssa: KirSsaFacts,
     pub diagnostics: Vec<String>,
 }
 
@@ -34,6 +35,60 @@ pub struct KirOp {
     pub inputs: Vec<KirValue>,
     pub effects: Vec<KirEffect>,
     pub instruction: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KirSsaFacts {
+    pub available: bool,
+    pub definition_count: usize,
+    pub use_count: usize,
+    pub phi_count: usize,
+    pub definitions: Vec<KirSsaDefinition>,
+    pub uses: Vec<KirSsaUse>,
+    pub block_states: Vec<KirBlockSsa>,
+    pub phi_nodes: Vec<KirPhiNode>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirSsaDefinition {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub name: String,
+    pub version: u32,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirSsaUse {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub name: String,
+    pub version: Option<u32>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirBlockSsa {
+    pub block: String,
+    pub predecessors: Vec<String>,
+    pub live_in: Vec<String>,
+    pub defined: Vec<String>,
+    pub out_versions: Vec<KirRegisterVersion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirRegisterVersion {
+    pub name: String,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirPhiNode {
+    pub block: String,
+    pub name: String,
+    pub incoming_versions: Vec<String>,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
