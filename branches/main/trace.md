@@ -1751,3 +1751,4 @@ _[Checkpoint: 6a04ab02 — Added first-pass decompiler register SSA/data-flow fa
 [16:53:08] OBSERVE: searched absolute_memory_address" for "stack_offset|fn"
 [16:53:08] OBSERVE: searched decompile.rs for "fn stack_offset|fn absolute_memory_address"
 [16:53:08] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+[16:54:08] THINK: Added heuristic memory facts and exact-start function selection after CLI analysis showed containing oversized recovery function produced huge incorrect decompile-analysis output.
