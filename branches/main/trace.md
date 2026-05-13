@@ -1547,3 +1547,4 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.]_
 ---
 
+[15:54:18] OBSERVE: searched src/decompiler for "decompile|decompile\(|HighFunction|stack|pseudo|pseudocode|ir""
