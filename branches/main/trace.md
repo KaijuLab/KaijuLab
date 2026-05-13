@@ -1207,3 +1207,4 @@ _[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploi
 [13:29:39] OBSERVE: searched Cargo.toml for "goblin|object|nix|libc|regex|tempfile"
 [13:29:39] OBSERVE: read src/tools.rs
 [13:29:39] OBSERVE: read src/tools.rs
+[13:29:39] OBSERVE: read src/tools.rs
