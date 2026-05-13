@@ -1380,3 +1380,4 @@ _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-own
 [15:01:13] OBSERVE: read src/core/evidence.rs
 [15:01:13] OBSERVE: read web/src/App.tsx
 [15:01:13] OBSERVE: read web/src/api.ts
+[15:01:13] OBSERVE: searched main.rs for "enum ApiCommands|fn exploit_loop_prompt|analysis_loop|runtime_run_json|debug_probe_json|cyclic_pattern|maybe_append_evidence"
