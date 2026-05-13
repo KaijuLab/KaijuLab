@@ -2301,3 +2301,4 @@ _[Checkpoint: 6a04eb5c — edited kaijulab-hacknote-poc.py; wrote kaijulab-apple
 _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.]_
 ---
 
+[21:56:35] OBSERVE: listed files under .
