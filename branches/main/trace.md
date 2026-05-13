@@ -786,3 +786,4 @@ _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Co
 [03:52:39] OBSERVE: searched package.json for "xterm|terminal|AgentConsole"
 [03:52:39] ACT: edited web/src/components/AgentConsole.tsx
 [03:52:39] OBSERVE: read web/src/components/AgentConsole.tsx
+[03:52:39] OBSERVE: read web/src/components/AgentConsole.tsx
