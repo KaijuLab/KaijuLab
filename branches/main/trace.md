@@ -2480,3 +2480,4 @@ _[Checkpoint: 6a04fd98 — wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubb
 _[Checkpoint: 6a04fdde — Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.]_
 ---
 
+[22:46:03] OBSERVE: searched src
