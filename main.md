@@ -86,11 +86,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py
 - [x] Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
 - [x] Checked PwnableTW batch status and improved exploit loop/runtime defaults: auto sysroot discovery, adjacent libc context, benchmark .so filtering, capture-limit next action.
+- [x] Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:09 UTC] `main`: Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.
 - [2026-05-13 22:01 UTC] `main`: Checked PwnableTW batch status and improved exploit loop/runtime defaults: auto sysroot discovery, adjacent libc context, benchmark .so filtering, capture-limit next action.
 - [2026-05-13 21:24 UTC] `main`: Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
 - [2026-05-13 21:21 UTC] `main`: edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py

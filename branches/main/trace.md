@@ -2387,3 +2387,9 @@ _[Checkpoint: 6a04f4c4 — Checked PwnableTW batch status and improved exploit l
 [22:09:51] OBSERVE: listed files under /opt/sysroots/x86_64/usr/lib64/ld-linux-x86-64.so.2
 [22:09:51] OBSERVE: listed files under lib
 [22:09:51] OBSERVE: listed files under ld-linux-x86-64.so.2
+
+
+---
+_[Checkpoint: 6a04f6af — Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.]_
+---
+
