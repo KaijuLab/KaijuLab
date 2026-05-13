@@ -1832,3 +1832,4 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 [18:00:42] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:02:11] THINK: KIR-backed SSA facts over direct pseudo-C work because SSA/register aliasing gives measurable decompiler foundation before renderer rewrite.
 [18:02:31] OBSERVE: read src/core/decompile.rs
+[18:02:31] OBSERVE: read src/core/decompile.rs
