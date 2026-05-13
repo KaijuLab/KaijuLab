@@ -3,6 +3,8 @@
 import type { Finding } from './types/Finding';
 import type { FindingStatus } from './types/FindingStatus';
 
+const AUTH_TOKEN_KEY = 'kaijulab.authToken';
+
 export interface WorkspaceInfo {
   binary_path: string;
   display_name: string;
@@ -65,16 +67,58 @@ export interface PlaybookRunResponse {
   created_findings: string[];
 }
 
+export function getAuthToken(): string | null {
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setAuthToken(token: string) {
+  try {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    /* localStorage can be unavailable in hardened browser profiles */
+  }
+}
+
+function authHeaders(): HeadersInit {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function promptForAuthToken(): boolean {
+  const token = window.prompt('KaijuLab API token');
+  if (!token) return false;
+  setAuthToken(token);
+  return true;
+}
+
+async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}, retried = false): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const r = await fetch(input, { ...init, headers });
+  if (r.status !== 401 || retried || !promptForAuthToken()) {
+    return r;
+  }
+  return fetchWithAuth(input, init, true);
+}
+
 async function jget<T>(url: string): Promise<T> {
-  const r = await fetch(url);
+  const r = await fetchWithAuth(url);
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
   return r.json() as Promise<T>;
 }
 
 async function jpost<T>(url: string, body: unknown): Promise<T> {
-  const r = await fetch(url, {
+  const r = await fetchWithAuth(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -82,9 +126,9 @@ async function jpost<T>(url: string, body: unknown): Promise<T> {
 }
 
 async function jpatch<T>(url: string, body: unknown): Promise<T> {
-  const r = await fetch(url, {
+  const r = await fetchWithAuth(url, {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -104,14 +148,18 @@ export const api = {
   activateWorkspace: (hash: string) =>
     jpost<{ ok: boolean }>(`/api/workspaces/${hash}/activate`, {}),
   closeWorkspace: async (hash: string) => {
-    const r = await fetch(`/api/workspaces/${hash}`, { method: 'DELETE' });
+    const r = await fetchWithAuth(`/api/workspaces/${hash}`, { method: 'DELETE' });
     if (!r.ok) throw new Error(`close → ${r.status}`);
     return r.json();
   },
   uploadWorkspace: async (file: File): Promise<WorkspaceInfo> => {
     const form = new FormData();
     form.append('file', file);
-    const r = await fetch('/api/workspaces/upload', { method: 'POST', body: form });
+    const r = await fetchWithAuth('/api/workspaces/upload', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+    });
     if (!r.ok) throw new Error(`upload → ${r.status}`);
     return r.json();
   },

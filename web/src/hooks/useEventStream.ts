@@ -1,6 +1,7 @@
 // WebSocket subscription to /api/events with auto-reconnect and store wiring.
 
 import { useEffect } from 'react';
+import { getAuthToken } from '../api';
 import { useStore, type BusEvent } from '../state';
 
 export function useEventStream() {
@@ -15,7 +16,10 @@ export function useEventStream() {
     const connect = () => {
       if (closed) return;
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${window.location.host}/api/events`);
+      const url = new URL(`${proto}//${window.location.host}/api/events`);
+      const token = getAuthToken();
+      if (token) url.searchParams.set('token', token);
+      ws = new WebSocket(url);
 
       ws.onopen = () => {
         backoff = 500;

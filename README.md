@@ -61,7 +61,7 @@ The daemon:
 - Exposes REST endpoints under `/api/...` and a WebSocket event stream at `/api/events`.
 - Opens a per-workspace Unix socket at `~/.kaiju/run/<hash>.sock` so a co-located `kaijulab mcp` shim attaches automatically.
 
-Defaults to `127.0.0.1` only. For remote access, bind a non-loopback address and pass `--token`; all API calls and WS upgrades will then require `Authorization: Bearer <token>`.
+Defaults to `127.0.0.1` only. For remote access, bind a non-loopback address and pass `--token`; all API calls require `Authorization: Bearer <token>` and the `/api/events` WebSocket accepts the same token as `?token=<token>` for browser clients. The bundled web UI prompts for the token on the first protected API call and stores it in browser local storage.
 
 ### `mcp` — the stdio shim
 
@@ -196,10 +196,11 @@ see [`docs/web-mcp-architecture.md`](docs/web-mcp-architecture.md).
 
 ## Environment variables
 
-KaijuLab itself does not require any API keys.  AI interactions happen
+KaijuLab itself does not require any hosted LLM API keys.  AI interactions happen
 through your own Claude Code / Codex installs, which authenticate
-themselves against your existing subscription — KaijuLab never sees a
-token.
+themselves against your existing subscription — KaijuLab never sees those
+tokens. The optional `kaijulab serve --token ...` value is only a local
+HTTP access token for the workbench daemon.
 
 | Variable | Purpose | Default |
 |---|---|---|

@@ -126,10 +126,11 @@ guarantee the browser stays in lockstep.
 
 ### Bind & auth
 
-- Default bind: `127.0.0.1:7878`. Same-origin only; no CORS.
+- Default bind: `127.0.0.1:7878`.
 - `--bind 0.0.0.0 --token <hex>` enables remote access. All API calls and WS
-  upgrades require `Authorization: Bearer <token>`. UI prompts for the token
-  on first load and stores it in `sessionStorage`.
+  upgrades require `Authorization: Bearer <token>`. Browser WebSocket clients
+  may pass the same token as `/api/events?token=<token>`. UI prompts for the
+  token on first protected API call and stores it in `localStorage`.
 
 ### REST surface
 
