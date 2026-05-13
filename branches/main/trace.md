@@ -643,3 +643,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:58:29] OBSERVE: searched server for "list_functions|json=true|FunctionEntry|functions_json"
 [02:58:29] OBSERVE: read src/server/routes.rs
 [02:58:29] OBSERVE: read src/server/routes.rs
+[02:58:29] OBSERVE: read src/core/analysis.rs
