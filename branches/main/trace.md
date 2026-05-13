@@ -1506,3 +1506,4 @@ _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, C
 [15:25:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery.rs
 [15:25:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery.rs
 [15:25:29] OBSERVE: searched README.md
+[15:25:29] OBSERVE: searched README.md for "knowledge-graph|triage-queue|recovery"
