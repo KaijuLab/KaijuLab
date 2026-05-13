@@ -470,6 +470,15 @@ Expert workbench
   Report:
     - scoped Claude/Codex report-section and YARA drafting for selected functions
 
+Agent console
+  Embedded terminal:
+    - daemon-managed PTY session for `claude` or `codex`
+    - browser WebSocket streams terminal output and input
+    - ctrl-c / stop controls for session lifecycle
+  Structured truth:
+    - MCP tool calls, findings, renames, comments, and notes still flow through
+      the event bus and project DB rather than terminal scraping
+
 Bottom timeline
   Granular event stream: tool calls, mutations, agent deltas, errors.
   Filterable by source (user / claude / codex / tool / plugin).

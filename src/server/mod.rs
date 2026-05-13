@@ -1,6 +1,7 @@
 //! HTTP server bootstrap + AppState.  Wires REST routes, WebSocket fan-out,
 //! and the embedded UI static assets together behind a single axum router.
 
+pub mod agent_console;
 pub mod palette;
 pub mod routes;
 pub mod static_assets;
@@ -49,11 +50,13 @@ pub async fn serve(
 
     let auth_layer = middleware::from_fn_with_state(state.clone(), require_auth);
     let api = routes::router(state.clone()).layer(auth_layer.clone());
-    let events = ws::router(state.clone()).layer(auth_layer);
+    let events = ws::router(state.clone()).layer(auth_layer.clone());
+    let agent_console = agent_console::router().layer(auth_layer);
 
     let app = Router::new()
         .merge(api)
         .merge(events)
+        .merge(agent_console)
         .merge(static_assets::router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
@@ -109,7 +112,8 @@ fn bearer_token_matches(req: &Request<Body>, token: &str) -> bool {
 }
 
 fn websocket_query_token_matches(req: &Request<Body>, token: &str) -> bool {
-    if req.uri().path() != "/api/events" {
+    let path = req.uri().path();
+    if path != "/api/events" && !path.starts_with("/api/agent-console/") {
         return false;
     }
 
@@ -196,5 +200,15 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert!(!websocket_query_token_matches(&req, "secret"));
+    }
+
+    #[test]
+    fn websocket_query_token_allows_agent_console_endpoint() {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/agent-console/claude?token=secret")
+            .body(Body::empty())
+            .unwrap();
+        assert!(websocket_query_token_matches(&req, "secret"));
     }
 }

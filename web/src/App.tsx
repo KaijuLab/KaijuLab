@@ -9,6 +9,7 @@ import { Inspector } from './components/Inspector';
 import { Timeline } from './components/Timeline';
 import { FindingsBoard } from './components/FindingsBoard';
 import { ExpertWorkbench } from './components/ExpertWorkbench';
+import { AgentConsole } from './components/AgentConsole';
 import { CommandPalette } from './components/CommandPalette';
 import { OpenBinary } from './components/OpenBinary';
 import { Notices } from './components/Notices';
@@ -70,6 +71,7 @@ export default function App() {
             <Inspector />
           </div>
           <ExpertWorkbench />
+          <AgentConsole />
           <FindingsBoard />
           <Timeline />
           <CommandPalette />
