@@ -1150,3 +1150,4 @@ _[Checkpoint: 6a047595 — Ran Claude+KaijuLab over remaining PwnableTW samples;
 [13:14:16] OBSERVE: searched README.md for "src"
 [13:14:16] OBSERVE: searched src
 [13:14:16] OBSERVE: searched src for "function_context|functions/|checksec|gadget|exec|qemu|playbook|run"
+[13:14:16] OBSERVE: searched src for "ApiCommands|run_agent_console|agent-console|RunPlaybook|AgentRun"
