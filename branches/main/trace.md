@@ -2166,3 +2166,4 @@ _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/retu
 [18:57:43] OBSERVE: read src/main.rs
 [18:57:43] OBSERVE: read README.md
 [18:57:43] OBSERVE: read src/main.rs
+[18:57:43] OBSERVE: read src/main.rs
