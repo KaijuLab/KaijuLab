@@ -1574,3 +1574,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:54:19] OBSERVE: read src/main.rs
 [15:54:19] OBSERVE: read src/main.rs
 [15:54:19] OBSERVE: read src/tools.rs
+[15:54:19] OBSERVE: searched src for "Architecture|Architecture::""
