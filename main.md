@@ -95,11 +95,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py; wrote kaijulab-seethefile-poc.py
 - [x] wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [x] wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
+- [x] Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:40 UTC] `main`: Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.
 - [2026-05-13 22:39 UTC] `main`: wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [2026-05-13 22:38 UTC] `main`: wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [2026-05-13 22:31 UTC] `main`: wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py; wrote kaijulab-seethefile-poc.py
