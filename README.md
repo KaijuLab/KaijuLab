@@ -42,6 +42,7 @@ cargo build --release   # rebuild so web/dist gets embedded into the binary
 |---|---|---|
 | **Workbench daemon** | `kaijulab serve [FILE]` | Run the local web UI + MCP-over-IPC daemon |
 | **MCP stdio shim** | `kaijulab mcp [FILE]` | Attach Claude Code / Codex to the active daemon workspace, or a specific binary |
+| **REST CLI client** | `kaijulab api ...` | Script the running web daemon from shells, bots, Claude, or Codex |
 | **Hook setup** | `kaijulab hook setup` | Create or update project-local `.mcp.json` for Claude Code / Codex |
 | **One-shot analyze** | `kaijulab analyze <FILE>` | Print a JSON summary to stdout and exit |
 | **Run a Rhai plugin** | `kaijulab plugin <NAME> [FILE]` | Execute a `.rhai` script from `~/.kaiju/plugins/` |
@@ -62,6 +63,38 @@ The daemon:
 - Opens a per-workspace Unix socket at `~/.kaiju/run/<hash>.sock` so a co-located `kaijulab mcp` shim attaches automatically.
 
 Defaults to `127.0.0.1` only. For remote access, bind a non-loopback address and pass `--token`; all API calls require `Authorization: Bearer <token>` and the `/api/events` WebSocket accepts the same token as `?token=<token>` for browser clients. The bundled web UI prompts for the token on the first protected API call and stores it in browser local storage.
+
+### `api` — script the web daemon
+
+```bash
+kaijulab serve foo.bin --token "$KAIJULAB_API_TOKEN"
+
+kaijulab api get /api/workspace
+kaijulab api open ./foo.bin
+kaijulab api get '/api/functions?json=true'
+kaijulab api get /api/functions/0x401000/context
+kaijulab api post /api/project/notes --data '{"text":"review parser", "vaddr":"0x401000", "source":"tool"}'
+kaijulab api run-playbook vulnerability_audit --max-functions 200
+kaijulab api agent-run codex --kind triage --vaddr 0x401000 --write-policy suggest
+kaijulab api console claude
+kaijulab api console codex --prompt 'Use kaijulab MCP to summarize the active workspace.' --idle-timeout-secs 30
+```
+
+`kaijulab api` is a bot-friendly wrapper around the same REST endpoints used by
+the browser UI. It prints pretty JSON, sends `Authorization: Bearer ...` from
+`--token` or `KAIJULAB_API_TOKEN`, supports raw `get`, `post`, `patch`, and
+`delete` calls for the full `/api/...` surface, and can attach to the same
+PTY-backed Agent Console terminal used by the Web UI. `post` and `patch` accept
+`--data '<json>'` or `--data @payload.json`.
+
+Convenience subcommands cover the common automation loop:
+
+- `open <FILE>` opens a binary in the daemon and makes it active.
+- `run-playbook <ID>` returns the full playbook evidence and created finding IDs.
+- `agent-run <claude|codex> --kind <triage|report_section|yara> --vaddr <ADDR>` returns the full local-agent result.
+- `console <claude|codex>` attaches stdin/stdout to the daemon-owned Agent Console terminal.
+- `console <claude|codex> --prompt ... --idle-timeout-secs N` sends one prompt to that terminal and exits after quiet output.
+- `wait-job <JOB_ID>` polls `/api/jobs/<JOB_ID>` until `ok`, `failed`, or `cancelled`.
 
 ### `mcp` — the stdio shim
 

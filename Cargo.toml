@@ -24,6 +24,7 @@ clap = { version = "4", features = ["derive"] }
 
 # Async streams
 futures-util = "0.3"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 
 # Binary analysis
 object = "0.36"
