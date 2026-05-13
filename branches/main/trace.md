@@ -1645,3 +1645,9 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 [16:09:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [16:09:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/analysis.rs
 [16:09:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/mod.rs
+
+
+---
+_[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.]_
+---
+

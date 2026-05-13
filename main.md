@@ -62,11 +62,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.
 - [x] Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.
 - [x] Implemented recovery-backed enhanced decompile CLI/API path: core enhanced decompile context with CFG, stack, call/syscall notes; ir-query uses recovery function list and enhanced decompile; verified Start sample and cargo tests.
+- [x] Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 16:09 UTC] `main`: Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.
 - [2026-05-13 15:55 UTC] `main`: Implemented recovery-backed enhanced decompile CLI/API path: core enhanced decompile context with CFG, stack, call/syscall notes; ir-query uses recovery function list and enhanced decompile; verified Start sample and cargo tests.
 - [2026-05-13 15:41 UTC] `main`: Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.
 - [2026-05-13 15:25 UTC] `main`: Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.
