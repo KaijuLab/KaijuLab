@@ -888,3 +888,4 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 [04:12:24] ACT: edited web/src/components/AgentConsole.tsx
 [04:12:24] ACT: edited web/src/components/FindingsBoard.tsx
 [04:12:24] ACT: edited web/src/components/ExpertWorkbench.tsx
+[04:12:24] ACT: edited web/src/components/Timeline.tsx
