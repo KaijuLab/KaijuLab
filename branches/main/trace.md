@@ -1517,3 +1517,4 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 [15:37:25] OBSERVE: read src/project.rs
 [15:37:25] OBSERVE: read src/core/recovery.rs
 [15:37:25] OBSERVE: read src/project.rs
+[15:37:25] OBSERVE: read src/core/recovery.rs
