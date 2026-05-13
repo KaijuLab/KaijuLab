@@ -1834,3 +1834,4 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 [18:02:31] OBSERVE: read src/core/decompile.rs
 [18:02:31] OBSERVE: read src/core/decompile.rs
 [18:02:31] OBSERVE: read src/core/decompile.rs
+[18:02:31] OBSERVE: read src/core/decompile.rs
