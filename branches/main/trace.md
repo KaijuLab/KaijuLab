@@ -981,3 +981,4 @@ _[Checkpoint: 6a03ffbd — Made Agent Console visibly report attach/status and r
 _[Checkpoint: 6a040012 — edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx]_
 ---
 
+[12:02:51] THINK: Add kaijulab api CLI generic REST client over new server routes because bots need scriptable full WebUI surface; avoid parallel typed duplicate API layer.
