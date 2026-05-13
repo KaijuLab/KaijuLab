@@ -1530,3 +1530,4 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 [15:37:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/mod.rs
 [15:37:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/routes.rs
 [15:37:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/routes.rs
+[15:37:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
