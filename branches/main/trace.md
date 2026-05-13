@@ -1354,3 +1354,4 @@ _[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidenc
 [14:52:53] OBSERVE: read README.md
 [14:52:53] OBSERVE: read README.md
 [14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+[14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/debug_session.rs
