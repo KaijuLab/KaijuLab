@@ -1842,3 +1842,4 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.]_
 ---
 
+[18:08:57] THINK: Dominance-frontier KIR phi candidates over renderer work because correct SSA placement is prerequisite for expression simplification and memory SSA.
