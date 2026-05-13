@@ -855,3 +855,4 @@ _[Checkpoint: 6a03f769 — Fixed Agent Console xterm layout overlap and backend 
 _[Checkpoint: 6a03f861 — Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.]_
 ---
 
+[04:06:49] NOTE: Agent console submit fix: removed CR->LF normalization; xterm raw onData passes through unchanged and command/guided prompt submit sends CR for Claude Code raw TUI.
