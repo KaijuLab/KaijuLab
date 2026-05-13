@@ -759,3 +759,4 @@ _[Checkpoint: 6a03f1bb — Hardened embedded Claude/Codex agent console with ses
 _[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable terminal pane sends raw PTY keys, arrows, Ctrl combos, paste, keeps command box fallback, and web build passed.]_
 ---
 
+[03:46:54] NOTE: Agent console renderer fix: replace raw ANSI stripping with dependency-free terminal screen buffer handling OSC, CSI cursor movement, clear screen/line, alternate screen, and resize.
