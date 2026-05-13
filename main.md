@@ -85,11 +85,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote kaijulab-silver-bullet-poc.py; wrote kaijulab-silver-bullet-poc.py
 - [x] edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py
 - [x] Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
+- [x] Checked PwnableTW batch status and improved exploit loop/runtime defaults: auto sysroot discovery, adjacent libc context, benchmark .so filtering, capture-limit next action.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:01 UTC] `main`: Checked PwnableTW batch status and improved exploit loop/runtime defaults: auto sysroot discovery, adjacent libc context, benchmark .so filtering, capture-limit next action.
 - [2026-05-13 21:24 UTC] `main`: Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
 - [2026-05-13 21:21 UTC] `main`: edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py
 - [2026-05-13 21:15 UTC] `main`: wrote kaijulab-silver-bullet-poc.py; wrote kaijulab-silver-bullet-poc.py
