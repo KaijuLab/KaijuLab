@@ -1693,3 +1693,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 [16:29:55] OBSERVE: read src/core/decompile.rs
 [16:29:55] OBSERVE: read src/core/decompile.rs
 [16:29:55] OBSERVE: read src/core/decompile.rs
+[16:29:55] OBSERVE: searched README.md for "src/main.rs"
