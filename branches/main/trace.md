@@ -1141,3 +1141,9 @@ _[Checkpoint: 6a047107 — Validated PwnableTW Start exploit under qemu-i386; up
 [12:59:01] OBSERVE: read /tmp/kaijulab-orw-poc.py
 [12:59:01] OBSERVE: listed files under /tmp/kaijulab-calc-poc.py
 [12:59:01] OBSERVE: listed files under kaijulab-calc-poc.py
+
+
+---
+_[Checkpoint: 6a047595 — Ran Claude+KaijuLab over remaining PwnableTW samples; produced and validated stdlib PoCs for calc and 3x17; generated ORW PoC but local validation blocked by missing i386 dynamic loader.]_
+---
+
