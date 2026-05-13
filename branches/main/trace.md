@@ -789,3 +789,9 @@ _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Co
 [03:52:39] OBSERVE: read web/src/components/AgentConsole.tsx
 [03:52:39] ACT: deleted web/src/components/AgentConsole.tsx
 [03:52:39] ACT: added web/src/components/AgentConsole.tsx
+
+
+---
+_[Checkpoint: 6a03f598 — Replaced Agent Console pre/custom renderer with xterm.js and fit addon, restoring real Claude/Codex terminal input and full-screen rendering; npm build passed.]_
+---
+
