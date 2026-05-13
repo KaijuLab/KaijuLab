@@ -687,3 +687,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:09:39] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/components/Timeline.tsx
 [03:21:28] NOTE: Implemented embedded Agent Console: server /api/agent-console/:agent WebSocket starts Unix PTY via forkpty for claude/codex, web AgentConsole streams output/input with start/ctrl-c/stop, auth token accepted on console WS, docs updated. MCP/project DB remain structured truth.
 [03:22:26] OBSERVE: searched Cargo.toml for "src"
+[03:22:26] OBSERVE: read src/server/mod.rs
