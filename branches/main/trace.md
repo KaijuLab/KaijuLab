@@ -1299,3 +1299,4 @@ _[Checkpoint: 6a04804f — Committed prior CLI primitive work, then added produc
 
 [14:33:19] NOTE: Implemented evidence foundation: JSONL evidence sidecar, CLI --save-evidence for runtime/debug/verify, evidence-list/profiles/session-contract/benchmark-smoke commands, REST endpoints.
 [14:33:19] OBSERVE: read src/core/project_store.rs
+[14:33:19] OBSERVE: read src/core/jobs.rs
