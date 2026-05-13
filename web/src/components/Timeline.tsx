@@ -34,6 +34,7 @@ export function Timeline() {
           {collapsed ? '▶' : '▼'}
         </button>
         <span className="text-kaiju-muted uppercase tracking-wider">Timeline</span>
+        <span className="text-[10px] text-kaiju-muted">filters:</span>
         <div className="ml-3 flex gap-1">
           {SOURCES.map((s) => (
             <button
@@ -50,13 +51,17 @@ export function Timeline() {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-kaiju-muted">{filtered.length} events</span>
+        <span className="ml-auto text-kaiju-muted">{filtered.length} / {timeline.length} events</span>
       </div>
       {!collapsed && (
         <div className="h-32 overflow-auto font-mono">
-          {filtered.map((e, idx) => (
-            <EventRow key={idx} event={e} />
-          ))}
+          {filtered.length > 0 ? (
+            filtered.map((e, idx) => <EventRow key={idx} event={e} />)
+          ) : (
+            <div className="px-3 py-2 text-kaiju-muted">
+              No events match these filters. The source chips filter timeline rows; they do not launch agents.
+            </div>
+          )}
         </div>
       )}
     </footer>
@@ -93,7 +98,9 @@ function summarize(e: any): string {
     case 'job.finished':
       return `${e.id} (${e.status})`;
     case 'tool.call':
-      return `${e.name}`;
+      return `started ${e.name}`;
+    case 'tool.result':
+      return `${e.name} ${e.ok ? 'ok' : 'failed'} (${e.bytes} bytes)`;
     default:
       return JSON.stringify(e).slice(0, 200);
   }

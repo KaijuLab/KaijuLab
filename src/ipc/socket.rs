@@ -8,7 +8,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 
-use crate::core::{analysis, EventBus, Workspace};
+use crate::core::{
+    analysis,
+    events::{now_ts, Event, Source},
+    EventBus, Workspace,
+};
 
 use super::protocol::{IpcOp, IpcRequest, IpcResponse};
 
@@ -70,9 +74,35 @@ async fn handle_op(workspace: &Workspace, bus: &EventBus, req: &IpcRequest) -> I
         IpcOp::WorkspaceInfo => IpcResponse::ok(id, serde_json::to_value(workspace.info()).unwrap()),
         IpcOp::ListTools => IpcResponse::ok(id, crate::mcp::tools::tool_definitions()),
         IpcOp::CallTool { name, args } => {
+            let call_id = uuid::Uuid::new_v4().simple().to_string();
+            bus.emit(Event::ToolCall {
+                id: call_id.clone(),
+                job_id: None,
+                name: name.clone(),
+                source: Source::Claude,
+                ts: now_ts(),
+            });
             match crate::mcp::tools::dispatch_mcp(workspace, Some(bus), name, args) {
-                Ok(text) => IpcResponse::ok(id, Value::String(text)),
-                Err(e) => IpcResponse::err(id, e.to_string()),
+                Ok(text) => {
+                    bus.emit(Event::ToolResult {
+                        id: call_id,
+                        name: name.clone(),
+                        ok: true,
+                        bytes: text.len(),
+                        ts: now_ts(),
+                    });
+                    IpcResponse::ok(id, Value::String(text))
+                }
+                Err(e) => {
+                    bus.emit(Event::ToolResult {
+                        id: call_id,
+                        name: name.clone(),
+                        ok: false,
+                        bytes: e.to_string().len(),
+                        ts: now_ts(),
+                    });
+                    IpcResponse::err(id, e.to_string())
+                }
             }
         }
         IpcOp::ReadResource { uri } => match crate::mcp::resources::read(workspace, uri) {
