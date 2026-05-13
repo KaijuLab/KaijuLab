@@ -659,3 +659,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.tsx; edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts; edited /h…]_
 ---
 
+[03:09:31] NOTE: Fixed MCP/UI visibility gap: daemon IPC now emits tool.call/tool.result for every proxied MCP tool call, so Claude read-tool activity appears in web timeline; Timeline labels source chips as filters and explains empty filtered view.
