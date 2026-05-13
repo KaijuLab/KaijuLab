@@ -890,3 +890,4 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 [04:12:24] ACT: edited web/src/components/ExpertWorkbench.tsx
 [04:12:24] ACT: edited web/src/components/Timeline.tsx
 [04:12:24] ACT: edited web/src/components/CenterWorkspace.tsx
+[04:12:24] ACT: edited web/src/components/LeftRail.tsx
