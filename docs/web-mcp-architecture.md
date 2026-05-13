@@ -474,7 +474,12 @@ Agent console
   Embedded terminal:
     - daemon-managed PTY session for `claude` or `codex`
     - browser WebSocket streams terminal output and input
-    - ctrl-c / stop controls for session lifecycle
+    - session registry supports attach/reconnect after browser reload
+    - transcript tail is replayed on attach and full logs live under
+      `~/.kaiju/agent-console/`
+    - resize, ctrl-c, detach, and stop controls for session lifecycle
+    - guided prompt buttons send common reverse-engineering tasks into the
+      terminal session
   Structured truth:
     - MCP tool calls, findings, renames, comments, and notes still flow through
       the event bus and project DB rather than terminal scraping

@@ -44,6 +44,14 @@ export interface AgentRunResponse {
   applied: boolean;
 }
 
+export interface AgentConsoleSessionInfo {
+  agent: string;
+  command: string;
+  running: boolean;
+  started_at: number;
+  transcript_path: string;
+}
+
 export type PlaybookId =
   | 'malware_triage'
   | 'ctf_flag_hunt'
@@ -235,6 +243,7 @@ export const api = {
       vaddr,
       write_policy,
     }),
+  listAgentConsoleSessions: () => jget<AgentConsoleSessionInfo[]>('/api/agent-console'),
   listPlaybooks: () => jget<Playbook[]>('/api/playbooks'),
   runPlaybook: (id: PlaybookId, max_functions = 120, create_findings = true) =>
     jpost<PlaybookRunResponse>(`/api/playbooks/${id}/run`, {

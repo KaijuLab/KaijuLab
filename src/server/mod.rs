@@ -24,6 +24,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::core::{EventBus, JobRunner, WorkspaceRegistry};
+use agent_console::AgentConsoleManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,6 +32,7 @@ pub struct AppState {
     pub events: EventBus,
     pub jobs: JobRunner,
     pub auth_token: Option<Arc<String>>,
+    pub agent_console: AgentConsoleManager,
 }
 
 pub async fn serve(
@@ -46,12 +48,13 @@ pub async fn serve(
         events: events.clone(),
         jobs,
         auth_token: auth_token.map(Arc::new),
+        agent_console: AgentConsoleManager::new(),
     };
 
     let auth_layer = middleware::from_fn_with_state(state.clone(), require_auth);
     let api = routes::router(state.clone()).layer(auth_layer.clone());
     let events = ws::router(state.clone()).layer(auth_layer.clone());
-    let agent_console = agent_console::router().layer(auth_layer);
+    let agent_console = agent_console::router(state.clone()).layer(auth_layer);
 
     let app = Router::new()
         .merge(api)
