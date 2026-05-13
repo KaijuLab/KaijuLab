@@ -13,6 +13,7 @@ pub mod jobs;
 pub mod knowledge;
 pub mod playbooks;
 pub mod project_store;
+pub mod recovery;
 pub mod workstation;
 pub mod workspace;
 

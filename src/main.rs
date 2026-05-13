@@ -532,6 +532,51 @@ enum ApiCommands {
         limit: usize,
     },
 
+    /// Run professional recursive function/CFG/xref recovery.
+    RecoveryIndex {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions to recover.
+        #[arg(long, default_value_t = 1000)]
+        max_functions: usize,
+
+        /// Optional path to write the JSON artifact.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Query graph-backed code xrefs to an address.
+    RecoveryXrefs {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Target virtual address.
+        #[arg(value_name = "VADDR")]
+        vaddr: String,
+
+        /// Maximum functions to recover before querying.
+        #[arg(long, default_value_t = 1000)]
+        max_functions: usize,
+    },
+
+    /// Query recovered CFG for a function start address.
+    RecoveryCfg {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Function start virtual address.
+        #[arg(value_name = "VADDR")]
+        vaddr: String,
+
+        /// Maximum functions to recover before querying.
+        #[arg(long, default_value_t = 1000)]
+        max_functions: usize,
+    },
+
     /// Diagnose qemu/gdb/container/sysroot readiness.
     SysrootDoctor {
         /// Override the active daemon binary path.
@@ -1162,6 +1207,46 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             let ws = Workspace::open(&path, WritePolicy::default())?;
             core::knowledge::triage_queue(&ws, limit)?
+        }
+        ApiCommands::RecoveryIndex {
+            file,
+            max_functions,
+            output,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value = serde_json::to_value(core::recovery::recover(&path, max_functions)?)?;
+            if let Some(output) = output {
+                write_json_artifact(&output, &value)?;
+            }
+            value
+        }
+        ApiCommands::RecoveryXrefs {
+            file,
+            vaddr,
+            max_functions,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let target = parse_int(&vaddr)?;
+            serde_json::json!({
+                "kind": "recovery_xrefs",
+                "binary": path,
+                "target": format!("0x{target:x}"),
+                "xrefs": core::recovery::xrefs_to(&path, target, max_functions)?,
+            })
+        }
+        ApiCommands::RecoveryCfg {
+            file,
+            vaddr,
+            max_functions,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let target = parse_int(&vaddr)?;
+            serde_json::json!({
+                "kind": "recovery_cfg",
+                "binary": path,
+                "target": format!("0x{target:x}"),
+                "function": core::recovery::cfg_for(&path, target, max_functions)?,
+            })
         }
         ApiCommands::SysrootDoctor { file } => {
             let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)

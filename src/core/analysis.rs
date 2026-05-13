@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use crate::tools;
 
-use super::workspace::Workspace;
+use super::{recovery, workspace::Workspace};
 
 fn raw(name: &str, args: Value) -> Result<String> {
     let r = tools::dispatch(name, &args);
@@ -55,6 +55,24 @@ pub fn strings_extract(
 }
 
 pub fn list_functions(ws: &Workspace, as_json: bool) -> Result<String> {
+    if as_json {
+        if let Ok(index) = recovery::recover(ws.binary_path(), 1000) {
+            return Ok(serde_json::to_string(&serde_json::json!({
+                "source": "professional_recovery",
+                "total": index.functions.len(),
+                "functions": index.functions.iter().map(|f| serde_json::json!({
+                    "address": f.start,
+                    "vaddr": f.start,
+                    "size": f.size,
+                    "name": f.name,
+                    "confidence": f.confidence,
+                    "blocks": f.blocks.len(),
+                    "edges": f.edges.len(),
+                    "source": f.source,
+                })).collect::<Vec<_>>(),
+            }))?);
+        }
+    }
     raw(
         "list_functions",
         json!({ "path": ws.binary_path_str(), "json": as_json }),
@@ -77,6 +95,15 @@ pub fn decompile(ws: &Workspace, vaddr: u64) -> Result<String> {
 }
 
 pub fn xrefs_to(ws: &Workspace, vaddr: u64) -> Result<String> {
+    if let Ok(xrefs) = recovery::xrefs_to(ws.binary_path(), vaddr, 2000) {
+        if !xrefs.is_empty() {
+            return Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "source": "professional_recovery",
+                "target": format!("0x{vaddr:x}"),
+                "xrefs": xrefs,
+            }))?);
+        }
+    }
     raw(
         "xrefs_to",
         json!({ "path": ws.binary_path_str(), "vaddr": vaddr }),
@@ -91,6 +118,12 @@ pub fn xrefs_data(ws: &Workspace, vaddr: u64) -> Result<String> {
 }
 
 pub fn cfg_view(ws: &Workspace, vaddr: u64) -> Result<String> {
+    if let Ok(Some(function)) = recovery::cfg_for(ws.binary_path(), vaddr, 2000) {
+        return Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "source": "professional_recovery",
+            "function": function,
+        }))?);
+    }
     raw(
         "cfg_view",
         json!({ "path": ws.binary_path_str(), "vaddr": vaddr }),

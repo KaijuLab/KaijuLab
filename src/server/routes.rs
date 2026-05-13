@@ -31,6 +31,7 @@ use crate::{
         },
         knowledge,
         playbooks::{self, PlaybookId, PlaybookRunRequest},
+        recovery,
         project_store,
         workspace::{read_recent, socket_path_for, Workspace},
     },
@@ -63,6 +64,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/graph/cfg/:vaddr", get(cfg))
         .route("/api/knowledge/graph", get(knowledge_graph))
         .route("/api/knowledge/triage", get(knowledge_triage))
+        .route("/api/recovery", get(recovery_index))
+        .route("/api/recovery/xrefs/:vaddr", get(recovery_xrefs))
+        .route("/api/recovery/cfg/:vaddr", get(recovery_cfg))
         .route("/api/evidence", get(list_evidence))
         .route("/api/execution-profiles", get(execution_profiles))
         .route("/api/debug/session-contract", get(debug_session_contract))
@@ -379,6 +383,53 @@ async fn knowledge_triage(
     knowledge::triage_queue(&ws, q.limit.unwrap_or(50))
         .map(Json)
         .map_err(ApiError::from)
+}
+
+#[derive(Deserialize)]
+struct RecoveryQuery {
+    max_functions: Option<usize>,
+}
+
+async fn recovery_index(
+    State(s): State<AppState>,
+    Query(q): Query<RecoveryQuery>,
+) -> Result<Json<recovery::RecoveryIndex>, ApiError> {
+    let ws = active(&s)?;
+    recovery::recover(ws.binary_path(), q.max_functions.unwrap_or(1000))
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn recovery_xrefs(
+    State(s): State<AppState>,
+    Query(q): Query<RecoveryQuery>,
+    Path(vaddr): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let v = parse_vaddr(&vaddr)?;
+    let xrefs = recovery::xrefs_to(ws.binary_path(), v, q.max_functions.unwrap_or(1000))
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "kind": "recovery_xrefs",
+        "target": format!("0x{v:x}"),
+        "xrefs": xrefs,
+    })))
+}
+
+async fn recovery_cfg(
+    State(s): State<AppState>,
+    Query(q): Query<RecoveryQuery>,
+    Path(vaddr): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let v = parse_vaddr(&vaddr)?;
+    let function = recovery::cfg_for(ws.binary_path(), v, q.max_functions.unwrap_or(1000))
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "kind": "recovery_cfg",
+        "target": format!("0x{v:x}"),
+        "function": function,
+    })))
 }
 
 // ─── Dynamic evidence and execution contracts ───────────────────────────────

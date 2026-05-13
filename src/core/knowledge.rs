@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{evidence, workstation, workspace::Workspace};
+use super::{evidence, recovery, workstation, workspace::Workspace};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeGraph {
@@ -116,6 +116,9 @@ pub fn build(ws: &Workspace, max_functions: usize, max_evidence: usize) -> Resul
     if !nodes.iter().any(|n| n.kind == "function") {
         add_entry_node(&index, &mut nodes, &mut edges, &mut address_to_node);
     }
+    if let Ok(recovered) = recovery::recover(ws.binary_path(), max_functions) {
+        add_recovered_functions(&recovered, &mut nodes, &mut edges, &mut address_to_node);
+    }
 
     overlay_project(ws, &mut nodes, &address_to_node);
     let evidence_links = link_evidence(&records, &address_to_node);
@@ -167,6 +170,68 @@ fn binary_node(ws: &Workspace, index: &Value) -> KnowledgeNode {
         facts,
         provenance: vec!["index-build".to_string(), "project-db".to_string(), "evidence-jsonl".to_string()],
     }
+}
+
+fn add_recovered_functions(
+    recovered: &recovery::RecoveryIndex,
+    nodes: &mut Vec<KnowledgeNode>,
+    edges: &mut Vec<KnowledgeEdge>,
+    address_to_node: &mut BTreeMap<String, String>,
+) {
+    for function in &recovered.functions {
+        let id = format!("function:{}", normalize_addr(&function.start));
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == id) {
+            node.size = Some(function.size);
+            node.label = function.name.clone();
+            node.tags.push("recovered".to_string());
+            node.facts.insert("recovery".to_string(), json!(function));
+            node.provenance.push("professional-recovery:function".to_string());
+        } else {
+            let mut facts = BTreeMap::new();
+            facts.insert("recovery".to_string(), json!(function));
+            nodes.push(KnowledgeNode {
+                id: id.clone(),
+                kind: "function".to_string(),
+                label: function.name.clone(),
+                vaddr: Some(function.start.clone()),
+                size: Some(function.size),
+                tags: vec!["recovered".to_string(), function.confidence.clone()],
+                facts,
+                provenance: vec!["professional-recovery:function".to_string()],
+            });
+            edges.push(KnowledgeEdge {
+                from: "binary".to_string(),
+                to: id.clone(),
+                kind: "contains".to_string(),
+                provenance: vec!["professional-recovery".to_string()],
+            });
+        }
+        address_to_node.insert(normalize_addr(&function.start), id.clone());
+    }
+
+    for xref in &recovered.xrefs {
+        let Some(from_fn) = xref
+            .function
+            .as_ref()
+            .map(|addr| format!("function:{}", normalize_addr(addr)))
+        else {
+            continue;
+        };
+        let Some(to_fn) = address_to_node.get(&normalize_addr(&xref.to)).cloned() else {
+            continue;
+        };
+        if from_fn == to_fn {
+            continue;
+        }
+        edges.push(KnowledgeEdge {
+            from: from_fn,
+            to: to_fn,
+            kind: xref.kind.clone(),
+            provenance: vec![format!("professional-recovery:xref:{}", xref.from)],
+        });
+    }
+    edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+    edges.dedup_by(|a, b| a.from == b.from && a.to == b.to && a.kind == b.kind);
 }
 
 fn add_function_nodes(
