@@ -1475,3 +1475,9 @@ _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run,
 [15:15:39] THINK: Derived knowledge graph from static index + project DB + evidence JSONL instead of duplicating facts into a new persistent store; durable inputs remain source of truth.
 [15:15:39] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/knowledge.rs
 [15:15:39] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+
+
+---
+_[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.]_
+---
+

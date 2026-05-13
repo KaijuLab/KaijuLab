@@ -58,11 +58,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
 - [x] Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.
 - [x] Committed web debug/evidence pane plus benchmark-run, crash-offset, and analysis-loop live debug/evidence guidance.
+- [x] Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 15:16 UTC] `main`: Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.
 - [2026-05-13 15:04 UTC] `main`: Committed web debug/evidence pane plus benchmark-run, crash-offset, and analysis-loop live debug/evidence guidance.
 - [2026-05-13 14:53 UTC] `main`: Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.
 - [2026-05-13 14:33 UTC] `main`: Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
