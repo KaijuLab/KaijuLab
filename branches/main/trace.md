@@ -843,3 +843,4 @@ _[Checkpoint: 6a03f769 — Fixed Agent Console xterm layout overlap and backend 
 ---
 
 [04:04:23] NOTE: Agent console input fix: xterm Enter CR normalized to LF for PTY input; command/guided prompt submit also sends LF so Claude/Codex accept return consistently.
+[04:04:23] OBSERVE: read web/src/components/AgentConsole.tsx
