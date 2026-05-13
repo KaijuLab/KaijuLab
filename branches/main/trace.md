@@ -2084,3 +2084,4 @@ _[Checkpoint: 6a04c5cf — Added typed KIR expression preview to enhanced decomp
 [18:46:38] OBSERVE: read src/core/decompile.rs
 [18:46:38] OBSERVE: read src/core/decompile.rs
 [18:46:38] OBSERVE: read src/core/decompile.rs
+[18:46:38] OBSERVE: read src/core/decompile.rs
