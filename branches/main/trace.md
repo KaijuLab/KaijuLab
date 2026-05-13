@@ -939,3 +939,4 @@ _[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carri
 _[Checkpoint: 6a03fd9c — Reflected MCP function read calls into UI navigation; cargo test server and npm build passed.]_
 ---
 
+[04:32:19] NOTE: Agent console recovery fix: DELETE /api/agent-console/:agent terminates daemon session; restart clears stale PTY before reconnect; WS handlers ignore stale sockets; command fields readable when disabled.
