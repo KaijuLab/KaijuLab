@@ -849,3 +849,9 @@ _[Checkpoint: 6a03f769 — Fixed Agent Console xterm layout overlap and backend 
 [04:04:23] OBSERVE: read web/src/components/AgentConsole.tsx
 [04:04:23] ACT: edited web/src/components/AgentConsole.tsx
 [04:04:23] ACT: edited web/src/components/AgentConsole.tsx
+
+
+---
+_[Checkpoint: 6a03f861 — Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.]_
+---
+

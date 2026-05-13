@@ -33,11 +33,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Replaced Agent Console pre/custom renderer with xterm.js and fit addon, restoring real Claude/Codex terminal input and full-screen rendering; npm build passed.
 - [x] edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
 - [x] Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.
+- [x] Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 04:04 UTC] `main`: Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
 - [2026-05-13 04:00 UTC] `main`: Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.
 - [2026-05-13 03:55 UTC] `main`: edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
 - [2026-05-13 03:52 UTC] `main`: Replaced Agent Console pre/custom renderer with xterm.js and fit addon, restoring real Claude/Codex terminal input and full-screen rendering; npm build passed.
