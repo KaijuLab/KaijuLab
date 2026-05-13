@@ -2071,3 +2071,9 @@ _[Checkpoint: 6a04c46a — edited /home/koukyosyumei/Dev/KaijuLab/src/core/decom
 [18:41:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:41:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:41:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c5cf — Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.]_
+---
+
