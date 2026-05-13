@@ -1,4 +1,7 @@
-import { type KeyboardEvent, type ClipboardEvent, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
 import { api, getAuthToken, type AgentConsoleSessionInfo } from '../api';
 import { useStore } from '../state';
 
@@ -17,41 +20,55 @@ const GUIDED_PROMPTS = [
   'Review the current findings. Separate confirmed evidence from hypotheses and list what I should verify manually.',
 ];
 
-const TERMINAL_KEYS: Record<string, string> = {
-  Enter: '\r',
-  Backspace: '\x7f',
-  Tab: '\t',
-  Escape: '\x1b',
-  ArrowUp: '\x1b[A',
-  ArrowDown: '\x1b[B',
-  ArrowRight: '\x1b[C',
-  ArrowLeft: '\x1b[D',
-  Home: '\x1b[H',
-  End: '\x1b[F',
-  Delete: '\x1b[3~',
-  PageUp: '\x1b[5~',
-  PageDown: '\x1b[6~',
-};
-
 export function AgentConsole() {
   const { workspace, selectedVaddr, notify } = useStore();
   const [agent, setAgent] = useState<Agent>('claude');
   const [status, setStatus] = useState<ConsoleStatus>('idle');
-  const [output, setOutput] = useState('');
   const [draft, setDraft] = useState('');
   const [sessions, setSessions] = useState<AgentConsoleSessionInfo[]>([]);
   const [currentSession, setCurrentSession] = useState<AgentConsoleSessionInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const outputRef = useRef<HTMLPreElement>(null);
-  const terminalRef = useRef(new TerminalScreen(120, 32));
+  const terminalHostRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
-    outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
-  }, [output]);
-
-  useEffect(() => {
+    if (!terminalHostRef.current) return;
+    const term = new Terminal({
+      cursorBlink: true,
+      convertEol: false,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontSize: 11,
+      lineHeight: 1.25,
+      scrollback: 5000,
+      theme: {
+        background: '#000000',
+        foreground: '#f4f4f5',
+        cursor: '#7dd3fc',
+        selectionBackground: '#334155',
+      },
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(terminalHostRef.current);
+    term.writeln('Start or attach to a Claude/Codex terminal session.');
+    term.writeln('This pane is a real PTY terminal: click here and type normally.');
+    const dataDisposable = term.onData((data) => sendRaw(data));
+    const resizeDisposable = term.onResize(({ cols, rows }) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+    setTimeout(() => fitAddon.fit(), 0);
     refreshSessions();
     return () => {
+      dataDisposable.dispose();
+      resizeDisposable.dispose();
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
       wsRef.current?.close();
     };
   }, []);
@@ -68,8 +85,7 @@ export function AgentConsole() {
 
   const connect = () => {
     wsRef.current?.close();
-    terminalRef.current.reset();
-    setOutput('');
+    terminalRef.current?.clear();
     setStatus('connecting');
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = new URL(`${proto}//${window.location.host}/api/agent-console/${agent}`);
@@ -82,7 +98,7 @@ export function AgentConsole() {
       setStatus('live');
       setTimeout(() => {
         sendResize();
-        outputRef.current?.focus();
+        terminalRef.current?.focus();
       }, 0);
     };
     ws.onclose = () => {
@@ -102,12 +118,10 @@ export function AgentConsole() {
           refreshSessions();
           return;
         }
-        if (parsed.type === 'error') {
-          notify('error', parsed.data);
-        }
-        applyTerminalOutput(parsed.data);
+        if (parsed.type === 'error') notify('error', parsed.data);
+        terminalRef.current?.write(parsed.data);
       } catch {
-        applyTerminalOutput(String(msg.data));
+        terminalRef.current?.write(String(msg.data));
       }
     };
   };
@@ -124,8 +138,7 @@ export function AgentConsole() {
     try {
       const info = await api.clearAgentConsoleTranscript(agent);
       setCurrentSession(info);
-      terminalRef.current.reset();
-      setOutput('');
+      terminalRef.current?.clear();
       refreshSessions();
       notify('info', `${agent} console transcript cleared`);
     } catch (e) {
@@ -147,40 +160,12 @@ export function AgentConsole() {
     if (!line || wsRef.current?.readyState !== WebSocket.OPEN) return;
     const enriched = selectedVaddr && line.includes('{selected}') ? line.split('{selected}').join(selectedVaddr) : line;
     wsRef.current.send(JSON.stringify({ type: 'input', data: `${enriched}\r` }));
-  };
-
-  const applyTerminalOutput = (data: string) => {
-    terminalRef.current.write(data);
-    setOutput(terminalRef.current.render());
+    terminalRef.current?.focus();
   };
 
   const sendRaw = (data: string) => {
     if (!data || wsRef.current?.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: 'input', data }));
-  };
-
-  const handleTerminalKeyDown = (e: KeyboardEvent<HTMLPreElement>) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN || e.metaKey || e.altKey) return;
-    let data = '';
-    if (e.ctrlKey && e.key.length === 1) {
-      const code = e.key.toUpperCase().charCodeAt(0);
-      if (code >= 64 && code <= 95) data = String.fromCharCode(code - 64);
-    } else {
-      data =
-        TERMINAL_KEYS[e.key] ??
-        (e.key.length === 1 ? e.key : '');
-    }
-    if (!data) return;
-    e.preventDefault();
-    sendRaw(data);
-  };
-
-  const handleTerminalPaste = (e: ClipboardEvent<HTMLPreElement>) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-    const text = e.clipboardData.getData('text');
-    if (!text) return;
-    e.preventDefault();
-    sendRaw(text.replace(/\r?\n/g, '\r'));
   };
 
   const sendInput = () => {
@@ -189,13 +174,7 @@ export function AgentConsole() {
   };
 
   const sendResize = () => {
-    const el = outputRef.current;
-    if (!el || wsRef.current?.readyState !== WebSocket.OPEN) return;
-    const cols = Math.max(80, Math.floor(el.clientWidth / 7));
-    const rows = Math.max(18, Math.floor(el.clientHeight / 16));
-    terminalRef.current.resize(cols, rows);
-    setOutput(terminalRef.current.render());
-    wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
+    fitAddonRef.current?.fit();
   };
 
   const existing = sessions.find((s) => s.agent === agent && s.running);
@@ -262,17 +241,11 @@ export function AgentConsole() {
 
       <div className="grid h-[calc(100%-29px)] grid-cols-[1fr_300px]">
         <div className="grid min-w-0 grid-rows-[1fr_auto]">
-          <pre
-            ref={outputRef}
-            tabIndex={status === 'live' ? 0 : -1}
-            onKeyDown={handleTerminalKeyDown}
-            onPaste={handleTerminalPaste}
-            onMouseDown={() => outputRef.current?.focus()}
-            className="mono min-h-0 overflow-auto whitespace-pre bg-black p-3 text-[11px] leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-kaiju-accent"
-          >
-            {output ||
-              'Start or attach to a Claude/Codex terminal session. Click this terminal pane to type directly, or use the command box below.'}
-          </pre>
+          <div
+            ref={terminalHostRef}
+            onMouseDown={() => terminalRef.current?.focus()}
+            className="min-h-0 overflow-hidden bg-black p-2 outline-none [&_.xterm]:h-full [&_.xterm-viewport]:!overflow-y-auto"
+          />
           <div className="flex gap-2 border-t border-kaiju-border p-2">
             <input
               value={draft}
@@ -281,7 +254,6 @@ export function AgentConsole() {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   sendInput();
-                  outputRef.current?.focus();
                 }
               }}
               disabled={status !== 'live'}
@@ -346,205 +318,5 @@ function statusClass(status: ConsoleStatus): string {
       return 'text-kaiju-warn';
     default:
       return 'text-kaiju-muted';
-  }
-}
-
-class TerminalScreen {
-  private cols: number;
-  private rows: number;
-  private row = 0;
-  private col = 0;
-  private state: 'normal' | 'esc' | 'csi' | 'osc' | 'osc_esc' | 'charset' = 'normal';
-  private csi = '';
-  private cells: string[][];
-
-  constructor(cols: number, rows: number) {
-    this.cols = cols;
-    this.rows = rows;
-    this.cells = this.emptyCells(cols, rows);
-  }
-
-  reset() {
-    this.row = 0;
-    this.col = 0;
-    this.state = 'normal';
-    this.csi = '';
-    this.cells = this.emptyCells(this.cols, this.rows);
-  }
-
-  resize(cols: number, rows: number) {
-    if (cols === this.cols && rows === this.rows) return;
-    const next = this.emptyCells(cols, rows);
-    for (let r = 0; r < Math.min(rows, this.rows); r += 1) {
-      for (let c = 0; c < Math.min(cols, this.cols); c += 1) {
-        next[r][c] = this.cells[r][c];
-      }
-    }
-    this.cols = cols;
-    this.rows = rows;
-    this.cells = next;
-    this.row = Math.min(this.row, rows - 1);
-    this.col = Math.min(this.col, cols - 1);
-  }
-
-  write(text: string) {
-    for (const ch of text) this.feed(ch);
-  }
-
-  render(): string {
-    return this.cells.map((line) => line.join('').trimEnd()).join('\n').trimEnd();
-  }
-
-  private feed(ch: string) {
-    if (this.state === 'osc') {
-      if (ch === '\x07') this.state = 'normal';
-      else if (ch === '\x1b') this.state = 'osc_esc';
-      return;
-    }
-    if (this.state === 'osc_esc') {
-      this.state = ch === '\\' ? 'normal' : 'osc';
-      return;
-    }
-    if (this.state === 'charset') {
-      this.state = 'normal';
-      return;
-    }
-    if (this.state === 'esc') {
-      if (ch === '[') {
-        this.csi = '';
-        this.state = 'csi';
-      } else if (ch === ']') {
-        this.state = 'osc';
-      } else if (ch === '(' || ch === ')' || ch === '*' || ch === '+') {
-        this.state = 'charset';
-      } else {
-        if (ch === 'c') this.reset();
-        this.state = 'normal';
-      }
-      return;
-    }
-    if (this.state === 'csi') {
-      if (ch >= '@' && ch <= '~') {
-        this.handleCsi(this.csi, ch);
-        this.state = 'normal';
-      } else {
-        this.csi += ch;
-      }
-      return;
-    }
-    if (ch === '\x1b') {
-      this.state = 'esc';
-    } else if (ch === '\r') {
-      this.col = 0;
-    } else if (ch === '\n') {
-      this.lineFeed();
-    } else if (ch === '\b') {
-      this.col = Math.max(0, this.col - 1);
-    } else if (ch >= ' ' && ch !== '\x7f') {
-      this.put(ch);
-    }
-  }
-
-  private handleCsi(raw: string, final: string) {
-    const privateMode = raw.startsWith('?');
-    const params = raw
-      .replace(/^[?>!]/, '')
-      .split(';')
-      .map((part) => Number.parseInt(part, 10));
-    const value = (index: number, fallback: number) =>
-      Number.isFinite(params[index]) && params[index] > 0 ? params[index] : fallback;
-
-    switch (final) {
-      case 'A':
-        this.row = Math.max(0, this.row - value(0, 1));
-        break;
-      case 'B':
-        this.row = Math.min(this.rows - 1, this.row + value(0, 1));
-        break;
-      case 'C':
-        this.col = Math.min(this.cols - 1, this.col + value(0, 1));
-        break;
-      case 'D':
-        this.col = Math.max(0, this.col - value(0, 1));
-        break;
-      case 'G':
-        this.col = Math.min(this.cols - 1, value(0, 1) - 1);
-        break;
-      case 'H':
-      case 'f':
-        this.row = Math.min(this.rows - 1, value(0, 1) - 1);
-        this.col = Math.min(this.cols - 1, value(1, 1) - 1);
-        break;
-      case 'J':
-        this.clearDisplay(value(0, 0));
-        break;
-      case 'K':
-        this.clearLine(value(0, 0));
-        break;
-      case 'm':
-      case 'r':
-        break;
-      case 'h':
-      case 'l':
-        if (privateMode && raw.includes('1049')) {
-          this.row = 0;
-          this.col = 0;
-          this.clearDisplay(2);
-        }
-        break;
-    }
-  }
-
-  private put(ch: string) {
-    this.cells[this.row][this.col] = ch;
-    this.col += 1;
-    if (this.col >= this.cols) {
-      this.col = 0;
-      this.lineFeed();
-    }
-  }
-
-  private lineFeed() {
-    if (this.row >= this.rows - 1) {
-      this.cells.shift();
-      this.cells.push(this.emptyLine(this.cols));
-    } else {
-      this.row += 1;
-    }
-  }
-
-  private clearDisplay(mode: number) {
-    if (mode === 2 || mode === 3) {
-      this.cells = this.emptyCells(this.cols, this.rows);
-      this.row = 0;
-      this.col = 0;
-      return;
-    }
-    if (mode === 1) {
-      for (let r = 0; r <= this.row; r += 1) {
-        const start = r === this.row ? this.col : 0;
-        const end = r === this.row ? this.col + 1 : this.cols;
-        this.cells[r].fill(' ', start, end);
-      }
-      return;
-    }
-    for (let r = this.row; r < this.rows; r += 1) {
-      const start = r === this.row ? this.col : 0;
-      this.cells[r].fill(' ', start);
-    }
-  }
-
-  private clearLine(mode: number) {
-    if (mode === 1) this.cells[this.row].fill(' ', 0, this.col + 1);
-    else if (mode === 2) this.cells[this.row].fill(' ');
-    else this.cells[this.row].fill(' ', this.col);
-  }
-
-  private emptyCells(cols: number, rows: number): string[][] {
-    return Array.from({ length: rows }, () => this.emptyLine(cols));
-  }
-
-  private emptyLine(cols: number): string[] {
-    return Array.from({ length: cols }, () => ' ');
   }
 }
