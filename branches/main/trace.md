@@ -1657,3 +1657,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 [16:23:16] OBSERVE: listed files under PwnableTW
 [16:23:16] OBSERVE: searched core for "decompile_analysis|decompile_enhanced|struct Decompile|FunctionInsights|ir_query_json|Benchmark"
 [16:23:16] OBSERVE: read src/core/decompile.rs
+[16:23:16] OBSERVE: read src/main.rs
