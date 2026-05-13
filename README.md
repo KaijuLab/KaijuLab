@@ -84,6 +84,11 @@ kaijulab api debug-probe --stdin @crash.input --break 0x401000
 kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
+kaijulab api workstation-status --file ./foo.bin
+kaijulab api index-build --file ./foo.bin --output .kaiju/index/foo.json
+kaijulab api sysroot-doctor --file ./foo.bin
+kaijulab api agent-job-plan --file ./foo.bin --goal 'produce verified PoC'
+kaijulab api benchmark-plan --root samples/PwnableTW --max-files 16
 kaijulab api exploit-verify --expect-target-exit 42 /tmp/poc.py
 kaijulab api exploit-loop claude --output /tmp/poc.py
 ```
@@ -109,6 +114,13 @@ Convenience subcommands cover the common automation loop:
 - `exploit-kit [--file FILE] [--cyclic-len N] [--cyclic-find VALUE]` emits checksec/runtime data, PLT/GOT text, gadget hints, exploit recipes, and cyclic pattern helpers.
 - `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
+- `workstation-status [--file FILE]` reports production-readiness across the seven core areas: dynamic/debug, binary database, exploit automation, agent jobs, sysroots/containers, workbench UI, and benchmarks.
+- `index-build [--file FILE] [--output OUT]` emits a normalized binary index with hash, sections, functions, strings, ELF protections, imports, and contracts for UI/agent consumers.
+- `sysroot-doctor [--file FILE]` inventories qemu/gdb/container tooling and reports loader/sysroot blockers.
+- `exploit-stack [--file FILE]` lists implemented exploit helpers and remaining engine gaps such as semantic ROP, libc, seccomp, and heap helpers.
+- `agent-job-plan [--file FILE] --goal TEXT` emits a resumable job contract with phases, artifacts, safety rules, and stop criteria.
+- `workbench-manifest` emits the dense UI pane/navigation/hotkey/evidence contract for the web workbench.
+- `benchmark-plan --root DIR` inventories binary corpus cases and expected grading artifacts for regression work.
 - `exploit-verify [--file FILE] [--expect-exit N|--expect-target-exit N|--expect-output TEXT] SCRIPT` runs a candidate PoC with `KAIJU_BINARY`/qemu env vars and returns structured success/failure JSON.
 - `exploit-loop <claude|codex> --output /tmp/poc.py` sends Agent Console a bounded PoC-development prompt that requires `analysis-loop`, `runtime-run`, `debug-probe`, `exploit-kit`, `ir-query`, and `exploit-verify` as needed.
 

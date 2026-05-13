@@ -10,6 +10,7 @@ pub mod findings;
 pub mod jobs;
 pub mod playbooks;
 pub mod project_store;
+pub mod workstation;
 pub mod workspace;
 
 pub use events::{Event, EventBus, Source};

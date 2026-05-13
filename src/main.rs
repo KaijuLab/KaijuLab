@@ -451,6 +451,71 @@ enum ApiCommands {
         #[arg(long, default_value_t = 8)]
         max_gadgets: usize,
     },
+
+    /// Emit production-workstation capability status across the seven roadmap areas.
+    WorkstationStatus {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Build a normalized binary index for agents, UI panes, and benchmarks.
+    IndexBuild {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions to include.
+        #[arg(long, default_value_t = 120)]
+        max_functions: usize,
+
+        /// Maximum strings to include.
+        #[arg(long, default_value_t = 120)]
+        max_strings: usize,
+
+        /// Optional path to write the JSON artifact.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Diagnose qemu/gdb/container/sysroot readiness.
+    SysrootDoctor {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Emit the exploit-automation stack manifest.
+    ExploitStack {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Emit a resumable agent-job plan with phases, artifacts, and stop criteria.
+    AgentJobPlan {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Job goal.
+        #[arg(long, default_value = "Analyze the target and produce verified artifacts.")]
+        goal: String,
+    },
+
+    /// Emit the dense workbench UI contract.
+    WorkbenchManifest,
+
+    /// Inventory a benchmark corpus and expected grading artifacts.
+    BenchmarkPlan {
+        /// Corpus root.
+        #[arg(long, default_value = "samples")]
+        root: PathBuf,
+
+        /// Maximum candidate binaries to inspect.
+        #[arg(long, default_value_t = 64)]
+        max_files: usize,
+    },
 }
 
 #[tokio::main]
@@ -836,6 +901,43 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 max_gadgets,
             )?
         }
+        ApiCommands::WorkstationStatus { file } => {
+            let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)
+                .await?;
+            core::workstation::workstation_status(path.as_deref())?
+        }
+        ApiCommands::IndexBuild {
+            file,
+            max_functions,
+            max_strings,
+            output,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value = core::workstation::binary_index(&path, max_functions, max_strings)?;
+            if let Some(output) = output {
+                write_json_artifact(&output, &value)?;
+            }
+            value
+        }
+        ApiCommands::SysrootDoctor { file } => {
+            let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)
+                .await?;
+            core::workstation::sysroot_doctor(path.as_deref())?
+        }
+        ApiCommands::ExploitStack { file } => {
+            let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)
+                .await?;
+            core::workstation::exploit_stack_manifest(path.as_deref())?
+        }
+        ApiCommands::AgentJobPlan { file, goal } => {
+            let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)
+                .await?;
+            core::workstation::agent_job_plan(path.as_deref(), &goal)?
+        }
+        ApiCommands::WorkbenchManifest => core::workstation::workbench_manifest(),
+        ApiCommands::BenchmarkPlan { root, max_files } => {
+            core::workstation::benchmark_plan(&root, max_files)?
+        }
     };
     print_api_value(&value)?;
     Ok(())
@@ -960,6 +1062,38 @@ async fn resolve_api_binary_path(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("no active workspace; pass --file or open a binary"))?;
     Ok(PathBuf::from(path))
+}
+
+async fn resolve_optional_api_binary_path(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    file: Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    if let Some(file) = file {
+        return Ok(Some(file.canonicalize().unwrap_or(file)));
+    }
+    let workspace = match api_request(client, base_url, token, "GET", "/api/workspace", None).await
+    {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let Some(path) = workspace
+        .get("binary_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(PathBuf::from(path)))
+}
+
+fn write_json_artifact(path: &Path, value: &serde_json::Value) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(value)?))?;
+    Ok(())
 }
 
 fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::Value> {
