@@ -2291,3 +2291,4 @@ _[Checkpoint: 6a04eb5c — edited kaijulab-hacknote-poc.py; wrote kaijulab-apple
 [21:24:19] OBSERVE: read src/main.rs
 [21:24:19] OBSERVE: read src/main.rs
 [21:24:19] OBSERVE: searched src/main.rs
+[21:24:19] OBSERVE: searched main.rs for "sysroot|RuntimeRun|DebugProbe|CrashOffset|runtime-run|debug-probe|crash-offset"
