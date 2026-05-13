@@ -903,3 +903,9 @@ _[Checkpoint: 6a03fa41 — Restructured web UI into IDA/Ghidra-style workbench w
 [04:15:07] OBSERVE: read web/src/components/AgentConsole.tsx
 [04:15:07] OBSERVE: read web/src/components/AgentConsole.tsx
 [04:15:07] ACT: edited web/src/components/AgentConsole.tsx
+
+
+---
+_[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carriage-return progress lines; npm build passed.]_
+---
+
