@@ -2459,3 +2459,4 @@ _[Checkpoint: 6a04fbab — wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-
 _[Checkpoint: 6a04fd48 — wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py]_
 ---
 
+[22:39:17] OBSERVE: read kaijulab-applestore-poc.py
