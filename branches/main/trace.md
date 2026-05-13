@@ -2128,3 +2128,4 @@ _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhan
 _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/returns, enhanced output section, benchmark counters, and tests. cargo test passed; PwnableTW benchmark aggregate 84.]_
 ---
 
+[18:57:43] OBSERVE: searched web for "src"
