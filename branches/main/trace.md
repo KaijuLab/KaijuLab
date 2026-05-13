@@ -825,3 +825,4 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 [04:00:22] NOTE: Agent console panic fix: transcript tail trimming now advances to UTF-8 boundary; production mutex locks recover poison so one reader failure does not crash attach/list/input paths.
 [04:00:22] OBSERVE: searched src/server/agent_console.rs
 [04:00:22] OBSERVE: read src/server/agent_console.rs
+[04:00:22] OBSERVE: searched agent_console.rs for "unwrap\(|lock\(\)"
