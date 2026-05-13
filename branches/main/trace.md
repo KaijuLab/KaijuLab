@@ -2517,3 +2517,4 @@ _[Checkpoint: 6a04fdde — Ran KaijuLab+Claude exploit-loop on requested x86/x86
 _[Checkpoint: 6a04ff91 — Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.]_
 ---
 
+[22:53:00] THINK: Replaced per-target PwnableTW filename recipes with feature-derived exploit strategy profile because overfit labels improve benchmark success but weaken general solver behavior.
