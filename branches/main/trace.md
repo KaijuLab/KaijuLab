@@ -836,3 +836,9 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 [04:00:22] OBSERVE: searched agent_console.rs for "unwrap\("
 [04:00:22] OBSERVE: searched agent_console.rs for "lock\(\)\.unwrap|lock\(\)"
 [04:00:22] ACT: edited src/server/agent_console.rs
+
+
+---
+_[Checkpoint: 6a03f769 — Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.]_
+---
+
