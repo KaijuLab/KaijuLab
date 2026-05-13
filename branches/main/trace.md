@@ -1062,3 +1062,4 @@ _[Checkpoint: 6a046bfd — Added kaijulab api console WebSocket client for daemo
 _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…]_
 ---
 
+[12:35:52] OBSERVE: read README.md
