@@ -1715,3 +1715,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 [16:29:55] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [16:46:50] THINK: Added first-pass register SSA/dataflow facts to decompile-analysis and benchmark scoring over waiting for full IR lift, because agents need inspectable defs/uses/phi candidates now while memory SSA/type inference remain explicit blockers.
 [16:46:55] OBSERVE: read src/main.rs
+[16:46:55] OBSERVE: read src/main.rs
