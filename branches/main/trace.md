@@ -2314,3 +2314,4 @@ _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroo
 [21:56:35] OBSERVE: read /tmp/kaijulab-ctf-silver-bullet.log
 [21:56:35] OBSERVE: read /tmp/kaijulab-silver-bullet-poc.py
 [21:56:35] OBSERVE: read /tmp/kaijulab-hacknote-poc.py
+[21:56:35] OBSERVE: read /tmp/kaijulab-applestore-poc.py
