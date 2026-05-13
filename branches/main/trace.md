@@ -912,3 +912,4 @@ _[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carri
 [04:26:50] NOTE: MCP-to-UI reflection: successful IPC tool calls with vaddr emit navigation event; web applyEvent selects vaddr so center disasm/decompile/context panes refresh from structured APIs.
 [04:26:50] OBSERVE: searched src for "console|terminal""
 [04:26:50] OBSERVE: searched src for "tool\.call|tool\.result|disasm|decompile|context\(|Event|emit|publish|agent console|terminal"
+[04:26:50] OBSERVE: read src/core/events.rs
