@@ -1759,3 +1759,4 @@ _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuris
 ---
 
 [17:41:07] OBSERVE: listed files under ../ghidra
+[17:41:07] OBSERVE: listed files under src/decompiler
