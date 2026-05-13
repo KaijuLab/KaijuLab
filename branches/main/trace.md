@@ -1453,3 +1453,4 @@ _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run,
 [15:13:53] OBSERVE: read src/core/analysis.rs
 [15:13:53] OBSERVE: read src/server/routes.rs
 [15:13:53] OBSERVE: read src/project.rs
+[15:13:53] OBSERVE: read src/core/project_store.rs
