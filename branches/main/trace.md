@@ -1130,3 +1130,4 @@ _[Checkpoint: 6a047107 — Validated PwnableTW Start exploit under qemu-i386; up
 [12:59:01] OBSERVE: listed files under /usr
 [12:59:01] OBSERVE: searched usr for "*ld-linux.so.2"
 [12:59:01] OBSERVE: listed files under /tmp/kaijulab-orw-poc.py
+[12:59:01] OBSERVE: listed files under kaijulab-orw-poc.py
