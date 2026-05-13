@@ -769,3 +769,4 @@ _[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable termin
 [03:46:54] OBSERVE: read src/core/workspace.rs
 [03:46:54] OBSERVE: read src/core/workspace.rs
 [03:46:54] OBSERVE: read web/src/components/AgentConsole.tsx
+[03:46:54] OBSERVE: read web/package.json
