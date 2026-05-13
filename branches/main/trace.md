@@ -1892,3 +1892,4 @@ _[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into S
 ---
 
 [18:20:56] THINK: KIR expression DAG over direct pseudo-C renderer because SSA assignments give structured renderer/type input without touching legacy renderer.
+[18:20:56] OBSERVE: read src/decompiler/ir/kir.rs
