@@ -1651,3 +1651,4 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added structured decompile-analysis facts with CFG reducibility/goto-pressure diagnostics plus stack/call/syscall machine facts; enhanced decompile now includes structuring diagnostics.]_
 ---
 
+[16:23:16] NOTE: Decompiler 10/10 path: added benchmark gate first. Current cap 45 until SSA/data-flow/type inference; PwnableTW benchmark reports aggregate 45 with blockers legacy renderer unsafe, heuristic machine facts, no SSA/type gate.
