@@ -878,3 +878,4 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 [04:12:23] NOTE: UI structure refactor: replaced stacked fixed bottom panels with bottom dock tabs; left navigator widened; center code font increased; bottom tools fill dock instead of competing vertically.
 [04:12:24] OBSERVE: read web/src/App.tsx
 [04:12:24] OBSERVE: read web/src/components/CenterWorkspace.tsx
+[04:12:24] OBSERVE: read web/src/components/Inspector.tsx
