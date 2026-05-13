@@ -1125,3 +1125,4 @@ _[Checkpoint: 6a047107 — Validated PwnableTW Start exploit under qemu-i386; up
 [12:59:01] OBSERVE: listed files under PwnableTW
 [12:59:01] OBSERVE: listed files under samples/PwnableTW
 [12:59:01] OBSERVE: searched PwnableTW for "*.kaiju_scripts"
+[12:59:01] OBSERVE: listed files under samples/PwnableTW
