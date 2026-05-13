@@ -586,3 +586,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:50:08] OBSERVE: read web/src/types/ProjectSnapshot.ts
 [02:50:08] OBSERVE: read web/src/types/PlaybookId.ts
 [02:50:08] OBSERVE: searched tests for "src"
+[02:50:08] OBSERVE: searched src for "ts_rs|export_all|PlaybookId"
