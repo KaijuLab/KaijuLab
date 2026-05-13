@@ -817,3 +817,4 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 [03:57:47] OBSERVE: searched web/node_modules/@xterm/xterm/css/xterm.css
 [03:57:47] OBSERVE: read web/node_modules/@xterm/xterm/css/xterm.css
 [03:57:47] OBSERVE: read web/node_modules/@xterm/xterm/css/xterm.css
+[03:57:47] OBSERVE: searched xterm.css for "\.xterm|xterm-viewport|xterm-screen"
