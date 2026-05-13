@@ -2655,3 +2655,4 @@ _[Checkpoint: 6a050ea7 — wrote kaijulab-batch-hacknote.py; edited kaijulab-bat
 _[Checkpoint: 6a050fbb — edited kaijulab-batch-hacknote.py; wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-realloc.py]_
 ---
 
+[23:58:33] ACT: wrote kaijulab-batch-tcache-tear.py
