@@ -700,3 +700,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:22:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/mod.rs
 [03:22:26] OBSERVE: read README.md
 [03:22:26] OBSERVE: read README.md
+[03:22:26] OBSERVE: read docs/web-mcp-architecture.md
