@@ -43,6 +43,7 @@ export function AgentConsole() {
   const [currentSession, setCurrentSession] = useState<AgentConsoleSessionInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const outputRef = useRef<HTMLPreElement>(null);
+  const terminalRef = useRef(new TerminalScreen(120, 32));
 
   useEffect(() => {
     outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
@@ -67,6 +68,7 @@ export function AgentConsole() {
 
   const connect = () => {
     wsRef.current?.close();
+    terminalRef.current.reset();
     setOutput('');
     setStatus('connecting');
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -103,9 +105,9 @@ export function AgentConsole() {
         if (parsed.type === 'error') {
           notify('error', parsed.data);
         }
-        setOutput((prev) => trimOutput(prev + normalizeTerminal(parsed.data)));
+        applyTerminalOutput(parsed.data);
       } catch {
-        setOutput((prev) => trimOutput(prev + normalizeTerminal(String(msg.data))));
+        applyTerminalOutput(String(msg.data));
       }
     };
   };
@@ -122,6 +124,7 @@ export function AgentConsole() {
     try {
       const info = await api.clearAgentConsoleTranscript(agent);
       setCurrentSession(info);
+      terminalRef.current.reset();
       setOutput('');
       refreshSessions();
       notify('info', `${agent} console transcript cleared`);
@@ -144,7 +147,11 @@ export function AgentConsole() {
     if (!line || wsRef.current?.readyState !== WebSocket.OPEN) return;
     const enriched = selectedVaddr && line.includes('{selected}') ? line.split('{selected}').join(selectedVaddr) : line;
     wsRef.current.send(JSON.stringify({ type: 'input', data: `${enriched}\r` }));
-    setOutput((prev) => trimOutput(prev + `\r\n> ${enriched}\r\n`));
+  };
+
+  const applyTerminalOutput = (data: string) => {
+    terminalRef.current.write(data);
+    setOutput(terminalRef.current.render());
   };
 
   const sendRaw = (data: string) => {
@@ -186,6 +193,8 @@ export function AgentConsole() {
     if (!el || wsRef.current?.readyState !== WebSocket.OPEN) return;
     const cols = Math.max(80, Math.floor(el.clientWidth / 7));
     const rows = Math.max(18, Math.floor(el.clientHeight / 16));
+    terminalRef.current.resize(cols, rows);
+    setOutput(terminalRef.current.render());
     wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
   };
 
@@ -259,7 +268,7 @@ export function AgentConsole() {
             onKeyDown={handleTerminalKeyDown}
             onPaste={handleTerminalPaste}
             onMouseDown={() => outputRef.current?.focus()}
-            className="mono min-h-0 overflow-auto whitespace-pre-wrap bg-black p-3 text-[11px] leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-kaiju-accent"
+            className="mono min-h-0 overflow-auto whitespace-pre bg-black p-3 text-[11px] leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-kaiju-accent"
           >
             {output ||
               'Start or attach to a Claude/Codex terminal session. Click this terminal pane to type directly, or use the command box below.'}
@@ -340,10 +349,202 @@ function statusClass(status: ConsoleStatus): string {
   }
 }
 
-function normalizeTerminal(text: string): string {
-  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
-}
+class TerminalScreen {
+  private cols: number;
+  private rows: number;
+  private row = 0;
+  private col = 0;
+  private state: 'normal' | 'esc' | 'csi' | 'osc' | 'osc_esc' | 'charset' = 'normal';
+  private csi = '';
+  private cells: string[][];
 
-function trimOutput(text: string): string {
-  return text.length > 120_000 ? text.slice(text.length - 120_000) : text;
+  constructor(cols: number, rows: number) {
+    this.cols = cols;
+    this.rows = rows;
+    this.cells = this.emptyCells(cols, rows);
+  }
+
+  reset() {
+    this.row = 0;
+    this.col = 0;
+    this.state = 'normal';
+    this.csi = '';
+    this.cells = this.emptyCells(this.cols, this.rows);
+  }
+
+  resize(cols: number, rows: number) {
+    if (cols === this.cols && rows === this.rows) return;
+    const next = this.emptyCells(cols, rows);
+    for (let r = 0; r < Math.min(rows, this.rows); r += 1) {
+      for (let c = 0; c < Math.min(cols, this.cols); c += 1) {
+        next[r][c] = this.cells[r][c];
+      }
+    }
+    this.cols = cols;
+    this.rows = rows;
+    this.cells = next;
+    this.row = Math.min(this.row, rows - 1);
+    this.col = Math.min(this.col, cols - 1);
+  }
+
+  write(text: string) {
+    for (const ch of text) this.feed(ch);
+  }
+
+  render(): string {
+    return this.cells.map((line) => line.join('').trimEnd()).join('\n').trimEnd();
+  }
+
+  private feed(ch: string) {
+    if (this.state === 'osc') {
+      if (ch === '\x07') this.state = 'normal';
+      else if (ch === '\x1b') this.state = 'osc_esc';
+      return;
+    }
+    if (this.state === 'osc_esc') {
+      this.state = ch === '\\' ? 'normal' : 'osc';
+      return;
+    }
+    if (this.state === 'charset') {
+      this.state = 'normal';
+      return;
+    }
+    if (this.state === 'esc') {
+      if (ch === '[') {
+        this.csi = '';
+        this.state = 'csi';
+      } else if (ch === ']') {
+        this.state = 'osc';
+      } else if (ch === '(' || ch === ')' || ch === '*' || ch === '+') {
+        this.state = 'charset';
+      } else {
+        if (ch === 'c') this.reset();
+        this.state = 'normal';
+      }
+      return;
+    }
+    if (this.state === 'csi') {
+      if (ch >= '@' && ch <= '~') {
+        this.handleCsi(this.csi, ch);
+        this.state = 'normal';
+      } else {
+        this.csi += ch;
+      }
+      return;
+    }
+    if (ch === '\x1b') {
+      this.state = 'esc';
+    } else if (ch === '\r') {
+      this.col = 0;
+    } else if (ch === '\n') {
+      this.lineFeed();
+    } else if (ch === '\b') {
+      this.col = Math.max(0, this.col - 1);
+    } else if (ch >= ' ' && ch !== '\x7f') {
+      this.put(ch);
+    }
+  }
+
+  private handleCsi(raw: string, final: string) {
+    const privateMode = raw.startsWith('?');
+    const params = raw
+      .replace(/^[?>!]/, '')
+      .split(';')
+      .map((part) => Number.parseInt(part, 10));
+    const value = (index: number, fallback: number) =>
+      Number.isFinite(params[index]) && params[index] > 0 ? params[index] : fallback;
+
+    switch (final) {
+      case 'A':
+        this.row = Math.max(0, this.row - value(0, 1));
+        break;
+      case 'B':
+        this.row = Math.min(this.rows - 1, this.row + value(0, 1));
+        break;
+      case 'C':
+        this.col = Math.min(this.cols - 1, this.col + value(0, 1));
+        break;
+      case 'D':
+        this.col = Math.max(0, this.col - value(0, 1));
+        break;
+      case 'G':
+        this.col = Math.min(this.cols - 1, value(0, 1) - 1);
+        break;
+      case 'H':
+      case 'f':
+        this.row = Math.min(this.rows - 1, value(0, 1) - 1);
+        this.col = Math.min(this.cols - 1, value(1, 1) - 1);
+        break;
+      case 'J':
+        this.clearDisplay(value(0, 0));
+        break;
+      case 'K':
+        this.clearLine(value(0, 0));
+        break;
+      case 'm':
+      case 'r':
+        break;
+      case 'h':
+      case 'l':
+        if (privateMode && raw.includes('1049')) {
+          this.row = 0;
+          this.col = 0;
+          this.clearDisplay(2);
+        }
+        break;
+    }
+  }
+
+  private put(ch: string) {
+    this.cells[this.row][this.col] = ch;
+    this.col += 1;
+    if (this.col >= this.cols) {
+      this.col = 0;
+      this.lineFeed();
+    }
+  }
+
+  private lineFeed() {
+    if (this.row >= this.rows - 1) {
+      this.cells.shift();
+      this.cells.push(this.emptyLine(this.cols));
+    } else {
+      this.row += 1;
+    }
+  }
+
+  private clearDisplay(mode: number) {
+    if (mode === 2 || mode === 3) {
+      this.cells = this.emptyCells(this.cols, this.rows);
+      this.row = 0;
+      this.col = 0;
+      return;
+    }
+    if (mode === 1) {
+      for (let r = 0; r <= this.row; r += 1) {
+        const start = r === this.row ? this.col : 0;
+        const end = r === this.row ? this.col + 1 : this.cols;
+        this.cells[r].fill(' ', start, end);
+      }
+      return;
+    }
+    for (let r = this.row; r < this.rows; r += 1) {
+      const start = r === this.row ? this.col : 0;
+      this.cells[r].fill(' ', start);
+    }
+  }
+
+  private clearLine(mode: number) {
+    if (mode === 1) this.cells[this.row].fill(' ', 0, this.col + 1);
+    else if (mode === 2) this.cells[this.row].fill(' ');
+    else this.cells[this.row].fill(' ', this.col);
+  }
+
+  private emptyCells(cols: number, rows: number): string[][] {
+    return Array.from({ length: rows }, () => this.emptyLine(cols));
+  }
+
+  private emptyLine(cols: number): string[] {
+    return Array.from({ length: cols }, () => ' ');
+  }
 }
