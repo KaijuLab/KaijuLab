@@ -475,6 +475,29 @@ enum ApiCommands {
         vaddr: String,
     },
 
+    /// Score decompiler quality for one binary or corpus.
+    DecompilerBenchmark {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Corpus root. Used when --file is omitted.
+        #[arg(long, default_value = "samples")]
+        root: PathBuf,
+
+        /// Maximum binaries to inspect in corpus mode.
+        #[arg(long, default_value_t = 16)]
+        max_files: usize,
+
+        /// Maximum functions per binary.
+        #[arg(long, default_value_t = 200)]
+        max_functions: usize,
+
+        /// Optional path to write the JSON artifact.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
     /// Build a stateful analysis-loop bundle for agents or automation.
     AnalysisLoop {
         /// Override the active daemon binary path.
@@ -1241,6 +1264,28 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let vaddr = parse_int(&vaddr)?;
             serde_json::to_value(core::decompile::decompile_analysis_path(&path, vaddr)?)?
         }
+        ApiCommands::DecompilerBenchmark {
+            file,
+            root,
+            max_files,
+            max_functions,
+            output,
+        } => {
+            let value = if let Some(file) = file {
+                let path =
+                    resolve_api_binary_path(&client, &base_url, token.as_deref(), Some(file)).await?;
+                serde_json::to_value(core::decompile::decompiler_quality_report_path(
+                    &path,
+                    max_functions,
+                )?)?
+            } else {
+                decompiler_benchmark_json(&root, max_files, max_functions)?
+            };
+            if let Some(output) = output {
+                write_json_artifact(&output, &value)?;
+            }
+            value
+        }
         ApiCommands::AnalysisLoop {
             file,
             goal,
@@ -1832,6 +1877,72 @@ fn benchmark_binary_candidates(root: &Path, max_files: usize) -> Result<Vec<Path
     Ok(out)
 }
 
+fn decompiler_benchmark_json(
+    root: &Path,
+    max_files: usize,
+    max_functions: usize,
+) -> Result<serde_json::Value> {
+    let candidates = benchmark_binary_candidates(root, max_files.clamp(1, 256))?;
+    let mut reports = Vec::new();
+    let mut score_sum = 0u64;
+    let mut recovered_functions = 0usize;
+    let mut analyzed_functions = 0usize;
+    let mut legacy_ok = 0usize;
+    let mut reducible = 0usize;
+    let mut machine_facts = 0usize;
+    let mut blockers = std::collections::BTreeSet::<String>::new();
+
+    for binary in candidates {
+        match core::decompile::decompiler_quality_report_path(&binary, max_functions) {
+            Ok(report) => {
+                score_sum += report.score as u64;
+                recovered_functions += report.recovered_functions;
+                analyzed_functions += report.analyzed_functions;
+                legacy_ok += report.legacy_decompile_ok;
+                reducible += report.reducible_functions;
+                machine_facts += report.functions_with_machine_facts;
+                for blocker in &report.blockers {
+                    blockers.insert(blocker.clone());
+                }
+                reports.push(serde_json::to_value(report)?);
+            }
+            Err(err) => {
+                blockers.insert("one or more binaries could not be decompiler-benchmarked".to_string());
+                reports.push(serde_json::json!({
+                    "kind": "decompiler_quality_report",
+                    "binary": binary,
+                    "error": err.to_string(),
+                    "score": 0,
+                }));
+            }
+        }
+    }
+
+    let case_count = reports.len();
+    let aggregate_score = if case_count == 0 {
+        0
+    } else {
+        (score_sum / case_count as u64) as u32
+    };
+    Ok(serde_json::json!({
+        "kind": "decompiler_benchmark",
+        "root": root,
+        "max_files": max_files.clamp(1, 256),
+        "max_functions": max_functions.clamp(1, 5000),
+        "case_count": case_count,
+        "aggregate_score": aggregate_score,
+        "summary": {
+            "recovered_functions": recovered_functions,
+            "analyzed_functions": analyzed_functions,
+            "legacy_decompile_ok": legacy_ok,
+            "reducible_functions": reducible,
+            "functions_with_machine_facts": machine_facts,
+        },
+        "blockers": blockers.into_iter().collect::<Vec<_>>(),
+        "reports": reports,
+    }))
+}
+
 fn collect_benchmark_binaries(path: &Path, max_files: usize, out: &mut Vec<PathBuf>) -> Result<()> {
     if out.len() >= max_files {
         return Ok(());
@@ -1859,6 +1970,25 @@ fn collect_benchmark_binaries(path: &Path, max_files: usize, out: &mut Vec<PathB
 }
 
 fn looks_like_supported_binary(path: &Path) -> bool {
+    if path
+        .components()
+        .any(|component| component.as_os_str() == ".kaiju_scripts")
+    {
+        return false;
+    }
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(false, |name| name.contains(".kaiju."))
+    {
+        return false;
+    }
+    if matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("db" | "json" | "md" | "py" | "txt")
+    ) {
+        return false;
+    }
     let Ok(data) = std::fs::read(path) else {
         return false;
     };

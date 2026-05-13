@@ -85,6 +85,7 @@ kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
 kaijulab api decompile-enhanced --file ./foo.bin 0x401000
 kaijulab api decompile-analysis --file ./foo.bin 0x401000
+kaijulab api decompiler-benchmark --root samples/PwnableTW --max-files 8
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
 kaijulab api recovery-index --file ./foo.bin --max-functions 1000
 kaijulab api recovery-rebuild --file ./foo.bin --max-functions 1000
@@ -135,6 +136,7 @@ Convenience subcommands cover the common automation loop:
 - `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns recovery-backed function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
 - `decompile-enhanced [--file FILE] 0xADDR` emits recovered function/CFG facts, stack-frame hints, call/syscall annotations, overflow notes, and the annotated pseudo-C body.
 - `decompile-analysis [--file FILE] 0xADDR` emits structured decompiler facts for automation: recovered CFG diagnostics, reducibility/goto-pressure metrics, stack facts, and call/syscall facts.
+- `decompiler-benchmark [--file FILE | --root DIR] [--max-functions N]` scores recovery, pseudo-C, CFG reducibility, and machine-fact coverage with blockers for production-grade decompiler work.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
 - `recovery-index [--file FILE] [--max-functions N] [--output OUT]` runs graph-backed function recovery with executable-section discovery, entry/symbol/call-target seeds, recursive x86/x64 CFG recovery, basic blocks, and xrefs.
 - `recovery-rebuild [--file FILE] [--max-functions N]` persists recovered functions, blocks, edges, xrefs, and active corrections into the project SQLite DB.

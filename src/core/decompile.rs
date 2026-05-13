@@ -67,6 +67,212 @@ pub struct FunctionInsights {
     risks: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DecompilerQualityReport {
+    pub kind: String,
+    pub binary: String,
+    pub max_functions: usize,
+    pub score: u32,
+    pub recovered_functions: usize,
+    pub analyzed_functions: usize,
+    pub legacy_decompile_ok: usize,
+    pub reducible_functions: usize,
+    pub functions_with_machine_facts: usize,
+    pub total_blocks: usize,
+    pub total_edges: usize,
+    pub total_irreducible_sccs: usize,
+    pub total_goto_pressure: usize,
+    pub function_reports: Vec<FunctionQuality>,
+    pub blockers: Vec<String>,
+    pub next_engine_work: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionQuality {
+    pub vaddr: String,
+    pub name: String,
+    pub size: u64,
+    pub blocks: usize,
+    pub edges: usize,
+    pub reducible: bool,
+    pub goto_pressure: usize,
+    pub has_machine_facts: bool,
+    pub legacy_decompile_ok: bool,
+    pub notes: Vec<String>,
+}
+
+pub fn decompiler_quality_report_path(
+    path: &Path,
+    max_functions: usize,
+) -> Result<DecompilerQualityReport> {
+    let max_functions = max_functions.clamp(1, 5000);
+    let index = recovery::recover(path, max_functions)
+        .with_context(|| format!("recover functions for {}", path.display()))?;
+    let mut function_reports = Vec::new();
+    let mut legacy_decompile_ok = 0usize;
+    let mut reducible_functions = 0usize;
+    let mut functions_with_machine_facts = 0usize;
+    let mut total_blocks = 0usize;
+    let mut total_edges = 0usize;
+    let mut total_irreducible_sccs = 0usize;
+    let mut total_goto_pressure = 0usize;
+
+    for function in &index.functions {
+        if parse_addr(&function.start).is_none() {
+            continue;
+        }
+        let cfg = analyze_cfg(function);
+        let machine = inspect_function(path, function).unwrap_or_default();
+        let has_machine_facts = !machine.calls.is_empty()
+            || !machine.syscalls.is_empty()
+            || !machine.stack_accesses.is_empty()
+            || machine.frame_size > 0;
+        let legacy_ok = false;
+        if legacy_ok {
+            legacy_decompile_ok += 1;
+        }
+        if cfg.reducible {
+            reducible_functions += 1;
+        }
+        if has_machine_facts {
+            functions_with_machine_facts += 1;
+        }
+        total_blocks += cfg.block_count;
+        total_edges += cfg.edge_count;
+        total_irreducible_sccs += cfg.irreducible_sccs;
+        total_goto_pressure += cfg.goto_pressure;
+
+        let mut notes = Vec::new();
+        if !cfg.reducible {
+            notes.push("irreducible CFG needs SAILR/node-splitting before structured output".to_string());
+        }
+        if !legacy_ok {
+            notes.push("legacy pseudo-C not executed by benchmark stability guard".to_string());
+        }
+        if !machine.risks.is_empty() {
+            notes.extend(machine.risks.clone());
+        }
+        function_reports.push(FunctionQuality {
+            vaddr: function.start.clone(),
+            name: function.name.clone(),
+            size: function.size,
+            blocks: cfg.block_count,
+            edges: cfg.edge_count,
+            reducible: cfg.reducible,
+            goto_pressure: cfg.goto_pressure,
+            has_machine_facts,
+            legacy_decompile_ok: legacy_ok,
+            notes,
+        });
+    }
+
+    let analyzed_functions = function_reports.len();
+    let score = decompiler_score(
+        index.functions.len(),
+        analyzed_functions,
+        legacy_decompile_ok,
+        reducible_functions,
+        functions_with_machine_facts,
+        total_irreducible_sccs,
+        total_goto_pressure,
+    );
+    let blockers = decompiler_blockers(
+        index.functions.len(),
+        analyzed_functions,
+        legacy_decompile_ok,
+        reducible_functions,
+        functions_with_machine_facts,
+        total_irreducible_sccs,
+    );
+
+    Ok(DecompilerQualityReport {
+        kind: "decompiler_quality_report".to_string(),
+        binary: path.to_string_lossy().into_owned(),
+        max_functions,
+        score,
+        recovered_functions: index.functions.len(),
+        analyzed_functions,
+        legacy_decompile_ok,
+        reducible_functions,
+        functions_with_machine_facts,
+        total_blocks,
+        total_edges,
+        total_irreducible_sccs,
+        total_goto_pressure,
+        function_reports,
+        blockers,
+        next_engine_work: vec![
+            "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
+            "Build SSA over recovered CFG and insert phi nodes at dominance frontiers".to_string(),
+            "Recover stack/global variables from memory SSA and escaped-frame analysis".to_string(),
+            "Infer call signatures/calling conventions before expression rendering".to_string(),
+            "Implement semantics-preserving structuring with node splitting for irreducible SCCs".to_string(),
+            "Add source-known regression corpus with expected CFG/AST/type facts".to_string(),
+        ],
+    })
+}
+
+fn decompiler_score(
+    recovered_functions: usize,
+    analyzed_functions: usize,
+    legacy_ok: usize,
+    reducible: usize,
+    machine_facts: usize,
+    irreducible_sccs: usize,
+    goto_pressure: usize,
+) -> u32 {
+    if recovered_functions == 0 || analyzed_functions == 0 {
+        return 0;
+    }
+    let analyzed = analyzed_functions as f64;
+    let recovery_score = 20.0;
+    let legacy_score = 20.0 * legacy_ok as f64 / analyzed;
+    let reducible_score = 20.0 * reducible as f64 / analyzed;
+    let machine_score = 15.0 * machine_facts as f64 / analyzed;
+    let structuring_penalty = (irreducible_sccs as f64 * 5.0 + goto_pressure as f64 * 2.0).min(20.0);
+    let foundation_score = 25.0;
+    let surface_score = (recovery_score
+        + legacy_score
+        + reducible_score
+        + machine_score
+        + foundation_score
+        - structuring_penalty)
+        .round()
+        .clamp(0.0, 100.0) as u32;
+    // Until KaijuLab has real SSA, data-flow, and type inference, this is a
+    // surface-quality score rather than a production decompiler score. Cap it
+    // so small easy functions do not look "10/10" just because the wrappers
+    // found CFG/syscall facts.
+    surface_score.min(45)
+}
+
+fn decompiler_blockers(
+    recovered_functions: usize,
+    analyzed_functions: usize,
+    legacy_ok: usize,
+    reducible: usize,
+    machine_facts: usize,
+    irreducible_sccs: usize,
+) -> Vec<String> {
+    let mut blockers = Vec::new();
+    if recovered_functions == 0 {
+        blockers.push("no recovered functions; scanner/recovery must improve first".to_string());
+        return blockers;
+    }
+    if legacy_ok < analyzed_functions {
+        blockers.push("legacy pseudo-C renderer is not benchmark-safe yet".to_string());
+    }
+    if reducible < analyzed_functions || irreducible_sccs > 0 {
+        blockers.push("CFG structuring lacks irreducible-control-flow repair".to_string());
+    }
+    if machine_facts < analyzed_functions {
+        blockers.push("machine facts are heuristic and missing for some functions".to_string());
+    }
+    blockers.push("no real SSA/data-flow/type-inference quality gate yet".to_string());
+    blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
+    blockers
+}
+
 pub fn decompile_analysis_path(path: &Path, vaddr: u64) -> Result<DecompileAnalysis> {
     if vaddr == 0 {
         return Err(anyhow!("vaddr is required"));
