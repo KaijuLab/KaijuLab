@@ -1867,3 +1867,9 @@ _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonic
 [18:08:58] OBSERVE: read src/core/decompile.rs
 [18:08:58] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:08:58] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04be4e — Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.]_
+---
+
