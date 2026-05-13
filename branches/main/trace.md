@@ -1378,3 +1378,4 @@ _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-own
 [15:01:13] OBSERVE: read web/src/api.ts
 [15:01:13] OBSERVE: read web/src/App.tsx
 [15:01:13] OBSERVE: read src/core/evidence.rs
+[15:01:13] OBSERVE: read web/src/App.tsx
