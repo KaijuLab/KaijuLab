@@ -2352,3 +2352,4 @@ _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroo
 [22:00:38] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [22:00:38] OBSERVE: searched src/main.rs for "build_exploit_context|libc""
 [22:00:38] OBSERVE: searched main.rs for "fn build_exploit_context|libc"
+[22:00:38] OBSERVE: read src/main.rs
