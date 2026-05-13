@@ -2013,3 +2013,4 @@ _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, p
 _[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.]_
 ---
 
+[18:34:54] THINK: KIR type facts before structured renderer because register and memory type hints make expression rendering auditable while deferring constraint-solving complexity.
