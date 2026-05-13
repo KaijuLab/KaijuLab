@@ -2055,3 +2055,4 @@ _[Checkpoint: 6a04c46a — edited /home/koukyosyumei/Dev/KaijuLab/src/core/decom
 [18:41:02] THINK: Typed KIR preview over replacing legacy renderer because it exposes SSA/expression/type facts to agents immediately while keeping legacy pseudo-C stable.
 [18:41:02] OBSERVE: searched src/core/decompile.rs for "pseudo|type_facts|next_engine_work|legacy_decompile_ok|decompile_enhanced""
 [18:41:02] OBSERVE: searched decompile.rs for "render_enhanced|legacy pseudo|type_facts|next_engine_work|legacy_decompile_ok|decompile_enhanced"
+[18:41:02] OBSERVE: read src/core/decompile.rs
