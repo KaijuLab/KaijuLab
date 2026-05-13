@@ -1442,3 +1442,4 @@ _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-own
 _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run, crash-offset, and analysis-loop live debug/evidence guidance.]_
 ---
 
+[15:13:53] OBSERVE: searched src/core for "Project|ProjectStore|sqlite|rusqlite|knowledge|finding|evidence|xrefs|functions""
