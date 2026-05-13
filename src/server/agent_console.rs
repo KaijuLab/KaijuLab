@@ -42,7 +42,7 @@ const DEFAULT_TRANSCRIPT_BYTES: u64 = 5 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/agent-console", get(list_sessions))
-        .route("/api/agent-console/:agent", get(console_handler))
+        .route("/api/agent-console/:agent", get(console_handler).delete(terminate_session))
         .route(
             "/api/agent-console/:agent/transcript",
             delete(delete_transcript),
@@ -85,6 +85,15 @@ impl AgentConsoleManager {
         };
         session.clear_transcript()
     }
+
+    fn terminate(&self, agent: &str) -> Result<AgentConsoleSessionInfo> {
+        let mut sessions = lock_or_recover(&self.sessions);
+        let Some(session) = sessions.remove(agent) else {
+            return Err(anyhow!("no agent console session for {agent}"));
+        };
+        session.terminate();
+        Ok(session.info())
+    }
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Json<Vec<AgentConsoleSessionInfo>> {
@@ -111,6 +120,17 @@ async fn delete_transcript(
                 )
             })?
     };
+    Ok(Json(info))
+}
+
+async fn terminate_session(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+) -> Result<Json<AgentConsoleSessionInfo>, (axum::http::StatusCode, String)> {
+    let info = state
+        .agent_console
+        .terminate(&agent)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
     Ok(Json(info))
 }
 

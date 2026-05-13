@@ -95,6 +95,7 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setStatus('live');
       setTimeout(() => {
         sendResize();
@@ -102,14 +103,17 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
       }, 0);
     };
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       setStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
       refreshSessions();
     };
     ws.onerror = () => {
+      if (wsRef.current !== ws) return;
       setStatus('error');
       notify('error', `${agent} console websocket failed`);
     };
     ws.onmessage = (msg) => {
+      if (wsRef.current !== ws) return;
       try {
         const parsed = JSON.parse(String(msg.data)) as ServerMessage;
         if (parsed.type === 'status') {
@@ -132,6 +136,27 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
     wsRef.current = null;
     setStatus('closed');
     refreshSessions();
+  };
+
+  const restart = async () => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'terminate' }));
+      ws.close();
+      wsRef.current = null;
+      setStatus('closed');
+      window.setTimeout(connect, 150);
+      return;
+    }
+    if (existing) {
+      try {
+        await api.terminateAgentConsoleSession(agent);
+      } catch {
+        // A stale session may already be gone; connecting below will spawn a fresh one.
+      }
+      refreshSessions();
+    }
+    connect();
   };
 
   const clearTranscript = async () => {
@@ -209,6 +234,13 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
             {existing ? 'attach' : 'start'}
           </button>
           <button
+            onClick={restart}
+            disabled={status === 'connecting'}
+            className="border border-kaiju-border px-2 py-0.5 hover:border-kaiju-warn disabled:opacity-50"
+          >
+            restart
+          </button>
+          <button
             onClick={interrupt}
             disabled={status !== 'live'}
             className="border border-kaiju-border px-2 py-0.5 hover:border-kaiju-warn disabled:opacity-50"
@@ -258,7 +290,7 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
               }}
               disabled={status !== 'live'}
               placeholder="type a terminal line and press Enter"
-              className="mono flex-1 bg-kaiju-bg border border-kaiju-border px-2 py-1 outline-none focus:border-kaiju-accent disabled:opacity-50"
+              className="mono flex-1 border border-kaiju-border bg-kaiju-bg px-2 py-1 text-kaiju-text outline-none placeholder:text-kaiju-muted focus:border-kaiju-accent disabled:bg-kaiju-bg disabled:text-kaiju-muted disabled:opacity-70"
             />
             <button
               onClick={sendInput}
@@ -295,12 +327,12 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
           <div className="mt-3 text-kaiju-muted">
             Use {'{selected}'} in a prompt to insert the selected address.
           </div>
-          <textarea
+            <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             disabled={status !== 'live'}
             placeholder="paste multi-line prompt here, then send"
-            className="mt-2 h-20 w-full resize-none bg-kaiju-bg border border-kaiju-border p-2 text-[11px] outline-none focus:border-kaiju-accent disabled:opacity-50"
+            className="mt-2 h-20 w-full resize-none border border-kaiju-border bg-kaiju-bg p-2 text-[11px] text-kaiju-text outline-none placeholder:text-kaiju-muted focus:border-kaiju-accent disabled:bg-kaiju-bg disabled:text-kaiju-muted disabled:opacity-70"
           />
         </aside>
       </div>

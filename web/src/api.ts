@@ -249,6 +249,11 @@ export const api = {
     if (!r.ok) throw new Error(await responseError('agent console transcript', r));
     return r.json() as Promise<AgentConsoleSessionInfo>;
   },
+  terminateAgentConsoleSession: async (agent: AgentName) => {
+    const r = await fetchWithAuth(`/api/agent-console/${agent}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await responseError('agent console terminate', r));
+    return r.json() as Promise<AgentConsoleSessionInfo>;
+  },
   listPlaybooks: () => jget<Playbook[]>('/api/playbooks'),
   runPlaybook: (id: PlaybookId, max_functions = 120, create_findings = true) =>
     jpost<PlaybookRunResponse>(`/api/playbooks/${id}/run`, {
