@@ -2017,3 +2017,4 @@ _[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/u
 [18:34:54] OBSERVE: searched src/decompiler/ir/kir.rs for "src/core/decompile.rs"
 [18:34:54] OBSERVE: searched decompile.rs for "type|Type|memory_ssa|expressions|decompiler_score|KirFunction"
 [18:34:54] OBSERVE: read src/decompiler/ir/kir.rs
+[18:34:54] OBSERVE: read src/core/decompile.rs
