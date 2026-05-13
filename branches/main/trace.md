@@ -2582,3 +2582,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:22] OBSERVE: searched .*runtime-run|debug-probe|exploit-loop" for ".*Command|Subcommand|api"
 [23:38:22] OBSERVE: searched main.rs for "struct .*Command|Subcommand|api .*runtime-run|debug-probe|exploit-loop"
 [23:38:22] OBSERVE: read src/main.rs
+[23:38:22] OBSERVE: read src/main.rs
