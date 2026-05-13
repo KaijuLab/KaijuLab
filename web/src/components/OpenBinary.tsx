@@ -1,11 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
+import { useStore } from '../state';
 
 interface Props {
   onOpened: () => void;
 }
 
 export function OpenBinary({ onOpened }: Props) {
+  const { notify } = useStore();
   const [path, setPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -14,7 +16,7 @@ export function OpenBinary({ onOpened }: Props) {
   const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.recentFiles().then(setRecent).catch(() => {});
+    api.recentFiles().then(setRecent).catch((e) => notify('error', `recent files failed: ${String(e)}`));
   }, []);
 
   const openByPath = async (p: string) => {
@@ -26,6 +28,7 @@ export function OpenBinary({ onOpened }: Props) {
     } catch (e: any) {
       const msg = await readError(e);
       setError(msg);
+      notify('error', msg);
     } finally {
       setBusy(false);
     }
@@ -39,6 +42,7 @@ export function OpenBinary({ onOpened }: Props) {
       onOpened();
     } catch (e: any) {
       setError(String(e));
+      notify('error', `upload failed: ${String(e)}`);
     } finally {
       setBusy(false);
     }

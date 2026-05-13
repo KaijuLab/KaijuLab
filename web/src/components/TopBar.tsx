@@ -1,18 +1,23 @@
 import { useStore } from '../state';
-import { api } from '../api';
+import { api, clearAuthToken } from '../api';
 
 interface Props {
   onCloseWorkspace?: () => void;
 }
 
 export function TopBar({ onCloseWorkspace }: Props) {
-  const { workspace, openPalette, resetWorkspace } = useStore();
+  const { workspace, openPalette, resetWorkspace, connection, notify } = useStore();
 
   const closeBinary = async () => {
     if (!workspace) return;
-    await api.closeWorkspace(workspace.workspace_hash).catch(() => {});
+    await api.closeWorkspace(workspace.workspace_hash).catch((e) => notify('error', `close failed: ${String(e)}`));
     resetWorkspace();
     onCloseWorkspace?.();
+  };
+
+  const resetToken = () => {
+    clearAuthToken();
+    notify('info', 'saved API token cleared');
   };
 
   return (
@@ -38,6 +43,7 @@ export function TopBar({ onCloseWorkspace }: Props) {
         )}
       </div>
       <div className="flex items-center gap-3">
+        <span className={'text-xs ' + connectionClass(connection)}>{connection}</span>
         {workspace && (
           <button
             onClick={closeBinary}
@@ -46,6 +52,12 @@ export function TopBar({ onCloseWorkspace }: Props) {
             close
           </button>
         )}
+        <button
+          onClick={resetToken}
+          className="px-2 py-1 text-xs text-kaiju-muted hover:text-kaiju-text border border-transparent hover:border-kaiju-border rounded"
+        >
+          reset token
+        </button>
         <button
           onClick={openPalette}
           disabled={!workspace}
@@ -56,4 +68,17 @@ export function TopBar({ onCloseWorkspace }: Props) {
       </div>
     </header>
   );
+}
+
+function connectionClass(status: string): string {
+  switch (status) {
+    case 'live':
+      return 'text-kaiju-accent';
+    case 'offline':
+      return 'text-kaiju-danger';
+    case 'reconnecting':
+      return 'text-kaiju-warn';
+    default:
+      return 'text-kaiju-muted';
+  }
 }

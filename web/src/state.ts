@@ -32,11 +32,16 @@ interface AppState {
   project: ProjectSnapshot | null;
   timeline: BusEvent[];
   paletteOpen: boolean;
+  connection: 'connecting' | 'live' | 'reconnecting' | 'offline';
+  notices: Array<{ id: number; kind: 'info' | 'error'; text: string }>;
 
   setWorkspace: (w: WorkspaceInfo | null) => void;
   setFunctions: (fns: FunctionEntry[]) => void;
   setProject: (p: ProjectSnapshot | null) => void;
   selectVaddr: (v: string | null) => void;
+  setConnection: (status: AppState['connection']) => void;
+  notify: (kind: 'info' | 'error', text: string) => void;
+  dismissNotice: (id: number) => void;
   pushEvent: (e: BusEvent) => void;
   openPalette: () => void;
   closePalette: () => void;
@@ -51,11 +56,20 @@ export const useStore = create<AppState>((set, get) => ({
   project: null,
   timeline: [],
   paletteOpen: false,
+  connection: 'connecting',
+  notices: [],
 
   setWorkspace: (w) => set({ workspace: w }),
   setFunctions: (fns) => set({ functions: fns }),
   setProject: (p) => set({ project: p }),
   selectVaddr: (v) => set({ selectedVaddr: v }),
+  setConnection: (connection) => set({ connection }),
+  notify: (kind, text) =>
+    set((s) => ({
+      notices: [{ id: Date.now(), kind, text }, ...s.notices].slice(0, 5),
+    })),
+  dismissNotice: (id) =>
+    set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
 
   pushEvent: (e) =>
     set((s) => ({ timeline: [e, ...s.timeline].slice(0, 1000) })),

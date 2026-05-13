@@ -16,7 +16,7 @@ const SEVERITY_RANK: Record<Severity, number> = {
 };
 
 export function FindingsBoard() {
-  const { timeline, selectVaddr } = useStore();
+  const { timeline, selectVaddr, notify } = useStore();
   const [findings, setFindings] = useState<Finding[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<FindingStatus | 'all'>('all');
@@ -31,7 +31,10 @@ export function FindingsBoard() {
         setError('');
         if (!selectedId && items.length > 0) setSelectedId(items[0].id);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        setError(String(e));
+        notify('error', `findings load failed: ${String(e)}`);
+      });
   };
 
   useEffect(() => {
@@ -59,6 +62,7 @@ export function FindingsBoard() {
       setSelectedId(updated.id);
     } catch (e) {
       setError(String(e));
+      notify('error', `finding update failed: ${String(e)}`);
     } finally {
       setBusy(null);
     }

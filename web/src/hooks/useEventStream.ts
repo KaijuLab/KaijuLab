@@ -12,9 +12,12 @@ export function useEventStream() {
     const pushEvent = useStore.getState().pushEvent;
     const applyEvent = useStore.getState().applyEvent;
     const setWorkspace = useStore.getState().setWorkspace;
+    const setConnection = useStore.getState().setConnection;
+    const notify = useStore.getState().notify;
 
     const connect = () => {
       if (closed) return;
+      setConnection(backoff === 500 ? 'connecting' : 'reconnecting');
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const url = new URL(`${proto}//${window.location.host}/api/events`);
       const token = getAuthToken();
@@ -23,12 +26,16 @@ export function useEventStream() {
 
       ws.onopen = () => {
         backoff = 500;
+        setConnection('live');
       };
       ws.onmessage = (msg) => {
         try {
           const data = JSON.parse(msg.data) as BusEvent;
           if (data.type === 'hello') {
             setWorkspace(data.workspace ?? null);
+          } else if (data.type === 'warning') {
+            notify('error', data.message);
+            pushEvent(data);
           } else {
             pushEvent(data);
             applyEvent(data);
@@ -39,15 +46,20 @@ export function useEventStream() {
       };
       ws.onclose = () => {
         if (closed) return;
+        setConnection('reconnecting');
         setTimeout(connect, backoff);
         backoff = Math.min(backoff * 2, 5000);
       };
-      ws.onerror = () => ws?.close();
+      ws.onerror = () => {
+        setConnection('offline');
+        ws?.close();
+      };
     };
 
     connect();
     return () => {
       closed = true;
+      setConnection('offline');
       ws?.close();
     };
   }, []);

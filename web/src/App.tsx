@@ -11,20 +11,38 @@ import { FindingsBoard } from './components/FindingsBoard';
 import { ExpertWorkbench } from './components/ExpertWorkbench';
 import { CommandPalette } from './components/CommandPalette';
 import { OpenBinary } from './components/OpenBinary';
+import { Notices } from './components/Notices';
 
 export default function App() {
   useEventStream();
-  const { workspace, setWorkspace, setFunctions, setProject, openPalette } = useStore();
+  const { workspace, setWorkspace, setFunctions, setProject, openPalette, notify } = useStore();
 
   const loadWorkspaceData = useCallback(() => {
     api.activeWorkspace()
-      .then((w) => setWorkspace(w))
-      .catch(() => setWorkspace(null));
-    api.listFunctionsText()
-      .then((r) => setFunctions(parseFunctionsText(r.text)))
-      .catch(() => setFunctions([]));
-    api.project().then(setProject).catch(() => {});
-  }, [setWorkspace, setFunctions, setProject]);
+      .then((w) => {
+        setWorkspace(w);
+        if (!w) {
+          setFunctions([]);
+          setProject(null);
+          return;
+        }
+        api.listFunctionsText()
+          .then((r) => setFunctions(parseFunctionsText(r.text)))
+          .catch((e) => {
+            setFunctions([]);
+            notify('error', `function list failed: ${String(e)}`);
+          });
+        api.project()
+          .then(setProject)
+          .catch((e) => notify('error', `project snapshot failed: ${String(e)}`));
+      })
+      .catch((e) => {
+        setWorkspace(null);
+        setFunctions([]);
+        setProject(null);
+        notify('error', `workspace load failed: ${String(e)}`);
+      });
+  }, [setWorkspace, setFunctions, setProject, notify]);
 
   useEffect(() => {
     loadWorkspaceData();
@@ -59,6 +77,7 @@ export default function App() {
       ) : (
         <OpenBinary onOpened={loadWorkspaceData} />
       )}
+      <Notices />
     </div>
   );
 }

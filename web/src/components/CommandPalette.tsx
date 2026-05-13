@@ -6,12 +6,21 @@ export function CommandPalette() {
   const { paletteOpen, closePalette, selectedVaddr, selectVaddr } = useStore();
   const [input, setInput] = useState('');
   const [result, setResult] = useState<PaletteResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<string[]>(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('kaijulab.paletteHistory') ?? '[]');
+    } catch {
+      return [];
+    }
+  });
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (paletteOpen) {
       setInput('');
       setResult(null);
+      setBusy(false);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [paletteOpen]);
@@ -20,10 +29,15 @@ export function CommandPalette() {
 
   const submit = () => {
     if (!input.trim()) return;
+    const command = input.trim();
+    setBusy(true);
     api
-      .paletteExec(input.trim(), selectedVaddr ?? undefined)
+      .paletteExec(command, selectedVaddr ?? undefined)
       .then((r) => {
         setResult(r);
+        const next = [command, ...history.filter((item) => item !== command)].slice(0, 8);
+        setHistory(next);
+        window.localStorage.setItem('kaijulab.paletteHistory', JSON.stringify(next));
         if (r.kind === 'navigate') {
           selectVaddr(r.vaddr);
           closePalette();
@@ -31,7 +45,8 @@ export function CommandPalette() {
           closePalette();
         }
       })
-      .catch((e) => setResult({ kind: 'error', message: String(e) }));
+      .catch((e) => setResult({ kind: 'error', message: String(e) }))
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -54,6 +69,22 @@ export function CommandPalette() {
           placeholder="0x401000 · symbol · /rename · /comment · /note · /scan vuln · /goto · /info"
           className="w-full bg-transparent px-4 py-3 outline-none font-mono"
         />
+        {history.length > 0 && !result && (
+          <div className="border-t border-kaiju-border px-3 py-2">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-kaiju-muted">Recent commands</div>
+            <div className="flex flex-wrap gap-1">
+              {history.map((item) => (
+                <button
+                  key={item}
+                  onClick={() => setInput(item)}
+                  className="border border-kaiju-border px-2 py-0.5 font-mono text-[11px] text-kaiju-muted hover:border-kaiju-accent hover:text-kaiju-text"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {result && (
           <div className="border-t border-kaiju-border max-h-72 overflow-auto p-3 text-sm">
             {result.kind === 'error' && <div className="text-kaiju-danger">{result.message}</div>}
@@ -67,7 +98,7 @@ export function CommandPalette() {
           </div>
         )}
         <div className="px-4 py-2 text-xs text-kaiju-muted border-t border-kaiju-border">
-          Enter to run · Esc to close
+          {busy ? 'Running...' : 'Enter to run · Esc to close'}
         </div>
       </div>
     </div>

@@ -22,7 +22,7 @@ const EXPERT_PLAYBOOKS = new Set([
 ]);
 
 export function ExpertWorkbench() {
-  const { selectedVaddr, functions, project, timeline, selectVaddr } = useStore();
+  const { selectedVaddr, functions, project, timeline, selectVaddr, setProject, notify } = useStore();
   const [tab, setTab] = useState<Tab>('mission');
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -33,14 +33,17 @@ export function ExpertWorkbench() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.listPlaybooks().then(setPlaybooks).catch((e) => setError(String(e)));
-    api.listFindings().then(setFindings).catch(() => {});
+    api.listPlaybooks().then(setPlaybooks).catch((e) => {
+      setError(String(e));
+      notify('error', `playbooks failed: ${String(e)}`);
+    });
+    api.listFindings().then(setFindings).catch((e) => notify('error', `findings failed: ${String(e)}`));
   }, []);
 
   useEffect(() => {
     const latest = timeline[0];
     if (latest?.type === 'finding.created' || latest?.type === 'finding.updated') {
-      api.listFindings().then(setFindings).catch(() => {});
+      api.listFindings().then(setFindings).catch((e) => notify('error', `findings refresh failed: ${String(e)}`));
     }
   }, [timeline.length]);
 
@@ -87,8 +90,11 @@ export function ExpertWorkbench() {
       setLastRun(run);
       const refreshed = await api.listFindings();
       setFindings(refreshed);
+      setProject(await api.project());
+      notify('info', `${pb.title}: ${run.run.summary}`);
     } catch (e) {
       setError(String(e));
+      notify('error', `${pb.title} failed: ${String(e)}`);
     } finally {
       setRunningPlaybook(null);
     }
@@ -102,8 +108,10 @@ export function ExpertWorkbench() {
     try {
       const result = await api.runAgent(agent, kind, selectedVaddr, 'suggest');
       setAgentText(result.text);
+      setProject(await api.project());
     } catch (e) {
       setError(String(e));
+      notify('error', `${agent} ${kind} failed: ${String(e)}`);
     } finally {
       setAgentBusy(null);
     }

@@ -3,12 +3,13 @@ import { AgentName, AgentRunKind, api } from '../api';
 import { useStore } from '../state';
 
 export function Inspector() {
-  const { selectedVaddr, project, functions } = useStore();
+  const { selectedVaddr, project, functions, setProject, notify } = useStore();
   const [editingName, setEditingName] = useState<string>('');
   const [commentDraft, setCommentDraft] = useState<string>('');
   const [scoreDraft, setScoreDraft] = useState<string>('');
   const [agentBusy, setAgentBusy] = useState<AgentName | null>(null);
   const [agentResult, setAgentResult] = useState<string>('');
+  const [saving, setSaving] = useState<string | null>(null);
 
   const currentName = useMemo(() => {
     if (!selectedVaddr) return '';
@@ -45,20 +46,33 @@ export function Inspector() {
     );
   }
 
-  const submit = (kind: 'rename' | 'comment' | 'score' | 'note') => {
+  const refreshProject = async () => {
+    const snapshot = await api.project();
+    setProject(snapshot);
+  };
+
+  const submit = async (kind: 'rename' | 'comment' | 'score' | 'note') => {
     if (!selectedVaddr) return;
-    if (kind === 'rename' && editingName.trim()) {
-      api.rename(selectedVaddr, editingName.trim()).catch(() => {});
-      setEditingName('');
-    }
-    if (kind === 'comment' && commentDraft.trim()) {
-      api.comment(selectedVaddr, commentDraft.trim()).catch(() => {});
-      setCommentDraft('');
-    }
-    if (kind === 'score' && /^\d+$/.test(scoreDraft)) {
-      const n = Math.min(10, Math.max(0, parseInt(scoreDraft, 10)));
-      api.setVulnScore(selectedVaddr, n).catch(() => {});
-      setScoreDraft('');
+    setSaving(kind);
+    try {
+      if (kind === 'rename' && editingName.trim()) {
+        await api.rename(selectedVaddr, editingName.trim());
+        setEditingName('');
+      }
+      if (kind === 'comment' && commentDraft.trim()) {
+        await api.comment(selectedVaddr, commentDraft.trim());
+        setCommentDraft('');
+      }
+      if (kind === 'score' && /^\d+$/.test(scoreDraft)) {
+        const n = Math.min(10, Math.max(0, parseInt(scoreDraft, 10)));
+        await api.setVulnScore(selectedVaddr, n);
+        setScoreDraft('');
+      }
+      await refreshProject();
+    } catch (e) {
+      notify('error', `${kind} failed: ${String(e)}`);
+    } finally {
+      setSaving(null);
     }
   };
 
@@ -68,6 +82,7 @@ export function Inspector() {
     setAgentResult('');
     try {
       const result = await api.runAgent(agent, kind, selectedVaddr, writePolicy);
+      await refreshProject().catch((e) => notify('error', `project refresh failed: ${String(e)}`));
       setAgentResult(
         [
           `${result.agent} ${result.kind}`,
@@ -80,6 +95,7 @@ export function Inspector() {
       );
     } catch (e) {
       setAgentResult(String(e));
+      notify('error', `${agent} ${kind} failed: ${String(e)}`);
     } finally {
       setAgentBusy(null);
     }
@@ -105,8 +121,12 @@ export function Inspector() {
             className="flex-1 bg-kaiju-bg border border-kaiju-border rounded px-2 py-1 text-sm font-mono outline-none focus:border-kaiju-accent"
             onKeyDown={(e) => e.key === 'Enter' && submit('rename')}
           />
-          <button onClick={() => submit('rename')} className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent">
-            set
+          <button
+            onClick={() => submit('rename')}
+            disabled={saving !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent disabled:opacity-50"
+          >
+            {saving === 'rename' ? '...' : 'set'}
           </button>
         </div>
       </Section>
@@ -123,8 +143,12 @@ export function Inspector() {
             className="flex-1 bg-kaiju-bg border border-kaiju-border rounded px-2 py-1 text-sm outline-none focus:border-kaiju-accent"
             onKeyDown={(e) => e.key === 'Enter' && submit('comment')}
           />
-          <button onClick={() => submit('comment')} className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent">
-            set
+          <button
+            onClick={() => submit('comment')}
+            disabled={saving !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent disabled:opacity-50"
+          >
+            {saving === 'comment' ? '...' : 'set'}
           </button>
         </div>
       </Section>
@@ -138,8 +162,12 @@ export function Inspector() {
             className="w-16 bg-kaiju-bg border border-kaiju-border rounded px-2 py-1 text-sm font-mono outline-none focus:border-kaiju-accent"
             onKeyDown={(e) => e.key === 'Enter' && submit('score')}
           />
-          <button onClick={() => submit('score')} className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent">
-            set
+          <button
+            onClick={() => submit('score')}
+            disabled={saving !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent disabled:opacity-50"
+          >
+            {saving === 'score' ? '...' : 'set'}
           </button>
         </div>
       </Section>
@@ -221,10 +249,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function NoteAdder({ vaddr }: { vaddr: string }) {
   const [draft, setDraft] = useState('');
-  const submit = () => {
+  const [saving, setSaving] = useState(false);
+  const { setProject, notify } = useStore();
+  const submit = async () => {
     if (!draft.trim()) return;
-    api.note(draft.trim(), vaddr).catch(() => {});
-    setDraft('');
+    setSaving(true);
+    try {
+      await api.note(draft.trim(), vaddr);
+      setDraft('');
+      setProject(await api.project());
+    } catch (e) {
+      notify('error', `note failed: ${String(e)}`);
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <div className="flex gap-1 mt-1">
@@ -235,8 +273,12 @@ function NoteAdder({ vaddr }: { vaddr: string }) {
         className="flex-1 bg-kaiju-bg border border-kaiju-border rounded px-2 py-1 text-xs outline-none focus:border-kaiju-accent"
         onKeyDown={(e) => e.key === 'Enter' && submit()}
       />
-      <button onClick={submit} className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent">
-        add
+      <button
+        onClick={submit}
+        disabled={saving}
+        className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-accent disabled:opacity-50"
+      >
+        {saving ? '...' : 'add'}
       </button>
     </div>
   );

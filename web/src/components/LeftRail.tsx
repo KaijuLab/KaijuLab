@@ -75,6 +75,7 @@ export function LeftRail() {
 }
 
 function PlaybooksPanel() {
+  const { setProject, notify } = useStore();
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [running, setRunning] = useState<string | null>(null);
   const [last, setLast] = useState<PlaybookRunResponse | null>(null);
@@ -90,8 +91,11 @@ function PlaybooksPanel() {
     try {
       const result = await api.runPlaybook(pb.id, 120, true);
       setLast(result);
+      setProject(await api.project());
+      notify('info', `${pb.title}: ${result.run.summary}`);
     } catch (e) {
       setError(String(e));
+      notify('error', `${pb.title} failed: ${String(e)}`);
     } finally {
       setRunning(null);
     }
@@ -116,6 +120,9 @@ function PlaybooksPanel() {
           </button>
         ))}
       </div>
+      {playbooks.length === 0 && !error && (
+        <div className="text-[11px] text-kaiju-muted">Loading playbooks...</div>
+      )}
       {error && <div className="mt-2 text-[11px] text-kaiju-danger">{error}</div>}
       {last && (
         <div className="mt-2 border-l-2 border-kaiju-accent pl-2 text-[11px] leading-snug">

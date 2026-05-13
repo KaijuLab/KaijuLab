@@ -92,6 +92,14 @@ function setAuthToken(token: string) {
   }
 }
 
+export function clearAuthToken() {
+  try {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    /* localStorage can be unavailable in hardened browser profiles */
+  }
+}
+
 function authHeaders(): HeadersInit {
   const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -120,7 +128,7 @@ async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}, r
 
 async function jget<T>(url: string): Promise<T> {
   const r = await fetchWithAuth(url);
-  if (!r.ok) throw new Error(`${url} → ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(url, r));
   return r.json() as Promise<T>;
 }
 
@@ -130,7 +138,7 @@ async function jpost<T>(url: string, body: unknown): Promise<T> {
     headers: { ...authHeaders(), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${url} → ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(url, r));
   return r.json() as Promise<T>;
 }
 
@@ -140,8 +148,26 @@ async function jpatch<T>(url: string, body: unknown): Promise<T> {
     headers: { ...authHeaders(), 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${url} → ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(url, r));
   return r.json() as Promise<T>;
+}
+
+async function responseError(url: string, response: Response): Promise<string> {
+  let detail = '';
+  try {
+    const text = await response.text();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed.message ?? parsed.error ?? text;
+      } catch {
+        detail = text;
+      }
+    }
+  } catch {
+    /* response body is optional */
+  }
+  return `${url} -> ${response.status}${detail ? `: ${detail}` : ''}`;
 }
 
 export interface RegistrySnapshot {
@@ -158,7 +184,7 @@ export const api = {
     jpost<{ ok: boolean }>(`/api/workspaces/${hash}/activate`, {}),
   closeWorkspace: async (hash: string) => {
     const r = await fetchWithAuth(`/api/workspaces/${hash}`, { method: 'DELETE' });
-    if (!r.ok) throw new Error(`close → ${r.status}`);
+    if (!r.ok) throw new Error(await responseError('close', r));
     return r.json();
   },
   uploadWorkspace: async (file: File): Promise<WorkspaceInfo> => {
@@ -169,7 +195,7 @@ export const api = {
       headers: authHeaders(),
       body: form,
     });
-    if (!r.ok) throw new Error(`upload → ${r.status}`);
+    if (!r.ok) throw new Error(await responseError('upload', r));
     return r.json();
   },
   recentFiles: () => jget<string[]>('/api/workspaces/recent'),
