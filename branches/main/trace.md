@@ -1275,3 +1275,4 @@ _[Checkpoint: 6a047e5e — Extended debug-probe after gdb-multiarch install: for
 [13:44:35] OBSERVE: read src/core/mod.rs
 [13:44:35] OBSERVE: read Cargo.toml
 [13:44:35] OBSERVE: searched Cargo.lock for "Cargo.toml"
+[13:44:35] OBSERVE: read src/server/routes.rs
