@@ -2377,3 +2377,4 @@ _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroo
 _[Checkpoint: 6a04f4c4 — Checked PwnableTW batch status and improved exploit loop/runtime defaults: auto sysroot discovery, adjacent libc context, benchmark .so filtering, capture-limit next action.]_
 ---
 
+[22:09:51] OBSERVE: read src/main.rs
