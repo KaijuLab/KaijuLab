@@ -1956,3 +1956,4 @@ _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, p
 [18:28:03] OBSERVE: read src/decompiler/ir/kir.rs
 [18:28:03] OBSERVE: read src/core/decompile.rs
 [18:28:03] OBSERVE: read src/core/decompile.rs
+[18:28:03] OBSERVE: searched kir_operand|Memory for "kir_op_from_instruction|fn"
