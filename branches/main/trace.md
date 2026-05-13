@@ -2618,3 +2618,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:23] OBSERVE: searched src/main.rs
 [23:38:23] OBSERVE: searched main.rs for "exploit_loop_prompt|crash-offset|exploit-recipe|api"
 [23:38:23] OBSERVE: read src/main.rs
+[23:38:23] OBSERVE: read src/main.rs
