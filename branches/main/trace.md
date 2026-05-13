@@ -1758,3 +1758,4 @@ _[Checkpoint: 6a04ab02 — Added first-pass decompiler register SSA/data-flow fa
 _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuristic memory accesses/variable candidates, exact-start function selection, benchmark memory totals, docs, and verified build/tests/CLI benchmark.]_
 ---
 
+[17:41:07] OBSERVE: listed files under ../ghidra
