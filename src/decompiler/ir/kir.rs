@@ -19,6 +19,7 @@ pub struct KirFunction {
     pub ssa: KirSsaFacts,
     pub memory_ssa: KirMemorySsaFacts,
     pub expressions: KirExpressionFacts,
+    pub type_facts: KirTypeFacts,
     pub diagnostics: Vec<String>,
 }
 
@@ -155,6 +156,24 @@ pub struct KirExpressionAssignment {
     pub expression: String,
     pub inputs: Vec<String>,
     pub source: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KirTypeFacts {
+    pub available: bool,
+    pub register_type_count: usize,
+    pub memory_type_count: usize,
+    pub register_types: Vec<KirTypeFact>,
+    pub memory_types: Vec<KirTypeFact>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirTypeFact {
+    pub name: String,
+    pub type_name: String,
+    pub confidence: String,
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
