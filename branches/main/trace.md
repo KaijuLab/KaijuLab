@@ -1611,3 +1611,9 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:55:29] OBSERVE: listed files under paper
 [15:55:29] OBSERVE: listed files under paper
 [15:55:36] NOTE: LIMITATION: enhanced decompile syscall/stack insights currently x86/x64 text-parse disassembly heuristics, not full dataflow SSA; enough for PwnableTW Start read/write stack overflow.
+
+
+---
+_[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/API path: core enhanced decompile context with CFG, stack, call/syscall notes; ir-query uses recovery function list and enhanced decompile; verified Start sample and cargo tests.]_
+---
+
