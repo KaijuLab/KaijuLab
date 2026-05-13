@@ -1096,3 +1096,9 @@ _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [12:35:52] OBSERVE: read src/main.rs
 [12:35:52] OBSERVE: read src/main.rs
 [12:36:01] OBSERVE: read src/main.rs
+
+
+---
+_[Checkpoint: 6a047031 — Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.]_
+---
+
