@@ -2437,3 +2437,9 @@ _[Checkpoint: 6a04f9a9 — wrote kaijulab-realloc-poc.py]_
 ---
 
 [22:26:49] ACT: wrote kaijulab-tcache-tear-poc.py
+
+
+---
+_[Checkpoint: 6a04fab2 — wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py]_
+---
+
