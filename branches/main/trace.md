@@ -2385,3 +2385,4 @@ _[Checkpoint: 6a04f4c4 — Checked PwnableTW batch status and improved exploit l
 [22:09:51] OBSERVE: listed files under ld-linux-x86-64.so.2
 [22:09:51] OBSERVE: listed files under /opt/sysroots/x86_64/lib
 [22:09:51] OBSERVE: listed files under /opt/sysroots/x86_64/usr/lib64/ld-linux-x86-64.so.2
+[22:09:51] OBSERVE: listed files under lib
