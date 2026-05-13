@@ -2294,3 +2294,4 @@ _[Checkpoint: 6a04eb5c — edited kaijulab-hacknote-poc.py; wrote kaijulab-apple
 [21:24:19] OBSERVE: searched main.rs for "sysroot|RuntimeRun|DebugProbe|CrashOffset|runtime-run|debug-probe|crash-offset"
 [21:24:19] OBSERVE: listed files under /tmp
 [21:24:19] OBSERVE: searched tmp for "kaijulab-*-poc.py"
+[21:24:27] THINK: Resume crash by preserving src/main.rs sysroot bridge for exploit-verify/exploit-loop over reverting because cargo check and CLI help confirm flags are coherent.
