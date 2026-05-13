@@ -1070,3 +1070,4 @@ _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [12:35:52] OBSERVE: listed files under samples/PwnableTW/Start
 [12:35:52] OBSERVE: listed files under Start
 [12:35:52] OBSERVE: read samples/PwnableTW/Start/start.kaiju_scripts/exploit_ok.py
+[12:35:52] OBSERVE: read samples/PwnableTW/Start/start.kaiju_scripts/exploit_ok.py
