@@ -1769,3 +1769,4 @@ _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuris
 [17:41:07] OBSERVE: read src/decompiler/ir/mod.rs
 [17:41:07] OBSERVE: read src/decompiler/mod.rs
 [17:41:07] OBSERVE: searched ../ghidra/Ghidra/Features/Decompiler/src for "src"
+[17:41:07] OBSERVE: read src/decompiler/mod.rs
