@@ -1592,3 +1592,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:54:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/analysis.rs
 [15:54:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [15:54:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+[15:54:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
