@@ -98,11 +98,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.
 - [x] Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
 - [x] Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.
+- [x] edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:56 UTC] `main`: edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py
 - [2026-05-13 22:53 UTC] `main`: Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.
 - [2026-05-13 22:47 UTC] `main`: Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
 - [2026-05-13 22:40 UTC] `main`: Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.

@@ -2540,3 +2540,9 @@ _[Checkpoint: 6a0500d7 — Removed overfit PwnableTW filename recipes. exploit-r
 ---
 
 [22:56:43] ACT: wrote kaijulab-resolve-realloc.py
+
+
+---
+_[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py]_
+---
+
