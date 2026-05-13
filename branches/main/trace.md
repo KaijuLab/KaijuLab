@@ -1790,3 +1790,4 @@ _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuris
 _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.]_
 ---
 
+[18:00:42] OBSERVE: read src/decompiler/ir/kir.rs
