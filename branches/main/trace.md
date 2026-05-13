@@ -690,3 +690,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:22:26] OBSERVE: read src/server/mod.rs
 [03:22:26] OBSERVE: read src/server/mod.rs
 [03:22:26] OBSERVE: read src/main.rs
+[03:22:26] OBSERVE: searched src for "forkpty|openpty|pty|WebSocket|ws::|Router::new|route\("
