@@ -1960,3 +1960,4 @@ _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, p
 [18:28:03] THINK: KIR linear memory SSA before renderer integration because stack/global memory versions give alias/type/render passes a stable substrate without perturbing legacy pseudo-C.
 [18:28:27] OBSERVE: searched src/core/decompile.rs for "SSA|memory_ssa|VariableCandidate|variable_candidates|KirExpression|pseudo|renderer|render""
 [18:28:27] OBSERVE: searched decompile.rs for "memory SSA|memory_ssa|VariableCandidate|variable_candidates|KirExpression|pseudo|renderer|render"
+[18:28:27] OBSERVE: read src/core/decompile.rs
