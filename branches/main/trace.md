@@ -2103,3 +2103,4 @@ _[Checkpoint: 6a04c5cf — Added typed KIR expression preview to enhanced decomp
 _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 84.]_
 ---
 
+[18:52:14] THINK: KIR call facts before interprocedural signatures because ABI register arguments make syscalls/calls readable in enhanced output while stack args and callee types remain future work.
