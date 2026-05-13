@@ -1796,3 +1796,4 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 [18:00:42] OBSERVE: searched kir_op_from_instruction|decompiler_score|decompiler_blockers|struct for "lift_kir|fn"
 [18:00:42] OBSERVE: read src/decompiler/ir/kir.rs
 [18:00:42] OBSERVE: read src/core/decompile.rs
+[18:00:42] OBSERVE: read src/core/decompile.rs
