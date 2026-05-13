@@ -961,3 +961,4 @@ _[Checkpoint: 6a03feec — Fixed stale Agent Console attach/restart and gray com
 
 [04:35:53] NOTE: Agent console visibility fix: remove output CR rewriting before xterm.write; add explicit kaijulab connected/status/detached lines so live backend attach is visible even if agent TUI is quiet.
 [04:35:54] OBSERVE: read web/src/components/AgentConsole.tsx
+[04:35:54] OBSERVE: read web/src/components/AgentConsole.tsx
