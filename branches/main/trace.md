@@ -588,3 +588,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:50:08] OBSERVE: searched tests for "src"
 [02:50:08] OBSERVE: searched src for "ts_rs|export_all|PlaybookId"
 [02:50:08] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts
+[02:50:08] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/types/PlaybookId.ts
