@@ -1602,3 +1602,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:54:19] OBSERVE: searched docs for "README.md"
 [15:54:19] OBSERVE: listed files under .
 [15:54:19] OBSERVE: listed files under .
+[15:54:19] OBSERVE: searched README.md for "ir-query|analysis-loop|recovery-index"
