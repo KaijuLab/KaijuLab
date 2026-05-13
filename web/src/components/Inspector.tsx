@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AgentName, api } from '../api';
+import { AgentName, AgentRunKind, api } from '../api';
 import { useStore } from '../state';
 
 export function Inspector() {
@@ -62,16 +62,17 @@ export function Inspector() {
     }
   };
 
-  const runTriage = async (agent: AgentName) => {
+  const runAgent = async (agent: AgentName, kind: AgentRunKind, writePolicy: 'suggest' | 'apply' = 'suggest') => {
     if (!selectedVaddr) return;
     setAgentBusy(agent);
     setAgentResult('');
     try {
-      const result = await api.runAgent(agent, 'triage', selectedVaddr, 'suggest');
+      const result = await api.runAgent(agent, kind, selectedVaddr, writePolicy);
       setAgentResult(
         [
           `${result.agent} ${result.kind}`,
           result.created_finding_id ? `finding: ${result.created_finding_id}` : '',
+          result.applied ? 'applied suggested project updates' : '',
           result.text,
         ]
           .filter(Boolean)
@@ -153,21 +154,49 @@ export function Inspector() {
         <NoteAdder vaddr={selectedVaddr} />
       </Section>
 
-      <Section title="Agent triage">
+      <Section title="Agent workflows">
         <div className="grid grid-cols-2 gap-1">
           <button
-            onClick={() => runTriage('claude')}
+            onClick={() => runAgent('claude', 'triage')}
             disabled={agentBusy !== null}
             className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-claude disabled:opacity-50"
           >
-            Claude
+            Claude triage
           </button>
           <button
-            onClick={() => runTriage('codex')}
+            onClick={() => runAgent('codex', 'triage')}
             disabled={agentBusy !== null}
             className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-codex disabled:opacity-50"
           >
-            Codex
+            Codex triage
+          </button>
+          <button
+            onClick={() => runAgent('claude', 'triage', 'apply')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-claude disabled:opacity-50"
+          >
+            Claude apply
+          </button>
+          <button
+            onClick={() => runAgent('codex', 'triage', 'apply')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-codex disabled:opacity-50"
+          >
+            Codex apply
+          </button>
+          <button
+            onClick={() => runAgent('claude', 'report_section')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-claude disabled:opacity-50"
+          >
+            Report
+          </button>
+          <button
+            onClick={() => runAgent('codex', 'yara')}
+            disabled={agentBusy !== null}
+            className="px-2 py-1 text-xs border border-kaiju-border rounded hover:border-kaiju-codex disabled:opacity-50"
+          >
+            YARA
           </button>
         </div>
         {agentBusy && <div className="mt-2 text-xs text-kaiju-accent">{agentBusy} running...</div>}

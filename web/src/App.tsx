@@ -8,6 +8,7 @@ import { CenterWorkspace } from './components/CenterWorkspace';
 import { Inspector } from './components/Inspector';
 import { Timeline } from './components/Timeline';
 import { FindingsBoard } from './components/FindingsBoard';
+import { ExpertWorkbench } from './components/ExpertWorkbench';
 import { CommandPalette } from './components/CommandPalette';
 import { OpenBinary } from './components/OpenBinary';
 
@@ -50,6 +51,7 @@ export default function App() {
             <CenterWorkspace />
             <Inspector />
           </div>
+          <ExpertWorkbench />
           <FindingsBoard />
           <Timeline />
           <CommandPalette />

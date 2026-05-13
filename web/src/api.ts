@@ -44,7 +44,16 @@ export interface AgentRunResponse {
   applied: boolean;
 }
 
-export type PlaybookId = 'malware_triage' | 'ctf_flag_hunt' | 'vulnerability_audit' | 'capability_survey';
+export type PlaybookId =
+  | 'malware_triage'
+  | 'ctf_flag_hunt'
+  | 'vulnerability_audit'
+  | 'capability_survey'
+  | 'command_handler_hunt'
+  | 'license_check_hunt'
+  | 'crypto_secret_hunt'
+  | 'network_parser_hunt'
+  | 'auth_bypass_review';
 
 export interface Playbook {
   id: PlaybookId;

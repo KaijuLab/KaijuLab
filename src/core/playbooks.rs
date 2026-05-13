@@ -21,6 +21,11 @@ pub enum PlaybookId {
     CtfFlagHunt,
     VulnerabilityAudit,
     CapabilitySurvey,
+    CommandHandlerHunt,
+    LicenseCheckHunt,
+    CryptoSecretHunt,
+    NetworkParserHunt,
+    AuthBypassReview,
 }
 
 impl PlaybookId {
@@ -30,6 +35,11 @@ impl PlaybookId {
             "ctf_flag_hunt" => Ok(Self::CtfFlagHunt),
             "vulnerability_audit" => Ok(Self::VulnerabilityAudit),
             "capability_survey" => Ok(Self::CapabilitySurvey),
+            "command_handler_hunt" => Ok(Self::CommandHandlerHunt),
+            "license_check_hunt" => Ok(Self::LicenseCheckHunt),
+            "crypto_secret_hunt" => Ok(Self::CryptoSecretHunt),
+            "network_parser_hunt" => Ok(Self::NetworkParserHunt),
+            "auth_bypass_review" => Ok(Self::AuthBypassReview),
             _ => Err(anyhow!("unknown playbook: {}", s)),
         }
     }
@@ -144,6 +154,62 @@ pub fn list_playbooks() -> Vec<Playbook> {
                 "Record capability leads".into(),
             ],
         },
+        Playbook {
+            id: PlaybookId::CommandHandlerHunt,
+            title: "Command handlers".into(),
+            audience: "beginner analyst".into(),
+            goal: "Rank likely command dispatchers, opcode parsers, verb tables, and switch-heavy control paths.".into(),
+            steps: vec![
+                "Search strings for command verbs and parser errors".into(),
+                "Scan function inventory for dispatch/table names".into(),
+                "Collect vulnerability hints that often sit near handlers".into(),
+                "Produce next functions to inspect with evidence".into(),
+            ],
+        },
+        Playbook {
+            id: PlaybookId::LicenseCheckHunt,
+            title: "License checks".into(),
+            audience: "beginner analyst".into(),
+            goal: "Find serial, trial, activation, comparison, and patchable branch leads.".into(),
+            steps: vec![
+                "Search user-facing strings for trial/license/auth wording".into(),
+                "Find comparison and crypto-adjacent imports".into(),
+                "Rank candidate checker functions".into(),
+            ],
+        },
+        Playbook {
+            id: PlaybookId::CryptoSecretHunt,
+            title: "Crypto and secrets".into(),
+            audience: "malware and product analyst".into(),
+            goal: "Surface hardcoded keys, crypto constants, hashing APIs, and decoding routines.".into(),
+            steps: vec![
+                "Search imports for crypto and hashing APIs".into(),
+                "Search strings for keys, tokens, certificates, and encodings".into(),
+                "Run risk scan for decoder/decryption leads".into(),
+            ],
+        },
+        Playbook {
+            id: PlaybookId::NetworkParserHunt,
+            title: "Network parsers".into(),
+            audience: "protocol reverse engineer".into(),
+            goal: "Find socket/HTTP ingress, parser errors, packet format hints, and unsafe parsing leads.".into(),
+            steps: vec![
+                "Collect network imports and URL/protocol strings".into(),
+                "Search for parser grammar, length, and error strings".into(),
+                "Run vulnerability scan for parsing sinks".into(),
+            ],
+        },
+        Playbook {
+            id: PlaybookId::AuthBypassReview,
+            title: "Auth bypass".into(),
+            audience: "security reviewer".into(),
+            goal: "Find authentication gates, role checks, authorization strings, and branches needing evidence review.".into(),
+            steps: vec![
+                "Search auth, role, token, and permission strings".into(),
+                "Collect imports used by auth and token validation".into(),
+                "Create review leads with confirmation steps".into(),
+            ],
+        },
     ]
 }
 
@@ -157,6 +223,86 @@ pub fn run_playbook(
         PlaybookId::CtfFlagHunt => ctf_flag_hunt(ws, max_functions),
         PlaybookId::VulnerabilityAudit => vulnerability_audit(ws, max_functions),
         PlaybookId::CapabilitySurvey => capability_survey(ws, max_functions),
+        PlaybookId::CommandHandlerHunt => expert_hunt(
+            ws,
+            PlaybookId::CommandHandlerHunt,
+            "Command handlers",
+            max_functions,
+            &[
+                "command", "cmd", "opcode", "dispatch", "handler", "verb", "request",
+                "response", "unknown command", "invalid opcode", "switch",
+            ],
+            &[
+                "recv", "read", "fgets", "strtok", "strcmp", "strncmp", "memcmp",
+                "getopt", "argparse",
+            ],
+            "command_handler_leads",
+            "Command/dispatch evidence found. Prioritize xrefs from strings/imports into switch or table-driven functions.",
+        ),
+        PlaybookId::LicenseCheckHunt => expert_hunt(
+            ws,
+            PlaybookId::LicenseCheckHunt,
+            "License checks",
+            max_functions,
+            &[
+                "license", "serial", "activation", "activate", "trial", "expired",
+                "registered", "registration", "valid", "invalid", "password",
+            ],
+            &[
+                "strcmp", "strncmp", "memcmp", "crypt", "sha", "md5", "getvolume",
+                "regopenkey", "regqueryvalue",
+            ],
+            "license_check_leads",
+            "License/authentication evidence found. Inspect comparison callers and patch-sensitive success/failure branches.",
+        ),
+        PlaybookId::CryptoSecretHunt => expert_hunt(
+            ws,
+            PlaybookId::CryptoSecretHunt,
+            "Crypto and secrets",
+            max_functions,
+            &[
+                "key", "secret", "token", "password", "private", "public key", "BEGIN ",
+                "certificate", "base64", "aes", "rsa", "sha", "md5", "salt",
+            ],
+            &[
+                "crypt", "bcrypt", "openssl", "EVP_", "AES_", "RSA_", "SHA", "MD5",
+                "CryptAcquireContext", "BCrypt",
+            ],
+            "crypto_secret_leads",
+            "Crypto or secret material evidence found. Confirm whether constants are test data, public material, or sensitive runtime secrets.",
+        ),
+        PlaybookId::NetworkParserHunt => expert_hunt(
+            ws,
+            PlaybookId::NetworkParserHunt,
+            "Network parsers",
+            max_functions,
+            &[
+                "http", "https", "socket", "packet", "header", "content-length",
+                "user-agent", "parse", "malformed", "protocol", "request",
+            ],
+            &[
+                "socket", "connect", "recv", "send", "accept", "listen", "WinHttp",
+                "InternetOpen", "curl", "read",
+            ],
+            "network_parser_leads",
+            "Network/parser evidence found. Trace ingress buffers into length checks, copies, and dispatch routines.",
+        ),
+        PlaybookId::AuthBypassReview => expert_hunt(
+            ws,
+            PlaybookId::AuthBypassReview,
+            "Auth bypass",
+            max_functions,
+            &[
+                "auth", "authorize", "permission", "role", "admin", "token", "session",
+                "denied", "forbidden", "unauthorized", "login", "logout",
+            ],
+            &[
+                "strcmp", "strncmp", "memcmp", "jwt", "crypt", "sha", "getenv",
+                "RegQueryValue", "sqlite",
+            ],
+            "auth_bypass_review_leads",
+            "Authentication/authorization evidence found. Confirm callers enforce failure paths before trusting the gate.",
+        ),
     }
 }
 
@@ -343,6 +489,92 @@ fn capability_survey(ws: &Workspace, max_functions: Option<u32>) -> Result<Playb
             ),
             step(
                 "Risk hints",
+                "complete",
+                vec![ev("scan", "scan_vulnerabilities", &vuln)],
+            ),
+        ],
+        findings,
+    ))
+}
+
+fn expert_hunt(
+    ws: &Workspace,
+    id: PlaybookId,
+    title: &str,
+    max_functions: Option<u32>,
+    string_needles: &[&str],
+    import_needles: &[&str],
+    rule: &str,
+    rationale: &str,
+) -> Result<PlaybookRun> {
+    let strings = safe("strings_extract", || {
+        analysis::strings_extract(ws, None, Some(4))
+    });
+    let imports = safe("imports", || analysis::imports(ws));
+    let functions = safe("list_functions", || analysis::list_functions(ws, false));
+    let vuln = safe("scan_vulnerabilities", || {
+        analysis::scan_vulnerabilities(ws, max_functions.or(Some(160)))
+    });
+
+    let string_hits = find_lines(&strings, string_needles, 18);
+    let import_hits = find_lines(&imports, import_needles, 18);
+    let function_hits = find_lines(&functions, string_needles, 18);
+    let mut findings = Vec::new();
+
+    if !string_hits.is_empty() || !import_hits.is_empty() || !function_hits.is_empty() {
+        findings.push(PlaybookFinding {
+            kind: FindingKind::StringOfInterest,
+            severity: Severity::Med,
+            vaddr: None,
+            rule: rule.into(),
+            rationale: format!(
+                "{rationale}\n\nString leads:\n{}\n\nImport leads:\n{}\n\nFunction-name leads:\n{}",
+                empty_dash(&string_hits),
+                empty_dash(&import_hits),
+                empty_dash(&function_hits)
+            ),
+            evidence: vec![
+                tool_evidence("strings_extract", &strings),
+                tool_evidence("imports", &imports),
+                tool_evidence("list_functions", &functions),
+            ],
+            suggested_actions: vec![
+                "Follow xrefs from the strongest string/import lead into caller functions.".into(),
+                "Rename confirmed handlers/checkers immediately so later evidence reads like source.".into(),
+                "Run agent triage on the top candidate and require address-backed evidence before confirming.".into(),
+            ],
+        });
+    }
+    push_vuln_finding(&mut findings, &vuln);
+
+    Ok(run(
+        id,
+        title,
+        format!(
+            "{} string leads, {} import leads, {} function-name leads, {} proposed findings.",
+            string_hits.len(),
+            import_hits.len(),
+            function_hits.len(),
+            findings.len()
+        ),
+        vec![
+            step(
+                "String leads",
+                "complete",
+                vec![ev("strings", "strings_extract", &string_hits.join("\n"))],
+            ),
+            step(
+                "Import leads",
+                "complete",
+                vec![ev("imports", "imports", &import_hits.join("\n"))],
+            ),
+            step(
+                "Function-name leads",
+                "complete",
+                vec![ev("functions", "list_functions", &function_hits.join("\n"))],
+            ),
+            step(
+                "Risk scan",
                 "complete",
                 vec![ev("scan", "scan_vulnerabilities", &vuln)],
             ),
@@ -549,4 +781,12 @@ fn find_lines(text: &str, needles: &[&str], max: usize) -> Vec<String> {
         }
     }
     out
+}
+
+fn empty_dash(lines: &[String]) -> String {
+    if lines.is_empty() {
+        "-".into()
+    } else {
+        lines.join("\n")
+    }
 }

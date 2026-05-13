@@ -121,6 +121,11 @@ CI pipelines or for cold orientation before opening the workbench.
 │ vuln     │  inline cmnt  │  renames    │  vuln score / note │
 │ badges   │               │             │                    │
 ├──────────┴───────────────┴─────────────┴────────────────────┤
+│  Expert Workbench — mission, evidence graph, checklist,     │
+│  training prompts, report/YARA drafting                      │
+├──────────────────────────────────────────────────────────────┤
+│  Findings — evidence-backed leads with review states         │
+├──────────────────────────────────────────────────────────────┤
 │  Timeline — granular events, filterable by source           │
 │  → claude (3s ago): function.renamed 0x401200 → parse_hdr   │
 │  → user   (8s ago): comment.added 0x401204 "stack bof"      │
@@ -128,10 +133,11 @@ CI pipelines or for cold orientation before opening the workbench.
 ```
 
 - **Command palette** (`Ctrl+K` / `Cmd+K`): `0x401000` jumps · `parse_header` fuzzy-finds · `/rename`, `/comment`, `/note`, `/scan vuln`, `/goto`, `/info`.
-- **Playbooks**: guided expert workflows for malware triage, CTF flag hunting, vulnerability audit, and capability survey. Playbooks run deterministic tools, summarize evidence, and can create findings for review.
+- **Playbooks**: guided expert workflows for malware triage, CTF flag hunting, vulnerability audit, capability survey, command-handler hunts, license checks, crypto/secret review, network-parser review, and auth-bypass review. Playbooks run deterministic tools, summarize evidence, and can create findings for review.
+- **Expert Workbench**: beginner-facing mission control with professional hunt launchers, an evidence graph, investigation checklist, training prompts, and report/YARA drafting through local Claude/Codex bridge jobs.
 - **Findings board**: review evidence-backed findings, jump to addresses, and move items through triage, confirmed, dismissed, or false-positive states.
 - **Source attribution**: every mutation in the timeline shows whether it came from `user`, `claude`, `codex`, `plugin`, or `tool`. Filter the stream by source.
-- **Inspector**: shows the selected function's annotations, vuln score, notes. Edit in place; writes hit the same project DB as MCP writes.
+- **Inspector**: shows the selected function's annotations, vuln score, notes, and function-level agent workflows for triage, applyable suggestions, report sections, and YARA drafts. Edit in place; writes hit the same project DB as MCP writes.
 
 ### Dev mode
 
@@ -176,7 +182,8 @@ Tools are available identically through REST (`/api/...`), MCP
 ### Playbooks
 `list_playbooks`, `run_playbook`. Available playbooks:
 `malware_triage`, `ctf_flag_hunt`, `vulnerability_audit`,
-`capability_survey`.
+`capability_survey`, `command_handler_hunt`, `license_check_hunt`,
+`crypto_secret_hunt`, `network_parser_hunt`, `auth_bypass_review`.
 
 ### Function hash database (cross-binary)
 `register_function_hash`, `lookup_function_hash`, `match_all_functions`

@@ -458,6 +458,18 @@ Right inspector
     - linked findings
     - agent suggestions awaiting review
 
+Expert workbench
+  Mission control:
+    - starter playbooks for triage, CTF, vuln audit, capability survey
+    - professional hunts for command handlers, license checks, crypto/secrets,
+      network parsers, and auth-bypass review
+  Evidence graph:
+    - findings, notes, renames, addresses, and sources in one navigable view
+  Checklist + training:
+    - beginner-safe investigation progress and expert reasoning prompts
+  Report:
+    - scoped Claude/Codex report-section and YARA drafting for selected functions
+
 Bottom timeline
   Granular event stream: tool calls, mutations, agent deltas, errors.
   Filterable by source (user / claude / codex / tool / plugin).
