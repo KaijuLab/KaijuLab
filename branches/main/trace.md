@@ -1066,3 +1066,4 @@ _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [12:35:52] OBSERVE: read src/main.rs
 [12:35:52] OBSERVE: read src/main.rs
 [12:35:52] OBSERVE: listed files under samples/Pwnable/Start/start
+[12:35:52] OBSERVE: listed files under start
