@@ -78,6 +78,9 @@ kaijulab api run-playbook vulnerability_audit --max-functions 200
 kaijulab api agent-run codex --kind triage --vaddr 0x401000 --write-policy suggest
 kaijulab api console claude
 kaijulab api console codex --prompt 'Use kaijulab MCP to summarize the active workspace.' --idle-timeout-secs 30
+kaijulab api exploit-context
+kaijulab api exploit-verify --expect-target-exit 42 /tmp/poc.py
+kaijulab api exploit-loop claude --output /tmp/poc.py
 ```
 
 `kaijulab api` is a bot-friendly wrapper around the same REST endpoints used by
@@ -95,6 +98,23 @@ Convenience subcommands cover the common automation loop:
 - `console <claude|codex>` attaches stdin/stdout to the daemon-owned Agent Console terminal.
 - `console <claude|codex> --prompt ... --idle-timeout-secs N` sends one prompt to that terminal and exits after quiet output.
 - `wait-job <JOB_ID>` polls `/api/jobs/<JOB_ID>` until `ok`, `failed`, or `cancelled`.
+- `exploit-context [--file FILE]` emits an exploit workbench bundle: ELF protections, qemu/native runtime candidates, missing loader/sysroot notes, prompt strings, and common gadget hints.
+- `exploit-verify [--file FILE] [--expect-exit N|--expect-target-exit N|--expect-output TEXT] SCRIPT` runs a candidate PoC with `KAIJU_BINARY`/qemu env vars and returns structured success/failure JSON.
+- `exploit-loop <claude|codex> --output /tmp/poc.py` sends Agent Console a bounded PoC-development prompt that requires `exploit-context`/`exploit-verify` after every candidate edit.
+
+For CTF exploit work, prefer the loop commands over ad-hoc shell probing:
+
+```bash
+kaijulab serve samples/PwnableTW/3x17/3x17 --allow-exec
+kaijulab api exploit-context
+kaijulab api exploit-loop claude --output /tmp/kaijulab-3x17-poc.py \
+  --goal 'Write a stdlib Python PoC that proves code execution with target exit 42.'
+kaijulab api exploit-verify --expect-target-exit 42 /tmp/kaijulab-3x17-poc.py
+```
+
+`exploit-context` also reports environment blockers such as missing
+`/lib/ld-linux.so.2` for dynamically linked i386 binaries and suggests either
+installing `libc6:i386` or running qemu with an i386 sysroot.
 
 ### `mcp` — the stdio shim
 

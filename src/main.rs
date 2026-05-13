@@ -12,14 +12,16 @@ mod server;
 mod tools;
 
 use std::{
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
+use object::{Object, ObjectSection};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -243,6 +245,80 @@ enum ApiCommands {
 
         #[arg(long, default_value_t = 500)]
         interval_ms: u64,
+    },
+
+    /// Build an exploit-workbench context bundle for the active binary.
+    ExploitContext {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum matches per gadget pattern.
+        #[arg(long, default_value_t = 8)]
+        max_gadgets: usize,
+    },
+
+    /// Execute a candidate PoC script and evaluate simple success predicates.
+    ExploitVerify {
+        #[arg(value_name = "SCRIPT")]
+        script: PathBuf,
+
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Script wall-clock timeout.
+        #[arg(long, default_value_t = 30)]
+        timeout_secs: u64,
+
+        /// Expected process exit code.
+        #[arg(long)]
+        expect_exit: Option<i32>,
+
+        /// Expected target exit code printed by the PoC as returncode=<N>.
+        #[arg(long)]
+        expect_target_exit: Option<i32>,
+
+        /// Expected substring in stdout or stderr.
+        #[arg(long)]
+        expect_output: Option<String>,
+
+        /// Arguments passed to the script after `--`.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+
+    /// Send a bounded exploit-development loop prompt into Agent Console.
+    ExploitLoop {
+        #[arg(value_name = "AGENT")]
+        agent: String,
+
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Candidate PoC path the agent should create.
+        #[arg(long, default_value = "/tmp/kaijulab-poc.py")]
+        output: PathBuf,
+
+        /// Goal for the generated PoC.
+        #[arg(
+            long,
+            default_value = "Create a Python stdlib PoC and prove local code execution with exit(42) or command output."
+        )]
+        goal: String,
+
+        /// Maximum analysis/fix attempts the prompt should spend.
+        #[arg(long, default_value_t = 3)]
+        attempts: u32,
+
+        /// Agent console hard timeout.
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
+
+        /// Console idle timeout.
+        #[arg(long, default_value_t = 30)]
+        idle_timeout_secs: u64,
     },
 }
 
@@ -494,6 +570,58 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             )
             .await?
         }
+        ApiCommands::ExploitContext { file, max_gadgets } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            build_exploit_context(&path, max_gadgets)?
+        }
+        ApiCommands::ExploitVerify {
+            script,
+            file,
+            timeout_secs,
+            expect_exit,
+            expect_target_exit,
+            expect_output,
+            args,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            verify_exploit_script(
+                &script,
+                &path,
+                timeout_secs,
+                expect_exit,
+                expect_target_exit,
+                expect_output.as_deref(),
+                &args,
+            )?
+        }
+        ApiCommands::ExploitLoop {
+            agent,
+            file,
+            output,
+            goal,
+            attempts,
+            timeout_secs,
+            idle_timeout_secs,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let context = build_exploit_context(&path, 8)?;
+            let prompt = exploit_loop_prompt(&path, &output, &goal, attempts, &context)?;
+            run_agent_console(
+                &base_url,
+                token.as_deref(),
+                &agent,
+                Some(prompt),
+                true,
+                Some(idle_timeout_secs),
+                Some(timeout_secs),
+                1500,
+                true,
+                120,
+                32,
+            )
+            .await?;
+            return Ok(());
+        }
     };
     print_api_value(&value)?;
     Ok(())
@@ -600,6 +728,471 @@ async fn wait_api_job(
 fn print_api_value(value: &serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+async fn resolve_api_binary_path(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    file: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(file) = file {
+        return Ok(file.canonicalize().unwrap_or(file));
+    }
+    let workspace = api_request(client, base_url, token, "GET", "/api/workspace", None).await?;
+    let path = workspace
+        .get("binary_path")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("no active workspace; pass --file or open a binary"))?;
+    Ok(PathBuf::from(path))
+}
+
+fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::Value> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut out = serde_json::json!({
+        "binary_path": path,
+        "size": data.len(),
+        "runtime": runtime_candidates(path, &data),
+        "strings_of_interest": interesting_strings(&data, 40),
+    });
+
+    match goblin::Object::parse(&data)? {
+        goblin::Object::Elf(elf) => {
+            let arch = elf_arch_label(&elf);
+            out["format"] = serde_json::json!("ELF");
+            out["arch"] = serde_json::json!(arch);
+            out["entry"] = serde_json::json!(format!("0x{:x}", elf.entry));
+            out["interpreter"] = elf
+                .interpreter
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null);
+            out["protections"] = elf_protections(&elf);
+            out["imports_sample"] = serde_json::json!(elf
+                .dynsyms
+                .iter()
+                .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+                .filter(|s| !s.is_empty())
+                .take(40)
+                .collect::<Vec<_>>());
+            out["gadget_hints"] = serde_json::json!(gadget_hints(path, &data, &arch, max_gadgets)?);
+            out["analysis_loop"] = serde_json::json!({
+                "recommended_order": [
+                    "1. Inspect protections/runtime and fix missing loader/sysroot before dynamic validation.",
+                    "2. Use strings/prompts to locate input functions, then call function_context on those addresses.",
+                    "3. Build a minimal success predicate first: exit(42), marker stdout, or local flag read.",
+                    "4. Run candidate with `kaijulab api exploit-verify` after every edit.",
+                    "5. Stop once exploit-verify reports success=true and script prints SCRIPT_READY."
+                ],
+                "verify_command_template": format!(
+                    "target/debug/kaijulab api exploit-verify --file {} --expect-target-exit 42 /tmp/poc.py",
+                    shell_quote(&path.to_string_lossy())
+                ),
+            });
+        }
+        other => {
+            out["format"] = serde_json::json!(format!("{:?}", other));
+            out["error"] =
+                serde_json::json!("exploit-context currently has full support for ELF only");
+        }
+    }
+    Ok(out)
+}
+
+fn elf_arch_label(elf: &goblin::elf::Elf<'_>) -> String {
+    use goblin::elf::header::*;
+    match (elf.header.e_machine, elf.is_64) {
+        (EM_X86_64, _) => "x86_64".to_string(),
+        (EM_386, _) => "i386".to_string(),
+        (EM_AARCH64, _) => "aarch64".to_string(),
+        (EM_ARM, _) => "arm".to_string(),
+        (_, true) => format!("machine:{}-64", elf.header.e_machine),
+        _ => format!("machine:{}-32", elf.header.e_machine),
+    }
+}
+
+fn elf_protections(elf: &goblin::elf::Elf<'_>) -> serde_json::Value {
+    use goblin::elf::{dynamic, program_header::*};
+    let gnu_stack = elf
+        .program_headers
+        .iter()
+        .find(|ph| ph.p_type == PT_GNU_STACK);
+    let nx = gnu_stack.map(|ph| ph.p_flags & PF_X == 0).unwrap_or(true);
+    let relro = elf
+        .program_headers
+        .iter()
+        .any(|ph| ph.p_type == PT_GNU_RELRO);
+    let bind_now = elf.dynamic.as_ref().map_or(false, |dyns| {
+        dyns.dyns.iter().any(|d| {
+            (d.d_tag == dynamic::DT_BIND_NOW)
+                || (d.d_tag == dynamic::DT_FLAGS && d.d_val & dynamic::DF_BIND_NOW != 0)
+                || (d.d_tag == dynamic::DT_FLAGS_1 && d.d_val & dynamic::DF_1_NOW != 0)
+        })
+    });
+    let canary = elf
+        .dynsyms
+        .iter()
+        .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+        .any(|s| s == "__stack_chk_fail" || s == "__stack_chk_guard");
+    serde_json::json!({
+        "nx": nx,
+        "pie": elf.is_lib,
+        "relro": if relro && bind_now { "full" } else if relro { "partial" } else { "none" },
+        "canary_import": canary,
+        "static": elf.interpreter.is_none(),
+    })
+}
+
+fn runtime_candidates(path: &Path, data: &[u8]) -> serde_json::Value {
+    let mut candidates = Vec::new();
+    let mut notes = Vec::new();
+    let mut arch = "unknown".to_string();
+    let mut interpreter: Option<String> = None;
+    if let Ok(goblin::Object::Elf(elf)) = goblin::Object::parse(data) {
+        arch = elf_arch_label(&elf);
+        interpreter = elf.interpreter.map(|s| s.to_string());
+    }
+
+    candidates.push(serde_json::json!({
+        "label": "native",
+        "argv": [path.to_string_lossy().to_string()],
+        "available": true,
+    }));
+
+    let qemu_names: &[&str] = match arch.as_str() {
+        "i386" => &["qemu-i386-static", "qemu-i386"],
+        "x86_64" => &["qemu-x86_64-static", "qemu-x86_64"],
+        "aarch64" => &["qemu-aarch64-static", "qemu-aarch64"],
+        "arm" => &["qemu-arm-static", "qemu-arm"],
+        _ => &[],
+    };
+    for qemu in qemu_names {
+        if let Some(found) = find_in_path(qemu) {
+            candidates.push(serde_json::json!({
+                "label": qemu,
+                "argv": [found, path.to_string_lossy().to_string()],
+                "available": true,
+            }));
+        } else {
+            candidates.push(serde_json::json!({
+                "label": qemu,
+                "available": false,
+                "install_hint": format!("install {}", qemu),
+            }));
+        }
+    }
+
+    if let Some(interp) = &interpreter {
+        if !Path::new(interp).exists() {
+            let hint = if interp.ends_with("ld-linux.so.2") {
+                "missing i386 dynamic loader; install libc6:i386 or run qemu-i386 -L <i386-sysroot>"
+            } else {
+                "missing dynamic loader; install matching sysroot or run qemu with -L"
+            };
+            notes.push(serde_json::json!({
+                "kind": "missing_interpreter",
+                "path": interp,
+                "hint": hint,
+            }));
+        }
+    }
+
+    serde_json::json!({
+        "arch": arch,
+        "interpreter": interpreter,
+        "candidates": candidates,
+        "notes": notes,
+    })
+}
+
+fn find_in_path(name: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+fn gadget_hints(
+    path: &Path,
+    data: &[u8],
+    arch: &str,
+    max_gadgets: usize,
+) -> Result<serde_json::Value> {
+    let patterns: &[(&str, &[u8])] = match arch {
+        "i386" => &[
+            ("pop eax; ret", b"\x58\xc3"),
+            ("pop ebx; ret", b"\x5b\xc3"),
+            ("pop ecx; ret", b"\x59\xc3"),
+            ("pop edx; ret", b"\x5a\xc3"),
+            ("int 0x80", b"\xcd\x80"),
+            ("leave; ret", b"\xc9\xc3"),
+        ],
+        "x86_64" => &[
+            ("pop rax; ret", b"\x58\xc3"),
+            ("pop rdi; ret", b"\x5f\xc3"),
+            ("pop rsi; ret", b"\x5e\xc3"),
+            ("pop rdx; ret", b"\x5a\xc3"),
+            ("syscall", b"\x0f\x05"),
+            ("leave; ret", b"\xc9\xc3"),
+        ],
+        _ => &[],
+    };
+
+    let obj = object::File::parse(data)?;
+    let mut exec_sections = Vec::new();
+    for section in obj.sections() {
+        let is_exec = match section.flags() {
+            object::SectionFlags::Elf { sh_flags } => sh_flags & 0x4 != 0,
+            object::SectionFlags::Coff { characteristics } => characteristics & 0x2000_0000 != 0,
+            _ => false,
+        };
+        if is_exec {
+            if let Ok(bytes) = section.data() {
+                exec_sections.push((section.address(), bytes.to_vec()));
+            }
+        }
+    }
+
+    let mut result = serde_json::Map::new();
+    for (name, pat) in patterns {
+        let mut hits = Vec::new();
+        for (base, bytes) in &exec_sections {
+            let mut start = 0;
+            while let Some(pos) = find_bytes(&bytes[start..], pat) {
+                hits.push(format!("0x{:x}", base + (start + pos) as u64));
+                if hits.len() >= max_gadgets {
+                    break;
+                }
+                start += pos + 1;
+            }
+            if hits.len() >= max_gadgets {
+                break;
+            }
+        }
+        result.insert((*name).to_string(), serde_json::json!(hits));
+    }
+    result.insert(
+        "note".to_string(),
+        serde_json::json!(format!(
+            "Byte-pattern gadget hints for {}; confirm semantics before use.",
+            path.display()
+        )),
+    );
+    Ok(serde_json::Value::Object(result))
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn interesting_strings(data: &[u8], limit: usize) -> Vec<serde_json::Value> {
+    let keywords = [
+        "addr", "data", "flag", "/bin/sh", "/tmp", "read", "write", "open", "shell", "name",
+        "password", "input", "welcome", "ctf",
+    ];
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, b) in data.iter().copied().enumerate() {
+        let printable = b.is_ascii_graphic() || b == b' ';
+        match (start, printable) {
+            (None, true) => start = Some(i),
+            (Some(s), false) => {
+                if i.saturating_sub(s) >= 4 {
+                    push_interesting_string(data, s, i, &keywords, &mut out, limit);
+                    if out.len() >= limit {
+                        return out;
+                    }
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        push_interesting_string(data, s, data.len(), &keywords, &mut out, limit);
+    }
+    out
+}
+
+fn push_interesting_string(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    keywords: &[&str],
+    out: &mut Vec<serde_json::Value>,
+    limit: usize,
+) {
+    if out.len() >= limit {
+        return;
+    }
+    let s = String::from_utf8_lossy(&data[start..end]).into_owned();
+    let low = s.to_ascii_lowercase();
+    if keywords.iter().any(|kw| low.contains(kw)) {
+        out.push(serde_json::json!({
+            "file_offset": format!("0x{:x}", start),
+            "text": s,
+        }));
+    }
+}
+
+fn verify_exploit_script(
+    script: &Path,
+    binary: &Path,
+    timeout_secs: u64,
+    expect_exit: Option<i32>,
+    expect_target_exit: Option<i32>,
+    expect_output: Option<&str>,
+    args: &[String],
+) -> Result<serde_json::Value> {
+    let script = script
+        .canonicalize()
+        .with_context(|| format!("script not found: {}", script.display()))?;
+    let binary = binary
+        .canonicalize()
+        .unwrap_or_else(|_| binary.to_path_buf());
+    let timeout = Duration::from_secs(timeout_secs.clamp(1, 300));
+    let mut cmd = Command::new("python3");
+    cmd.arg(&script)
+        .args(args)
+        .env("KAIJU_BINARY", &binary)
+        .env("KAIJULAB_BINARY", &binary)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    if let Some(qemu) = find_in_path("qemu-i386-static").or_else(|| find_in_path("qemu-i386")) {
+        cmd.env("QEMU_I386", qemu);
+    }
+    if let Some(qemu) = find_in_path("qemu-x86_64-static").or_else(|| find_in_path("qemu-x86_64")) {
+        cmd.env("QEMU_X86_64", qemu);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let start = Instant::now();
+    let mut child = cmd.spawn()?;
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let stdout_thread = std::thread::spawn(move || read_limited(stdout, 256 * 1024));
+    let stderr_thread = std::thread::spawn(move || read_limited(stderr, 256 * 1024));
+
+    let timed_out = loop {
+        if child.try_wait()?.is_some() {
+            break false;
+        }
+        if start.elapsed() >= timeout {
+            #[cfg(unix)]
+            unsafe {
+                libc::killpg(child.id() as i32, libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let status = child.try_wait()?.or_else(|| child.wait().ok());
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let exit_code = status.and_then(|s| s.code());
+    let combined = format!("{}{}", stdout_text, stderr_text);
+
+    let exit_ok = expect_exit.map_or(true, |code| exit_code == Some(code));
+    let target_exit_ok = expect_target_exit.map_or(true, |code| {
+        combined.contains(&format!("returncode={code}"))
+            || combined.contains(&format!("returncode: {code}"))
+            || combined.contains(&format!("return code {code}"))
+            || combined.contains(&format!("exit({code})"))
+            || combined.contains(&format!("exit code: {code}"))
+            || combined.contains(&format!("Exit code: {code}"))
+    });
+    let output_ok = expect_output.map_or(true, |needle| combined.contains(needle));
+    let success = !timed_out && exit_ok && target_exit_ok && output_ok;
+    Ok(serde_json::json!({
+        "success": success,
+        "timed_out": timed_out,
+        "exit_code": exit_code,
+        "expected_exit": expect_exit,
+        "expected_target_exit": expect_target_exit,
+        "expected_output": expect_output,
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "script": script,
+        "binary": binary,
+        "next_action": if success {
+            "Stop. Preserve the PoC and summarize why the predicate proves execution."
+        } else if timed_out {
+            "Add tighter process timeouts and avoid interactive loops; rerun exploit-verify."
+        } else if !exit_ok {
+            "Inspect crash/exit path, adjust payload or predicate, rerun exploit-verify."
+        } else if !target_exit_ok {
+            "Target-exit predicate missing; print returncode=<N> from the PoC or adjust predicate."
+        } else {
+            "Predicate output missing; inspect stdout/stderr and rerun exploit-verify."
+        },
+    }))
+}
+
+fn read_limited<R: Read>(reader: R, max: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    let _ = reader.take(max).read_to_end(&mut out);
+    out
+}
+
+fn exploit_loop_prompt(
+    binary: &Path,
+    output: &Path,
+    goal: &str,
+    attempts: u32,
+    context: &serde_json::Value,
+) -> Result<String> {
+    let context = serde_json::to_string_pretty(context)?;
+    Ok(format!(
+        r#"Use KaijuLab as an exploit workbench for this local CTF target.
+
+Target: {binary}
+Goal: {goal}
+Output script: {output}
+Attempt budget: {attempts}
+
+Workbench context:
+{context}
+
+Rules:
+- Write a Python stdlib-only PoC unless the context proves a dependency is required.
+- Use qemu/runtime candidates from the context; handle missing dynamic loaders explicitly.
+- Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
+- After every candidate edit, run `target/debug/kaijulab api exploit-verify --file {binary_q} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
+- If exploit-verify returns success=true, print SCRIPT_READY and stop.
+- If validation is blocked by environment dependencies, make the script print the exact blocker and remediation, then print SCRIPT_READY_BLOCKED.
+- Do not spin after the attempt budget; report the last structured failure.
+"#,
+        binary = binary.display(),
+        goal = goal,
+        output = output.display(),
+        attempts = attempts.max(1),
+        context = context,
+        binary_q = shell_quote(&binary.to_string_lossy()),
+        output_q = shell_quote(&output.to_string_lossy()),
+    ))
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 async fn run_agent_console(
@@ -824,23 +1417,26 @@ fn setup_mcp_hook(output: &Path, command: Option<PathBuf>) -> Result<()> {
         .entry("mcpServers")
         .or_insert_with(|| serde_json::json!({}));
     if !servers.is_object() {
-        anyhow::bail!("{}.mcpServers exists but is not a JSON object", output.display());
-    }
-    servers
-        .as_object_mut()
-        .expect("checked object")
-        .insert(
-            "kaijulab".to_string(),
-            serde_json::json!({
-                "command": command.to_string_lossy(),
-                "args": ["mcp"],
-            }),
+        anyhow::bail!(
+            "{}.mcpServers exists but is not a JSON object",
+            output.display()
         );
+    }
+    servers.as_object_mut().expect("checked object").insert(
+        "kaijulab".to_string(),
+        serde_json::json!({
+            "command": command.to_string_lossy(),
+            "args": ["mcp"],
+        }),
+    );
 
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(output, format!("{}\n", serde_json::to_string_pretty(&root)?))?;
+    std::fs::write(
+        output,
+        format!("{}\n", serde_json::to_string_pretty(&root)?),
+    )?;
     println!(
         "Wrote {} with kaijulab MCP command: {} mcp",
         output.display(),
