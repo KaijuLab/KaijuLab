@@ -1538,3 +1538,4 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 [15:41:05] THINK: Persist recovery in project SQLite with corrections separate from machine facts; CFG dock consumes stored recovery and writes correction actions.
 [15:41:13] OBSERVE: read web/src/components/CfgWorkbench.tsx
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/components/CfgWorkbench.tsx
+[15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery_store.rs
