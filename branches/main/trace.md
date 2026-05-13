@@ -1133,3 +1133,4 @@ _[Checkpoint: 6a047107 — Validated PwnableTW Start exploit under qemu-i386; up
 [12:59:01] OBSERVE: listed files under kaijulab-orw-poc.py
 [12:59:01] OBSERVE: read samples/PwnableTW/calc/calc.kaiju_scripts/exploit_ok.py
 [12:59:01] OBSERVE: read samples/PwnableTW/calc/calc.kaiju_scripts/exploit_ok.py
+[12:59:01] OBSERVE: listed files under /tmp/kaijulab-calc-poc.py
