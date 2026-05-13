@@ -1034,3 +1034,4 @@ _[Checkpoint: 6a046a3b — edited /home/koukyosyumei/Dev/KaijuLab/README.md; edi
 _[Checkpoint: 6a046a71 — Verified KaijuLab+Claude on PwnableTW Start; fixed Claude stream-json flag; tests pass.]_
 ---
 
+[12:14:01] THINK: Expose Agent Console over CLI WebSocket because automation should drive same daemon-owned PTY as WebUI; keep agent-run for stateless one-shot bridge.
