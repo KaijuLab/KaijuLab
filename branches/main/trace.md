@@ -1481,3 +1481,4 @@ _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run,
 _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.]_
 ---
 
+[15:22:49] OBSERVE: searched src/tools.rs for "list_functions|list_functions|xrefs_to|cfg_view|disassemble|capstone|iced|goblin|Object::Elf|X86|I386""
