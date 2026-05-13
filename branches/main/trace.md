@@ -2482,3 +2482,4 @@ _[Checkpoint: 6a04fdde — Ran KaijuLab+Claude exploit-loop on requested x86/x86
 
 [22:46:03] OBSERVE: searched src
 [22:46:03] OBSERVE: listed files under .
+[22:46:03] OBSERVE: searched src for "exploit-loop|SCRIPT_READY_BLOCKED|exploit-verify|exploit-context|adjacent_shared_objects|benchmark-run"
