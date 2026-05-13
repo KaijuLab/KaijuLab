@@ -914,3 +914,4 @@ _[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carri
 [04:26:50] OBSERVE: searched src for "tool\.call|tool\.result|disasm|decompile|context\(|Event|emit|publish|agent console|terminal"
 [04:26:50] OBSERVE: read src/core/events.rs
 [04:26:50] OBSERVE: read web/src/hooks/useEventStream.ts
+[04:26:50] OBSERVE: read src/core/events.rs
