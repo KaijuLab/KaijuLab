@@ -2185,3 +2185,4 @@ _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/retu
 _[Checkpoint: 6a04ca28 — Added agent-decompile-loop CLI integration for Agent Console with enhanced decompile/KIR context, docs, tests, and commit 47404c62.]_
 ---
 
+[19:04:16] NOTE: White page root cause: web/dist/index.html referenced stale hashed bundle names; rebuilt frontend and rebuilt Rust binary so include_dir embeds matching assets.
