@@ -1819,3 +1819,4 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 [18:00:42] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:00:42] OBSERVE: searched src/core/decompile.rs for "register|register_base|canonical|al\"|esp""
 [18:00:42] OBSERVE: searched decompile.rs for "fn register|register_base|canonical|al\"|esp"
+[18:00:42] OBSERVE: read src/core/decompile.rs
