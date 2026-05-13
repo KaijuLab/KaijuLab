@@ -886,3 +886,4 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 [04:12:24] OBSERVE: read web/src/components/CenterWorkspace.tsx
 [04:12:24] ACT: edited web/src/App.tsx
 [04:12:24] ACT: edited web/src/components/AgentConsole.tsx
+[04:12:24] ACT: edited web/src/components/FindingsBoard.tsx
