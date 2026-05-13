@@ -2324,3 +2324,4 @@ _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroo
 [21:56:35] OBSERVE: read src/main.rs
 [21:56:35] OBSERVE: read src/main.rs
 [21:56:35] OBSERVE: read src/main.rs
+[21:56:35] OBSERVE: searched src/main.rs for "benchmark_run_json|WalkDir|is_file""
