@@ -1242,3 +1242,4 @@ _[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploi
 _[Checkpoint: 6a047ccb — Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.]_
 ---
 
+[13:36:24] OBSERVE: searched run_captured|default_runner_for_arch|host_arch_label" for "debug_probe_json|fn"
