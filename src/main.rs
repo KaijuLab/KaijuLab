@@ -287,6 +287,10 @@ enum ApiCommands {
         #[arg(long)]
         save_evidence: bool,
 
+        /// qemu -L sysroot exposed to the PoC as KAIJU_SYSROOT.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
         /// Evidence tag. Can be repeated.
         #[arg(long = "tag")]
         tags: Vec<String>,
@@ -319,6 +323,10 @@ enum ApiCommands {
         /// Maximum analysis/fix attempts the prompt should spend.
         #[arg(long, default_value_t = 3)]
         attempts: u32,
+
+        /// qemu -L sysroot for runtime/debug/verification commands.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
 
         /// Agent console hard timeout.
         #[arg(long, default_value_t = 300)]
@@ -1149,6 +1157,7 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             expect_target_exit,
             expect_output,
             save_evidence,
+            sysroot,
             tags,
             args,
         } => {
@@ -1160,6 +1169,7 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 expect_exit,
                 expect_target_exit,
                 expect_output.as_deref(),
+                sysroot.as_deref(),
                 &args,
             )?;
             maybe_append_evidence(
@@ -1177,12 +1187,14 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             output,
             goal,
             attempts,
+            sysroot,
             timeout_secs,
             idle_timeout_secs,
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             let context = build_exploit_context(&path, 8)?;
-            let prompt = exploit_loop_prompt(&path, &output, &goal, attempts, &context)?;
+            let prompt =
+                exploit_loop_prompt(&path, &output, &goal, attempts, sysroot.as_deref(), &context)?;
             run_agent_console(
                 &base_url,
                 token.as_deref(),
@@ -2523,6 +2535,7 @@ fn verify_exploit_script(
     expect_exit: Option<i32>,
     expect_target_exit: Option<i32>,
     expect_output: Option<&str>,
+    sysroot: Option<&Path>,
     args: &[String],
 ) -> Result<serde_json::Value> {
     let script = script
@@ -2545,6 +2558,10 @@ fn verify_exploit_script(
     }
     if let Some(qemu) = find_in_path("qemu-x86_64-static").or_else(|| find_in_path("qemu-x86_64")) {
         cmd.env("QEMU_X86_64", qemu);
+    }
+    if let Some(sysroot) = sysroot {
+        cmd.env("KAIJU_SYSROOT", sysroot)
+            .env("KAIJULAB_SYSROOT", sysroot);
     }
     #[cfg(unix)]
     {
@@ -3308,9 +3325,23 @@ fn exploit_loop_prompt(
     output: &Path,
     goal: &str,
     attempts: u32,
+    sysroot: Option<&Path>,
     context: &serde_json::Value,
 ) -> Result<String> {
     let context = serde_json::to_string_pretty(context)?;
+    let sysroot_arg = sysroot
+        .map(|path| format!(" --sysroot {}", shell_quote(&path.to_string_lossy())))
+        .unwrap_or_default();
+    let sysroot_note = sysroot
+        .map(|path| {
+            format!(
+                "Provided qemu sysroot: {}. Use it for every runtime/debug/verification command and make PoCs read KAIJU_SYSROOT when spawning qemu.",
+                path.display()
+            )
+        })
+        .unwrap_or_else(|| {
+            "No qemu sysroot was provided. If dynamic loading fails, report the exact loader/sysroot blocker.".to_string()
+        });
     Ok(format!(
         r#"Use KaijuLab as an exploit workbench for this local CTF target.
 
@@ -3318,6 +3349,7 @@ Target: {binary}
 Goal: {goal}
 Output script: {output}
 Attempt budget: {attempts}
+{sysroot_note}
 
 Workbench context:
 {context}
@@ -3327,12 +3359,12 @@ Rules:
 - Use qemu/runtime candidates from the context; handle missing dynamic loaders explicitly.
 - Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
 - Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
-- Use `target/debug/kaijulab api runtime-run --file {binary_q}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}` for registers/backtrace/crash state.
+- Use `target/debug/kaijulab api runtime-run --file {binary_q}{sysroot_arg}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}{sysroot_arg}` for registers/backtrace/crash state.
 - When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
-- If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}` before hand-computing offsets.
+- If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}{sysroot_arg}` before hand-computing offsets.
 - Use `target/debug/kaijulab api exploit-kit --file {binary_q}` for checksec/PLT/GOT/gadgets/cyclic helpers and `target/debug/kaijulab api ir-query --file {binary_q}` for functions/strings/decompile slices.
 - Save important observations with `--save-evidence`, inspect them with `target/debug/kaijulab api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
-- After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
+- After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q}{sysroot_arg} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
 - If validation is blocked by environment dependencies, make the script print the exact blocker and remediation, then print SCRIPT_READY_BLOCKED.
 - Do not spin after the attempt budget; report the last structured failure.
@@ -3341,9 +3373,11 @@ Rules:
         goal = goal,
         output = output.display(),
         attempts = attempts.max(1),
+        sysroot_note = sysroot_note,
         context = context,
         binary_q = shell_quote(&binary.to_string_lossy()),
         output_q = shell_quote(&output.to_string_lossy()),
+        sysroot_arg = sysroot_arg,
     ))
 }
 
