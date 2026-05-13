@@ -25,7 +25,7 @@ use object::{Object, ObjectSection};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use core::workspace::{Workspace, WorkspaceRegistry, WritePolicy, socket_path_for};
+use core::workspace::{socket_path_for, Workspace, WorkspaceRegistry, WritePolicy};
 
 #[derive(Parser)]
 #[command(
@@ -523,7 +523,10 @@ enum ApiCommands {
         file: Option<PathBuf>,
 
         /// Job goal.
-        #[arg(long, default_value = "Analyze the target and produce verified artifacts.")]
+        #[arg(
+            long,
+            default_value = "Analyze the target and produce verified artifacts."
+        )]
         goal: String,
     },
 
@@ -575,6 +578,60 @@ enum ApiCommands {
         /// Override the active daemon binary path.
         #[arg(long)]
         file: Option<PathBuf>,
+    },
+
+    /// Execute a bounded smoke benchmark corpus and print structured results.
+    BenchmarkRun {
+        /// Corpus root or single binary.
+        #[arg(long, default_value = "samples")]
+        root: PathBuf,
+
+        /// Maximum candidate binaries to execute.
+        #[arg(long, default_value_t = 8)]
+        max_files: usize,
+
+        /// Per-target runtime/debug timeout.
+        #[arg(long, default_value_t = 6)]
+        timeout_secs: u64,
+
+        /// Optional path to write the JSON artifact.
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Append runtime/debug observations to each target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+    },
+
+    /// Feed a cyclic pattern under gdb and report candidate crash offsets.
+    CrashOffset {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Pattern length to feed on stdin.
+        #[arg(long, default_value_t = 4096)]
+        pattern_len: usize,
+
+        /// Arguments passed to the target inside gdb.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+
+        /// qemu -L sysroot when remote-debugging a foreign target.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// GDB wall-clock timeout.
+        #[arg(long, default_value_t = 12)]
+        timeout_secs: u64,
+
+        /// Append crash-offset output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
 
     /// Start a daemon-owned live debugger session for the active target.
@@ -651,7 +708,7 @@ async fn main() -> Result<()> {
 }
 
 fn init_tracing() {
-    use tracing_subscriber::{EnvFilter, fmt};
+    use tracing_subscriber::{fmt, EnvFilter};
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
@@ -1098,6 +1155,40 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             core::evidence::benchmark_smoke_plan(&path)
         }
+        ApiCommands::BenchmarkRun {
+            root,
+            max_files,
+            timeout_secs,
+            output,
+            save_evidence,
+        } => {
+            let value = benchmark_run_json(&root, max_files, timeout_secs, save_evidence)?;
+            if let Some(output) = output {
+                write_json_artifact(&output, &value)?;
+            }
+            value
+        }
+        ApiCommands::CrashOffset {
+            file,
+            pattern_len,
+            args,
+            sysroot,
+            timeout_secs,
+            save_evidence,
+            tags,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value =
+                crash_offset_json(&path, pattern_len, &args, sysroot.as_deref(), timeout_secs)?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "crash_offset",
+                crash_offset_summary(&value),
+                tags,
+                value,
+            )?
+        }
         ApiCommands::DebugSessionStart { args, sysroot } => {
             api_request(
                 &client,
@@ -1113,8 +1204,15 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             .await?
         }
         ApiCommands::DebugSessionList => {
-            api_request(&client, &base_url, token.as_deref(), "GET", "/api/debug/sessions", None)
-                .await?
+            api_request(
+                &client,
+                &base_url,
+                token.as_deref(),
+                "GET",
+                "/api/debug/sessions",
+                None,
+            )
+            .await?
         }
         ApiCommands::DebugSessionGet { id } => {
             api_request(
@@ -1341,8 +1439,14 @@ fn runtime_summary(value: &serde_json::Value) -> String {
     if let Some(err) = result.get("spawn_error").and_then(|v| v.as_str()) {
         return format!("runtime spawn error: {err}");
     }
-    let exit = result.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
-    let signal = result.get("signal").cloned().unwrap_or(serde_json::Value::Null);
+    let exit = result
+        .get("exit_code")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let signal = result
+        .get("signal")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let timed_out = result
         .get("timed_out")
         .and_then(|v| v.as_bool())
@@ -1362,7 +1466,10 @@ fn debug_summary(value: &serde_json::Value) -> String {
             .unwrap_or("debug probe unavailable")
             .to_string();
     }
-    let mode = value.get("mode").and_then(|v| v.as_str()).unwrap_or("native");
+    let mode = value
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("native");
     let signals = value
         .get("signals")
         .and_then(|v| v.as_array())
@@ -1370,7 +1477,11 @@ fn debug_summary(value: &serde_json::Value) -> String {
         .unwrap_or(0);
     let pc = value
         .get("registers")
-        .and_then(|r| r.get("rip").or_else(|| r.get("eip")).or_else(|| r.get("pc")))
+        .and_then(|r| {
+            r.get("rip")
+                .or_else(|| r.get("eip"))
+                .or_else(|| r.get("pc"))
+        })
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     format!("debug-probe mode={mode} pc={pc} signals={signals}")
@@ -1381,8 +1492,166 @@ fn verify_summary(value: &serde_json::Value) -> String {
         .get("success")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let exit = value.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
+    let exit = value
+        .get("exit_code")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     format!("exploit-verify success={success} exit={exit}")
+}
+
+fn crash_offset_summary(value: &serde_json::Value) -> String {
+    let count = value
+        .get("candidate_offsets")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let signals = value
+        .pointer("/probe/signals")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    format!("crash-offset candidates={count} signals={signals}")
+}
+
+fn benchmark_run_json(
+    root: &Path,
+    max_files: usize,
+    timeout_secs: u64,
+    save_evidence: bool,
+) -> Result<serde_json::Value> {
+    let candidates = benchmark_binary_candidates(root, max_files.clamp(1, 256))?;
+    let mut cases = Vec::new();
+    for binary in candidates {
+        let index = core::workstation::binary_index(&binary, 80, 80)
+            .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }));
+        let runtime = runtime_run_json(&binary, &[], &[], None, None, None, None, timeout_secs)
+            .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }));
+        if save_evidence {
+            let _ = core::evidence::append(
+                &binary,
+                "runtime_run",
+                runtime_summary(&runtime),
+                vec!["benchmark".to_string()],
+                runtime.clone(),
+            );
+        }
+        let debug = debug_probe_json(&binary, &[], None, None, &[], false, timeout_secs)
+            .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }));
+        if save_evidence {
+            let _ = core::evidence::append(
+                &binary,
+                "debug_probe",
+                debug_summary(&debug),
+                vec!["benchmark".to_string()],
+                debug.clone(),
+            );
+        }
+        cases.push(serde_json::json!({
+            "binary": binary,
+            "index_ok": index.get("error").is_none(),
+            "runtime_summary": runtime_summary(&runtime),
+            "debug_summary": debug_summary(&debug),
+            "index": index,
+            "runtime": runtime,
+            "debug": debug,
+        }));
+    }
+    Ok(serde_json::json!({
+        "kind": "benchmark_run",
+        "root": root,
+        "timeout_secs": timeout_secs.clamp(1, 300),
+        "case_count": cases.len(),
+        "cases": cases,
+    }))
+}
+
+fn benchmark_binary_candidates(root: &Path, max_files: usize) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    collect_benchmark_binaries(root, max_files, &mut out)?;
+    Ok(out)
+}
+
+fn collect_benchmark_binaries(path: &Path, max_files: usize, out: &mut Vec<PathBuf>) -> Result<()> {
+    if out.len() >= max_files {
+        return Ok(());
+    }
+    if path.is_file() {
+        if looks_like_supported_binary(path) {
+            out.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+    if !path.is_dir() {
+        return Ok(());
+    }
+    let mut entries = std::fs::read_dir(path)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    entries.sort();
+    for entry in entries {
+        collect_benchmark_binaries(&entry, max_files, out)?;
+        if out.len() >= max_files {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn looks_like_supported_binary(path: &Path) -> bool {
+    let Ok(data) = std::fs::read(path) else {
+        return false;
+    };
+    goblin::Object::parse(&data).is_ok()
+}
+
+fn crash_offset_json(
+    binary: &Path,
+    pattern_len: usize,
+    args: &[String],
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    let pattern_len = pattern_len.clamp(32, 1024 * 1024);
+    let pattern = cyclic_pattern(pattern_len);
+    let probe = debug_probe_json(
+        binary,
+        args,
+        Some(&pattern),
+        sysroot,
+        &[],
+        false,
+        timeout_secs,
+    )?;
+    let mut offsets = Vec::new();
+    if let Some(registers) = probe.get("registers").and_then(|v| v.as_object()) {
+        for (name, value) in registers {
+            if let Some(text) = value.as_str() {
+                if let Some(offset) = cyclic_find_offset(&pattern, text) {
+                    offsets.push(serde_json::json!({
+                        "register": name,
+                        "value": text,
+                        "offset": offset,
+                    }));
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "kind": "crash_offset",
+        "binary": binary,
+        "pattern_len": pattern_len,
+        "stdin": {
+            "type": "cyclic",
+            "preview": &pattern[..pattern.len().min(96)],
+        },
+        "candidate_offsets": offsets,
+        "probe": probe,
+        "next_action": if offsets.is_empty() {
+            "No register contained the cyclic pattern. Try a longer pattern, target-specific args, or a breakpoint near the input read."
+        } else {
+            "Use the smallest control-flow-relevant offset in the PoC and validate with exploit-verify."
+        },
+    }))
 }
 
 fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::Value> {
@@ -1405,14 +1674,13 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
                 .map(serde_json::Value::from)
                 .unwrap_or(serde_json::Value::Null);
             out["protections"] = elf_protections(&elf);
-            out["imports_sample"] = serde_json::json!(
-                elf.dynsyms
-                    .iter()
-                    .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
-                    .filter(|s| !s.is_empty())
-                    .take(40)
-                    .collect::<Vec<_>>()
-            );
+            out["imports_sample"] = serde_json::json!(elf
+                .dynsyms
+                .iter()
+                .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+                .filter(|s| !s.is_empty())
+                .take(40)
+                .collect::<Vec<_>>());
             out["gadget_hints"] = serde_json::json!(gadget_hints(path, &data, &arch, max_gadgets)?);
             out["analysis_loop"] = serde_json::json!({
                 "recommended_order": [
@@ -2000,7 +2268,12 @@ fn debug_probe_json(
         gdb_args.push("continue".to_string());
     }
     let reg_command = register_command_for_arch(arch.as_deref());
-    for command in [reg_command.as_str(), "bt", "x/16i $pc", "info proc mappings"] {
+    for command in [
+        reg_command.as_str(),
+        "bt",
+        "x/16i $pc",
+        "info proc mappings",
+    ] {
         gdb_args.push("-ex".to_string());
         gdb_args.push(command.to_string());
     }
@@ -2079,16 +2352,17 @@ fn debug_probe_remote_json(
 
     let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
     let runtime = runtime_candidates(binary, &data);
-    let has_loader_blocker = runtime
-        .get("notes")
-        .and_then(|v| v.as_array())
-        .map_or(false, |notes| {
-            notes.iter().any(|note| {
-                note.get("kind")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|kind| kind == "missing_interpreter")
-            })
-        });
+    let has_loader_blocker =
+        runtime
+            .get("notes")
+            .and_then(|v| v.as_array())
+            .map_or(false, |notes| {
+                notes.iter().any(|note| {
+                    note.get("kind")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|kind| kind == "missing_interpreter")
+                })
+            });
     if has_loader_blocker && sysroot.is_none() {
         return Ok(serde_json::json!({
             "kind": "debug_probe",
@@ -2110,9 +2384,7 @@ fn debug_probe_remote_json(
 
     let stdin_bytes = read_input_spec(stdin_spec)?;
     let mut qemu_cmd = Command::new(&qemu);
-    qemu_cmd
-        .arg("-g")
-        .arg(port.to_string());
+    qemu_cmd.arg("-g").arg(port.to_string());
     if let Some(sysroot) = sysroot {
         qemu_cmd.arg("-L").arg(sysroot);
     }
@@ -2446,13 +2718,34 @@ fn analysis_loop_json(
         "loop_contract": [
             "Hypothesize from context/IR.",
             "Run runtime-run or debug-probe to collect concrete behavior.",
+            "Start a live debug-session when one-shot probes do not expose enough state.",
+            "Use crash-offset when stdin reaches a memory-corruption path.",
+            "Save useful observations as evidence and cite evidence IDs in the final result.",
             "Edit candidate PoC.",
             "Run exploit-verify with an explicit predicate.",
             "Stop only on success=true or a structured environment blocker."
         ],
+        "tool_contract": {
+            "one_shot_behavior": [
+                format!("target/debug/kaijulab api runtime-run --file {}", shell_quote(&binary.to_string_lossy())),
+                format!("target/debug/kaijulab api debug-probe --file {}", shell_quote(&binary.to_string_lossy())),
+                format!("target/debug/kaijulab api crash-offset --file {}", shell_quote(&binary.to_string_lossy()))
+            ],
+            "live_debug": [
+                "target/debug/kaijulab api debug-session-start",
+                "target/debug/kaijulab api debug-session-action <id> break --address 0xADDR",
+                "target/debug/kaijulab api debug-session-action <id> continue",
+                "target/debug/kaijulab api debug-session-action <id> snapshot",
+                "target/debug/kaijulab api debug-session-stop <id>"
+            ],
+            "evidence": [
+                format!("target/debug/kaijulab api evidence-list --file {}", shell_quote(&binary.to_string_lossy())),
+                "Prefer --save-evidence on runtime-run/debug-probe/exploit-verify/crash-offset when the observation changes the exploit hypothesis."
+            ]
+        },
         "recommended_next_tool": recommended_next_tool(observation, &runtime_notes, candidate),
         "agent_prompt_fragment": format!(
-            "Use kaijulab api analysis-loop --file {} --candidate <poc> after each failed attempt; use runtime-run/debug-probe for behavior and exploit-verify for proof.",
+            "Use kaijulab api analysis-loop --file {} --candidate <poc> after each failed attempt; use runtime-run/debug-probe/debug-session/crash-offset for behavior and exploit-verify for proof.",
             shell_quote(&binary.to_string_lossy())
         ),
     }))
@@ -2483,8 +2776,11 @@ Rules:
 - Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
 - Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
 - Use `target/debug/kaijulab api runtime-run --file {binary_q}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}` for registers/backtrace/crash state.
+- When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
+- If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}` before hand-computing offsets.
 - Use `target/debug/kaijulab api exploit-kit --file {binary_q}` for checksec/PLT/GOT/gadgets/cyclic helpers and `target/debug/kaijulab api ir-query --file {binary_q}` for functions/strings/decompile slices.
-- After every candidate edit, run `target/debug/kaijulab api exploit-verify --file {binary_q} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
+- Save important observations with `--save-evidence`, inspect them with `target/debug/kaijulab api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
+- After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
 - If validation is blocked by environment dependencies, make the script print the exact blocker and remediation, then print SCRIPT_READY_BLOCKED.
 - Do not spin after the attempt budget; report the last structured failure.

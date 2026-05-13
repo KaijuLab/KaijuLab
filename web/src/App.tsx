@@ -10,14 +10,16 @@ import { Timeline } from './components/Timeline';
 import { FindingsBoard } from './components/FindingsBoard';
 import { ExpertWorkbench } from './components/ExpertWorkbench';
 import { AgentConsole } from './components/AgentConsole';
+import { DebugWorkbench } from './components/DebugWorkbench';
 import { CommandPalette } from './components/CommandPalette';
 import { OpenBinary } from './components/OpenBinary';
 import { Notices } from './components/Notices';
 
-type BottomTab = 'agent' | 'findings' | 'timeline' | 'workbench';
+type BottomTab = 'agent' | 'debug' | 'findings' | 'timeline' | 'workbench';
 
 const BOTTOM_TABS: Array<{ id: BottomTab; label: string }> = [
   { id: 'agent', label: 'Agent Console' },
+  { id: 'debug', label: 'Debug + Evidence' },
   { id: 'findings', label: 'Findings' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'workbench', label: 'Review Workbench' },
@@ -100,6 +102,7 @@ export default function App() {
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
               {bottomTab === 'agent' && <AgentConsole className="h-full" />}
+              {bottomTab === 'debug' && <DebugWorkbench className="h-full" />}
               {bottomTab === 'findings' && <FindingsBoard className="h-full" />}
               {bottomTab === 'timeline' && <Timeline className="h-full" />}
               {bottomTab === 'workbench' && <ExpertWorkbench className="h-full" />}

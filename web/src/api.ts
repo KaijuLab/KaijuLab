@@ -84,6 +84,42 @@ export interface PlaybookRunResponse {
   created_findings: string[];
 }
 
+export interface EvidenceRecord {
+  id: string;
+  kind: string;
+  binary_path: string;
+  binary_sha256: string;
+  created_at: string;
+  summary: string;
+  tags: string[];
+  data: unknown;
+}
+
+export interface DebugSessionInfo {
+  id: string;
+  binary_path: string;
+  arch: string;
+  mode: string;
+  gdb: string;
+  qemu?: string | null;
+  remote?: string | null;
+  created_at: string;
+  last_summary?: string | null;
+  breakpoints: string[];
+}
+
+export interface DebugActionResult {
+  kind: string;
+  action: string;
+  raw: string;
+  registers: Record<string, string>;
+  signals: string[];
+  backtrace: Array<{ text: string }>;
+  disassembly: Array<{ text: string }>;
+  session: DebugSessionInfo;
+  ts: string;
+}
+
 export function getAuthToken(): string | null {
   try {
     return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -267,6 +303,31 @@ export const api = {
       owner: owner ?? null,
       append_notes: [],
     }),
+  listEvidence: (params?: { kind?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.kind) q.set('kind', params.kind);
+    if (params?.limit !== undefined) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return jget<{ kind: string; binary: string; evidence_path: string; records: EvidenceRecord[] }>(
+      `/api/evidence${qs ? '?' + qs : ''}`,
+    );
+  },
+  executionProfiles: () => jget<unknown>('/api/execution-profiles'),
+  debugSessionContract: () => jget<unknown>('/api/debug/session-contract'),
+  benchmarkSmoke: () => jget<unknown>('/api/benchmarks/smoke'),
+  listDebugSessions: () => jget<DebugSessionInfo[]>('/api/debug/sessions'),
+  startDebugSession: (body: { args?: string[]; sysroot?: string | null } = {}) =>
+    jpost<DebugSessionInfo>('/api/debug/sessions', body),
+  getDebugSession: (id: string) => jget<DebugSessionInfo>(`/api/debug/sessions/${id}`),
+  debugSessionAction: (
+    id: string,
+    body: { action: string; address?: string; length?: number; command?: string },
+  ) => jpost<DebugActionResult>(`/api/debug/sessions/${id}/action`, body),
+  stopDebugSession: async (id: string) => {
+    const r = await fetchWithAuth(`/api/debug/sessions/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await responseError('debug session stop', r));
+    return r.json() as Promise<DebugSessionInfo>;
+  },
   paletteExec: (input: string, current_vaddr?: string) =>
     jpost<PaletteResult>('/api/palette/exec', { input, current_vaddr }),
 };
