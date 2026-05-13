@@ -2112,3 +2112,4 @@ _[Checkpoint: 6a04c71f — Added CFG-aware structured KIR block preview to enhan
 [18:52:15] OBSERVE: read src/core/decompile.rs
 [18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/decompiler/ir/kir.rs
 [18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+[18:52:15] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
