@@ -2576,3 +2576,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 
 [23:36:08] THINK: implement generic agent tools first: binary-facts/scaffold/interact/heap-probe-plan over challenge skills because failures were workflow/tooling discipline, not missing per-binary recipes.
 [23:38:22] OBSERVE: read src/decompiler/mod.rs
+[23:38:22] OBSERVE: read src/main.rs
