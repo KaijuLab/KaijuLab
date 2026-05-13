@@ -2036,3 +2036,4 @@ _[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/u
 [18:34:54] OBSERVE: searched src/core/decompile.rs
 [18:34:54] OBSERVE: searched decompile.rs for "displacement.*#x|parts.push.*displacement"
 [18:34:54] OBSERVE: read src/core/decompile.rs
+[18:34:54] OBSERVE: read src/core/decompile.rs
