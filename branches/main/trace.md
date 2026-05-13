@@ -2237,3 +2237,4 @@ _[Checkpoint: 6a04ccc8 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/sta
 _[Checkpoint: 6a04cf52 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/st…]_
 ---
 
+[19:23:37] OBSERVE: listed files under samples/PwnableTW
