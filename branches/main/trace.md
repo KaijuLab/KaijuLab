@@ -2178,3 +2178,4 @@ _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/retu
 [18:57:43] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:57:43] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:57:43] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+[18:59:38] THINK: agent-decompile-loop prompt bridge over generic console prompt because decompiler/KIR context must be prepacked for Claude/Codex analysis loops.
