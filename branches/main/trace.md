@@ -2555,3 +2555,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 [23:28:58] NOTE: decompile-enhanced postpatch hacknote smoke exposed HighFunction panic when requested address has no IR slot; decompiler now returns structured no-IR error before HighFunction::from_mem.
 [23:30:40] OBSERVE: read /tmp/kaijulab-resolve-hacknote.py
 [23:30:40] OBSERVE: read /tmp/kaijulab-resolve-hacknote.py
+[23:30:40] OBSERVE: searched spin|raw for "not"
