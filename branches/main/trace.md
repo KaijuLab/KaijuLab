@@ -2533,3 +2533,9 @@ _[Checkpoint: 6a04ff91 — Improved exploit loop for PwnableTW samples: added kn
 [22:53:11] OBSERVE: searched main.rs for "add_family\("
 [22:53:11] OBSERVE: read src/main.rs
 [22:53:11] ACT: edited src/main.rs
+
+
+---
+_[Checkpoint: 6a0500d7 — Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.]_
+---
+
