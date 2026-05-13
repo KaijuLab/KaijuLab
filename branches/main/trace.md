@@ -1010,3 +1010,9 @@ _[Checkpoint: 6a040012 — edited web/src/api.ts; edited web/src/components/Agen
 [12:07:57] OBSERVE: read src/main.rs
 [12:07:57] OBSERVE: read src/main.rs
 [12:07:57] OBSERVE: read README.md
+
+
+---
+_[Checkpoint: 6a04699d — Added bot-friendly kaijulab api CLI over WebUI REST endpoints with docs and smoke-tested health/open/functions.]_
+---
+

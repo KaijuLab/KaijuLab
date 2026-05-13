@@ -42,11 +42,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Fixed stale Agent Console attach/restart and gray command input state; cargo test server and web build passed.
 - [x] Made Agent Console visibly report attach/status and restored raw xterm output rendering; npm build passed.
 - [x] edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx
+- [x] Added bot-friendly kaijulab api CLI over WebUI REST endpoints with docs and smoke-tested health/open/functions.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 12:07 UTC] `main`: Added bot-friendly kaijulab api CLI over WebUI REST endpoints with docs and smoke-tested health/open/functions.
 - [2026-05-13 04:37 UTC] `main`: edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx
 - [2026-05-13 04:36 UTC] `main`: Made Agent Console visibly report attach/status and restored raw xterm output rendering; npm build passed.
 - [2026-05-13 04:32 UTC] `main`: Fixed stale Agent Console attach/restart and gray command input state; cargo test server and web build passed.
