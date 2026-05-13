@@ -2077,3 +2077,4 @@ _[Checkpoint: 6a04c46a — edited /home/koukyosyumei/Dev/KaijuLab/src/core/decom
 _[Checkpoint: 6a04c5cf — Added typed KIR expression preview to enhanced decompile output, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 82.]_
 ---
 
+[18:46:38] THINK: CFG-grouped KIR preview before full structuring because block labels and edge hints expose control-flow-aware pseudo-C without pretending if/while recovery is solved.
