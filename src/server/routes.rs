@@ -29,6 +29,7 @@ use crate::{
         findings::{
             self, CreateFinding, CreatedBy, Evidence, Finding, FindingKind, Severity, UpdateFinding,
         },
+        knowledge,
         playbooks::{self, PlaybookId, PlaybookRunRequest},
         project_store,
         workspace::{read_recent, socket_path_for, Workspace},
@@ -60,6 +61,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/functions/:vaddr/xrefs", get(xrefs))
         .route("/api/graph/callgraph", get(callgraph))
         .route("/api/graph/cfg/:vaddr", get(cfg))
+        .route("/api/knowledge/graph", get(knowledge_graph))
+        .route("/api/knowledge/triage", get(knowledge_triage))
         .route("/api/evidence", get(list_evidence))
         .route("/api/execution-profiles", get(execution_profiles))
         .route("/api/debug/session-contract", get(debug_session_contract))
@@ -345,6 +348,37 @@ async fn cfg(
     Ok(Json(TextResponse {
         text: analysis::cfg_view(&ws, v).map_err(ApiError::from)?,
     }))
+}
+
+#[derive(Deserialize)]
+struct KnowledgeQuery {
+    max_functions: Option<usize>,
+    max_evidence: Option<usize>,
+}
+
+async fn knowledge_graph(
+    State(s): State<AppState>,
+    Query(q): Query<KnowledgeQuery>,
+) -> Result<Json<knowledge::KnowledgeGraph>, ApiError> {
+    let ws = active(&s)?;
+    knowledge::build(&ws, q.max_functions.unwrap_or(300), q.max_evidence.unwrap_or(200))
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+#[derive(Deserialize)]
+struct TriageQuery {
+    limit: Option<usize>,
+}
+
+async fn knowledge_triage(
+    State(s): State<AppState>,
+    Query(q): Query<TriageQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    knowledge::triage_queue(&ws, q.limit.unwrap_or(50))
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // ─── Dynamic evidence and execution contracts ───────────────────────────────

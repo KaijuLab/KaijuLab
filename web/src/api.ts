@@ -120,6 +120,54 @@ export interface DebugActionResult {
   ts: string;
 }
 
+export interface KnowledgeNode {
+  id: string;
+  kind: string;
+  label: string;
+  vaddr?: string | null;
+  size?: number | null;
+  tags: string[];
+  facts: Record<string, unknown>;
+  provenance: string[];
+}
+
+export interface KnowledgeEdge {
+  from: string;
+  to: string;
+  kind: string;
+  provenance: string[];
+}
+
+export interface EvidenceLink {
+  evidence_id: string;
+  kind: string;
+  summary: string;
+  target_node?: string | null;
+  vaddr?: string | null;
+  created_at: string;
+}
+
+export interface TriageItem {
+  rank: number;
+  node_id: string;
+  vaddr?: string | null;
+  label: string;
+  score: number;
+  reasons: string[];
+  evidence_ids: string[];
+}
+
+export interface KnowledgeGraph {
+  kind: string;
+  schema_version: number;
+  binary: string;
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+  evidence_links: EvidenceLink[];
+  triage_queue: TriageItem[];
+  stats: { nodes: number; edges: number; evidence_links: number; triage_items: number };
+}
+
 export function getAuthToken(): string | null {
   try {
     return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -315,6 +363,17 @@ export const api = {
   executionProfiles: () => jget<unknown>('/api/execution-profiles'),
   debugSessionContract: () => jget<unknown>('/api/debug/session-contract'),
   benchmarkSmoke: () => jget<unknown>('/api/benchmarks/smoke'),
+  knowledgeGraph: (params?: { max_functions?: number; max_evidence?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.max_functions !== undefined) q.set('max_functions', String(params.max_functions));
+    if (params?.max_evidence !== undefined) q.set('max_evidence', String(params.max_evidence));
+    const qs = q.toString();
+    return jget<KnowledgeGraph>(`/api/knowledge/graph${qs ? '?' + qs : ''}`);
+  },
+  triageQueue: (limit = 50) =>
+    jget<{ kind: string; binary: string; items: TriageItem[]; stats: KnowledgeGraph['stats'] }>(
+      `/api/knowledge/triage?limit=${limit}`,
+    ),
   listDebugSessions: () => jget<DebugSessionInfo[]>('/api/debug/sessions'),
   startDebugSession: (body: { args?: string[]; sysroot?: string | null } = {}) =>
     jpost<DebugSessionInfo>('/api/debug/sessions', body),

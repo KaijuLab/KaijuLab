@@ -84,6 +84,8 @@ kaijulab api debug-probe --stdin @crash.input --break 0x401000 --save-evidence -
 kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
+kaijulab api knowledge-graph --output .kaiju/graph.json
+kaijulab api triage-queue --limit 20
 kaijulab api evidence-list --limit 10
 kaijulab api execution-profiles
 kaijulab api debug-session-contract
@@ -124,6 +126,8 @@ Convenience subcommands cover the common automation loop:
 - `exploit-kit [--file FILE] [--cyclic-len N] [--cyclic-find VALUE]` emits checksec/runtime data, PLT/GOT text, gadget hints, exploit recipes, and cyclic pattern helpers.
 - `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
+- `knowledge-graph [--file FILE] [--max-functions N] [--max-evidence N] [--output OUT]` builds the derived program graph from static index facts, project DB annotations/findings, and immutable evidence.
+- `triage-queue [--file FILE] [--limit N]` emits ranked functions with concrete reasons such as entrypoint, vulnerability score, findings, and linked evidence.
 - `evidence-list [--file FILE] [--kind KIND]` lists immutable JSONL evidence records saved by runtime/debug/verification commands.
 - `execution-profiles [--file FILE]` emits native/qemu/hostile-sample execution profiles and their safety policies.
 - `debug-session-contract [--file FILE]` emits the planned persistent debugger API contract: start, breakpoints, continue, step, registers, memory, snapshot, stop.

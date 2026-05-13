@@ -502,6 +502,36 @@ enum ApiCommands {
         output: Option<PathBuf>,
     },
 
+    /// Build the derived program knowledge graph from index/project/evidence facts.
+    KnowledgeGraph {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions to include.
+        #[arg(long, default_value_t = 300)]
+        max_functions: usize,
+
+        /// Maximum evidence records to link.
+        #[arg(long, default_value_t = 200)]
+        max_evidence: usize,
+
+        /// Optional path to write the JSON artifact.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Emit the ranked function triage queue from the knowledge graph.
+    TriageQueue {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum queue items to return.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
     /// Diagnose qemu/gdb/container/sysroot readiness.
     SysrootDoctor {
         /// Override the active daemon binary path.
@@ -1113,6 +1143,25 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 write_json_artifact(&output, &value)?;
             }
             value
+        }
+        ApiCommands::KnowledgeGraph {
+            file,
+            max_functions,
+            max_evidence,
+            output,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let ws = Workspace::open(&path, WritePolicy::default())?;
+            let value = serde_json::to_value(core::knowledge::build(&ws, max_functions, max_evidence)?)?;
+            if let Some(output) = output {
+                write_json_artifact(&output, &value)?;
+            }
+            value
+        }
+        ApiCommands::TriageQueue { file, limit } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let ws = Workspace::open(&path, WritePolicy::default())?;
+            core::knowledge::triage_queue(&ws, limit)?
         }
         ApiCommands::SysrootDoctor { file } => {
             let path = resolve_optional_api_binary_path(&client, &base_url, token.as_deref(), file)

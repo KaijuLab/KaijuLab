@@ -10,6 +10,7 @@ pub mod evidence;
 pub mod events;
 pub mod findings;
 pub mod jobs;
+pub mod knowledge;
 pub mod playbooks;
 pub mod project_store;
 pub mod workstation;
