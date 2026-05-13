@@ -891,3 +891,9 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 [04:12:24] ACT: edited web/src/components/Timeline.tsx
 [04:12:24] ACT: edited web/src/components/CenterWorkspace.tsx
 [04:12:24] ACT: edited web/src/components/LeftRail.tsx
+
+
+---
+_[Checkpoint: 6a03fa41 — Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.]_
+---
+

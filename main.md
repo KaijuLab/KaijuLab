@@ -36,11 +36,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
 - [x] Restored raw xterm return input for Agent Console after LF normalization broke Claude prompt submit; npm build passed.
 - [x] edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentC…
+- [x] Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 04:12 UTC] `main`: Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.
 - [2026-05-13 04:09 UTC] `main`: edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentC…
 - [2026-05-13 04:07 UTC] `main`: Restored raw xterm return input for Agent Console after LF normalization broke Claude prompt submit; npm build passed.
 - [2026-05-13 04:04 UTC] `main`: Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
