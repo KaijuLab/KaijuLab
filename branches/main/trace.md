@@ -2623,3 +2623,9 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:35] NOTE: Implemented generic exploit-agent tools in src/main.rs: binary-facts, exploit-scaffold, exploit-interact, heap-probe-plan; prompt now tells agents to use them before raw guessing.
 [23:38:38] OBSERVE: searched exploit_scaffold_json|fn for "binary_facts_json|fn"
 [23:38:38] OBSERVE: searched main.rs for "BinaryFacts|ExploitScaffold|ExploitInteract|HeapProbePlan|fn binary_facts_json|fn exploit_scaffold_json|fn exploit_interact_json|fn heap_probe_plan_json|binary-facts --file"
+
+
+---
+_[Checkpoint: 6a050b7e — Implemented generic pwn-agent APIs: binary-facts, exploit-scaffold, exploit-interact, heap-probe-plan; wired exploit-loop prompt to use them; cargo fmt/check/build and HackNote smoke commands pass.]_
+---
+
