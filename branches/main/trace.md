@@ -787,3 +787,4 @@ _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Co
 [03:52:39] ACT: edited web/src/components/AgentConsole.tsx
 [03:52:39] OBSERVE: read web/src/components/AgentConsole.tsx
 [03:52:39] OBSERVE: read web/src/components/AgentConsole.tsx
+[03:52:39] ACT: deleted web/src/components/AgentConsole.tsx
