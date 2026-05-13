@@ -869,3 +869,9 @@ _[Checkpoint: 6a03f861 — Normalized Agent Console return input from CR to LF a
 _[Checkpoint: 6a03f8ea — Restored raw xterm return input for Agent Console after LF normalization broke Claude prompt submit; npm build passed.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentC…]_
+---
+
