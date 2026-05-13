@@ -1108,3 +1108,4 @@ _[Checkpoint: 6a047031 — Validated Claude+KaijuLab console mode on PwnableTW S
 _[Checkpoint: 6a047099 — Committed current bot-friendly API and agent console CLI status.]_
 ---
 
+[12:39:35] OBSERVE: read samples/PwnableTW/Start/start.kaiju_scripts/exploit_ok.py
