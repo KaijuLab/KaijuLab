@@ -49,11 +49,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…
 - [x] Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.
 - [x] Committed current bot-friendly API and agent console CLI status.
+- [x] Validated PwnableTW Start exploit under qemu-i386; updated generated /tmp PoC to fallback to qemu for local mode.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 12:39 UTC] `main`: Validated PwnableTW Start exploit under qemu-i386; updated generated /tmp PoC to fallback to qemu for local mode.
 - [2026-05-13 12:37 UTC] `main`: Committed current bot-friendly API and agent console CLI status.
 - [2026-05-13 12:36 UTC] `main`: Validated Claude+KaijuLab console mode on PwnableTW Start; added prompt-mode timing/hard-timeout improvements; Claude generated stdlib PoC at /tmp/kaijulab-start-poc.py.
 - [2026-05-13 12:34 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…

@@ -1113,3 +1113,9 @@ _[Checkpoint: 6a047099 — Committed current bot-friendly API and agent console 
 [12:39:35] OBSERVE: listed files under samples/PwnableTW/Start
 [12:39:35] OBSERVE: listed files under Start
 [12:39:35] ACT: edited /tmp/kaijulab-start-poc.py
+
+
+---
+_[Checkpoint: 6a047107 — Validated PwnableTW Start exploit under qemu-i386; updated generated /tmp PoC to fallback to qemu for local mode.]_
+---
+
