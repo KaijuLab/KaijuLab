@@ -1356,3 +1356,9 @@ _[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidenc
 [14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
 [14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/debug_session.rs
 [14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/evidence.rs
+
+
+---
+_[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.]_
+---
+

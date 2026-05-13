@@ -56,11 +56,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
 - [x] Committed prior CLI primitive work, then added production workstation foundation commands and core workstation manifests for seven roadmap areas.
 - [x] Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
+- [x] Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 14:53 UTC] `main`: Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.
 - [2026-05-13 14:33 UTC] `main`: Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
 - [2026-05-13 13:44 UTC] `main`: Committed prior CLI primitive work, then added production workstation foundation commands and core workstation manifests for seven roadmap areas.
 - [2026-05-13 13:36 UTC] `main`: Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
