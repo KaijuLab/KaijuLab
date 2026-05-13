@@ -2539,3 +2539,4 @@ _[Checkpoint: 6a04ff91 — Improved exploit loop for PwnableTW samples: added kn
 _[Checkpoint: 6a0500d7 — Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.]_
 ---
 
+[22:56:43] ACT: wrote kaijulab-resolve-realloc.py
