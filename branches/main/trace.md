@@ -897,3 +897,4 @@ _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited we
 _[Checkpoint: 6a03fa41 — Restructured web UI into IDA/Ghidra-style workbench with tabbed bottom dock and larger analysis typography; npm build passed and Vite dev server started.]_
 ---
 
+[04:15:07] NOTE: Agent console output CR fix: bare carriage returns in agent output normalized to CR + ESC[K before xterm.write to prevent stale status/progress text; input remains raw.
