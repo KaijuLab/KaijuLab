@@ -575,3 +575,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:50:08] OBSERVE: read src/core/playbooks.rs
 [02:50:08] OBSERVE: read web/src/index.css
 [02:50:08] OBSERVE: read web/src/components/FindingsBoard.tsx
+[02:50:08] OBSERVE: read web/src/components/Timeline.tsx
