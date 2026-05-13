@@ -17,6 +17,7 @@ pub struct KirFunction {
     pub blocks: Vec<KirBlock>,
     pub ops: Vec<KirOp>,
     pub ssa: KirSsaFacts,
+    pub memory_ssa: KirMemorySsaFacts,
     pub expressions: KirExpressionFacts,
     pub diagnostics: Vec<String>,
 }
@@ -94,6 +95,47 @@ pub struct KirPhiNode {
     pub version: u32,
     pub incoming_versions: Vec<String>,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KirMemorySsaFacts {
+    pub available: bool,
+    pub location_count: usize,
+    pub definition_count: usize,
+    pub use_count: usize,
+    pub locations: Vec<KirMemoryLocation>,
+    pub definitions: Vec<KirMemoryDefinition>,
+    pub uses: Vec<KirMemoryUse>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirMemoryLocation {
+    pub name: String,
+    pub kind: String,
+    pub base: Option<String>,
+    pub index: Option<String>,
+    pub displacement: i64,
+    pub size_bits: Option<u32>,
+    pub access_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirMemoryDefinition {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub location: String,
+    pub version: u32,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirMemoryUse {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub location: String,
+    pub version: Option<u32>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

@@ -151,11 +151,14 @@ pub struct DecompilerQualityReport {
     pub functions_with_kir: usize,
     pub functions_with_kir_ssa: usize,
     pub functions_with_kir_expressions: usize,
+    pub functions_with_kir_memory_ssa: usize,
     pub total_kir_ops: usize,
     pub total_kir_ssa_definitions: usize,
     pub total_kir_ssa_uses: usize,
     pub total_kir_phi_nodes: usize,
     pub total_kir_expression_assignments: usize,
+    pub total_kir_memory_ssa_definitions: usize,
+    pub total_kir_memory_ssa_uses: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -182,10 +185,13 @@ pub struct FunctionQuality {
     pub has_kir: bool,
     pub has_kir_ssa: bool,
     pub has_kir_expressions: bool,
+    pub has_kir_memory_ssa: bool,
     pub kir_ops: usize,
     pub kir_ssa_definitions: usize,
     pub kir_phi_nodes: usize,
     pub kir_expression_assignments: usize,
+    pub kir_memory_ssa_definitions: usize,
+    pub kir_memory_ssa_uses: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -208,11 +214,14 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_kir = 0usize;
     let mut functions_with_kir_ssa = 0usize;
     let mut functions_with_kir_expressions = 0usize;
+    let mut functions_with_kir_memory_ssa = 0usize;
     let mut total_kir_ops = 0usize;
     let mut total_kir_ssa_definitions = 0usize;
     let mut total_kir_ssa_uses = 0usize;
     let mut total_kir_phi_nodes = 0usize;
     let mut total_kir_expression_assignments = 0usize;
+    let mut total_kir_memory_ssa_definitions = 0usize;
+    let mut total_kir_memory_ssa_uses = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -243,6 +252,8 @@ pub fn decompiler_quality_report_path(
         let has_kir = kir.available && !kir.ops.is_empty();
         let has_kir_ssa = kir.ssa.available && kir.ssa.definition_count > 0;
         let has_kir_expressions = kir.expressions.available && kir.expressions.assignment_count > 0;
+        let has_kir_memory_ssa = kir.memory_ssa.available
+            && (kir.memory_ssa.definition_count > 0 || kir.memory_ssa.use_count > 0);
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -265,11 +276,16 @@ pub fn decompiler_quality_report_path(
         if has_kir_expressions {
             functions_with_kir_expressions += 1;
         }
+        if has_kir_memory_ssa {
+            functions_with_kir_memory_ssa += 1;
+        }
         total_kir_ops += kir.ops.len();
         total_kir_ssa_definitions += kir.ssa.definition_count;
         total_kir_ssa_uses += kir.ssa.use_count;
         total_kir_phi_nodes += kir.ssa.phi_count;
         total_kir_expression_assignments += kir.expressions.assignment_count;
+        total_kir_memory_ssa_definitions += kir.memory_ssa.definition_count;
+        total_kir_memory_ssa_uses += kir.memory_ssa.use_count;
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -314,6 +330,12 @@ pub fn decompiler_quality_report_path(
         if !kir.expressions.diagnostics.is_empty() {
             notes.extend(kir.expressions.diagnostics.clone());
         }
+        if !has_kir_memory_ssa {
+            notes.push("KIR memory SSA facts unavailable or empty".to_string());
+        }
+        if !kir.memory_ssa.diagnostics.is_empty() {
+            notes.extend(kir.memory_ssa.diagnostics.clone());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -327,10 +349,13 @@ pub fn decompiler_quality_report_path(
             has_kir,
             has_kir_ssa,
             has_kir_expressions,
+            has_kir_memory_ssa,
             kir_ops: kir.ops.len(),
             kir_ssa_definitions: kir.ssa.definition_count,
             kir_phi_nodes: kir.ssa.phi_count,
             kir_expression_assignments: kir.expressions.assignment_count,
+            kir_memory_ssa_definitions: kir.memory_ssa.definition_count,
+            kir_memory_ssa_uses: kir.memory_ssa.use_count,
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -350,6 +375,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir,
         functions_with_kir_ssa,
         functions_with_kir_expressions,
+        functions_with_kir_memory_ssa,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -364,6 +390,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir,
         functions_with_kir_ssa,
         functions_with_kir_expressions,
+        functions_with_kir_memory_ssa,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -382,11 +409,14 @@ pub fn decompiler_quality_report_path(
         functions_with_kir,
         functions_with_kir_ssa,
         functions_with_kir_expressions,
+        functions_with_kir_memory_ssa,
         total_kir_ops,
         total_kir_ssa_definitions,
         total_kir_ssa_uses,
         total_kir_phi_nodes,
         total_kir_expression_assignments,
+        total_kir_memory_ssa_definitions,
+        total_kir_memory_ssa_uses,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -398,7 +428,7 @@ pub fn decompiler_quality_report_path(
         blockers,
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
-            "Promote heuristic stack/global variable candidates into memory SSA".to_string(),
+            "Promote KIR memory SSA into alias-aware memory partitions".to_string(),
             "Use KIR expression DAG in structured pseudo-C rendering".to_string(),
             "Infer call signatures/calling conventions before expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
@@ -418,6 +448,7 @@ fn decompiler_score(
     kir_facts: usize,
     kir_ssa_facts: usize,
     kir_expression_facts: usize,
+    kir_memory_ssa_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -433,6 +464,7 @@ fn decompiler_score(
     let kir_score = 10.0 * kir_facts as f64 / analyzed;
     let kir_ssa_score = 10.0 * kir_ssa_facts as f64 / analyzed;
     let kir_expression_score = 5.0 * kir_expression_facts as f64 / analyzed;
+    let kir_memory_ssa_score = 5.0 * kir_memory_ssa_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -445,6 +477,7 @@ fn decompiler_score(
         + kir_score
         + kir_ssa_score
         + kir_expression_score
+        + kir_memory_ssa_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -454,7 +487,9 @@ fn decompiler_score(
     // Register and memory facts are still pre-IR facts, not production
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
-    let cap = if variable_candidates > 0 && kir_expression_facts > 0 {
+    let cap = if variable_candidates > 0 && kir_memory_ssa_facts > 0 && kir_expression_facts > 0 {
+        86
+    } else if variable_candidates > 0 && kir_expression_facts > 0 {
         83
     } else if variable_candidates > 0 && kir_ssa_facts > 0 {
         80
@@ -480,6 +515,7 @@ fn decompiler_blockers(
     kir_facts: usize,
     kir_ssa_facts: usize,
     kir_expression_facts: usize,
+    kir_memory_ssa_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -506,6 +542,9 @@ fn decompiler_blockers(
     if kir_expression_facts < analyzed_functions {
         blockers.push("KIR expression coverage is incomplete".to_string());
     }
+    if kir_memory_ssa_facts < analyzed_functions {
+        blockers.push("KIR memory SSA coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -516,11 +555,22 @@ fn decompiler_blockers(
         );
         blockers.push("score is capped at 55 until memory facts land".to_string());
     } else {
-        blockers.push(
-            "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
-                .to_string(),
-        );
-        if kir_expression_facts > 0 {
+        if kir_memory_ssa_facts > 0 {
+            blockers.push(
+                "memory facts have linear KIR memory SSA; alias partitions/type inference pending"
+                    .to_string(),
+            );
+        } else {
+            blockers.push(
+                "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
+                    .to_string(),
+            );
+        }
+        if kir_memory_ssa_facts > 0 && kir_expression_facts > 0 {
+            blockers.push(
+                "score is capped at 86 until type inference/structured rendering land".to_string(),
+            );
+        } else if kir_expression_facts > 0 {
             blockers.push(
                 "score is capped at 83 until memory SSA/type inference/structured rendering land"
                     .to_string(),
@@ -978,6 +1028,7 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         blocks,
         ops,
         ssa: kir::KirSsaFacts::default(),
+        memory_ssa: kir::KirMemorySsaFacts::default(),
         expressions: kir::KirExpressionFacts::default(),
         diagnostics: vec![
             "KIR v0: iced-x86 semantic skeleton; flags and precise operand sizes are partial"
@@ -985,8 +1036,154 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         ],
     };
     function_kir.ssa = analyze_kir_ssa(&function_kir, function);
+    function_kir.memory_ssa = analyze_kir_memory_ssa(&function_kir);
     function_kir.expressions = build_kir_expressions(&function_kir);
     Ok(function_kir)
+}
+
+fn analyze_kir_memory_ssa(kir_function: &kir::KirFunction) -> kir::KirMemorySsaFacts {
+    if kir_function.ops.is_empty() {
+        return kir::KirMemorySsaFacts {
+            diagnostics: vec!["KIR memory SSA unavailable: no KIR ops".to_string()],
+            ..Default::default()
+        };
+    }
+
+    let mut versions = BTreeMap::<String, u32>::new();
+    let mut access_counts = BTreeMap::<String, usize>::new();
+    let mut location_facts = BTreeMap::<String, kir::KirMemoryLocation>::new();
+    let mut definitions = Vec::new();
+    let mut uses = Vec::new();
+
+    for op in &kir_function.ops {
+        for location in kir_memory_reads(op, &kir_function.architecture) {
+            let name = location.name.clone();
+            *access_counts.entry(name.clone()).or_default() += 1;
+            location_facts.entry(name.clone()).or_insert(location);
+            uses.push(kir::KirMemoryUse {
+                op_id: op.id,
+                vaddr: op.vaddr.clone(),
+                location: name.clone(),
+                version: versions.get(&name).copied(),
+                source: op.instruction.clone(),
+            });
+        }
+        for location in kir_memory_writes(op, &kir_function.architecture) {
+            let name = location.name.clone();
+            *access_counts.entry(name.clone()).or_default() += 1;
+            location_facts.entry(name.clone()).or_insert(location);
+            let version = versions.get(&name).copied().unwrap_or(0).saturating_add(1);
+            versions.insert(name.clone(), version);
+            definitions.push(kir::KirMemoryDefinition {
+                op_id: op.id,
+                vaddr: op.vaddr.clone(),
+                location: name,
+                version,
+                source: op.instruction.clone(),
+            });
+        }
+    }
+
+    let mut locations = location_facts
+        .into_iter()
+        .map(|(name, mut location)| {
+            location.access_count = access_counts.get(&name).copied().unwrap_or(0);
+            location
+        })
+        .collect::<Vec<_>>();
+    locations.sort_by(|a, b| a.name.cmp(&b.name));
+
+    kir::KirMemorySsaFacts {
+        available: !definitions.is_empty() || !uses.is_empty(),
+        location_count: locations.len(),
+        definition_count: definitions.len(),
+        use_count: uses.len(),
+        locations,
+        definitions,
+        uses,
+        diagnostics: vec![
+            "KIR memory SSA v0: stack/global/unknown memory locations get linear versions; alias partitions and memory phi pending"
+                .to_string(),
+        ],
+    }
+}
+
+fn kir_memory_reads(op: &kir::KirOp, architecture: &str) -> Vec<kir::KirMemoryLocation> {
+    op.inputs
+        .iter()
+        .filter_map(|value| kir_memory_location(value, architecture))
+        .collect()
+}
+
+fn kir_memory_writes(op: &kir::KirOp, architecture: &str) -> Vec<kir::KirMemoryLocation> {
+    op.outputs
+        .iter()
+        .filter_map(|value| kir_memory_location(value, architecture))
+        .collect()
+}
+
+fn kir_memory_location(
+    value: &kir::KirValue,
+    architecture: &str,
+) -> Option<kir::KirMemoryLocation> {
+    let kir::KirValue::Memory {
+        base,
+        index,
+        scale,
+        displacement,
+        size_bits,
+    } = value
+    else {
+        return None;
+    };
+
+    let base = base
+        .as_ref()
+        .map(|name| kir_canonical_register(name, architecture));
+    let index = index
+        .as_ref()
+        .map(|name| kir_canonical_register(name, architecture));
+    let pointer = if architecture.contains("64") { "rsp" } else { "esp" };
+    let frame = if architecture.contains("64") { "rbp" } else { "ebp" };
+    let (kind, name) = match (base.as_deref(), index.as_deref()) {
+        (Some(reg), None) if reg == pointer || reg == frame => {
+            let suffix = if *displacement < 0 {
+                format!("m{:x}", displacement.unsigned_abs())
+            } else {
+                format!("p{:x}", *displacement as u64)
+            };
+            ("stack".to_string(), format!("stack_{reg}_{suffix}"))
+        }
+        (None, None) if *displacement != 0 => {
+            ("global".to_string(), format!("global_{:x}", *displacement as u64))
+        }
+        _ => {
+            let mut parts = Vec::new();
+            if let Some(base) = &base {
+                parts.push(base.clone());
+            }
+            if let Some(index) = &index {
+                parts.push(format!("{index}x{scale}"));
+            }
+            if *displacement != 0 {
+                parts.push(format!("{displacement:+#x}"));
+            }
+            if parts.is_empty() {
+                parts.push("unknown".to_string());
+            }
+            ("unknown".to_string(), format!("mem_{}", parts.join("_")))
+        }
+    };
+
+    Some(kir::KirMemoryLocation {
+        name,
+        kind,
+        base,
+        index,
+        displacement: *displacement,
+        size_bits: *size_bits,
+        access_count: 0,
+    })
 }
 
 fn build_kir_expressions(kir_function: &kir::KirFunction) -> kir::KirExpressionFacts {
@@ -1050,7 +1247,7 @@ fn build_kir_expressions(kir_function: &kir::KirFunction) -> kir::KirExpressionF
             .sum(),
         assignments,
         diagnostics: vec![
-            "KIR expressions v0: SSA assignment DAG over register definitions; memory SSA pending"
+            "KIR expressions v0: SSA assignment DAG over register definitions; memory SSA integration pending"
                 .to_string(),
         ],
     }
@@ -1907,7 +2104,7 @@ fn kir_value_for_operand(instr: &iced_x86::Instruction, index: u32, text: &str) 
             base: optional_register_name(instr.memory_base()),
             index: optional_register_name(instr.memory_index()),
             scale: instr.memory_index_scale(),
-            displacement: instr.memory_displacement64() as i64,
+            displacement: kir_memory_displacement(instr),
             size_bits: None,
         },
         OpKind::Immediate8
@@ -1932,6 +2129,17 @@ fn kir_value_for_operand(instr: &iced_x86::Instruction, index: u32, text: &str) 
         _ => kir::KirValue::Unknown {
             text: operand_text(text, index).unwrap_or_else(|| "?".to_string()),
         },
+    }
+}
+
+fn kir_memory_displacement(instr: &iced_x86::Instruction) -> i64 {
+    let raw = instr.memory_displacement64();
+    let has_base_or_index =
+        instr.memory_base() != Register::None || instr.memory_index() != Register::None;
+    if has_base_or_index && raw > i32::MAX as u64 && raw <= u32::MAX as u64 {
+        (raw as u32 as i32) as i64
+    } else {
+        raw as i64
     }
 }
 
@@ -3020,6 +3228,8 @@ mod tests {
         );
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.definition_count > 0);
+        assert!(analysis.kir.memory_ssa.available);
+        assert!(analysis.kir.memory_ssa.location_count > 0);
         assert!(analysis.kir.expressions.available);
         assert!(analysis.kir.expressions.assignment_count > 0);
         assert!(
@@ -3081,6 +3291,24 @@ mod tests {
         );
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.phi_count > 0);
+        assert!(analysis.kir.memory_ssa.available);
+        assert!(analysis.kir.memory_ssa.use_count > 0);
+        assert!(
+            analysis
+                .kir
+                .memory_ssa
+                .locations
+                .iter()
+                .any(|location| location.kind == "stack" || location.kind == "global")
+        );
+        assert!(
+            analysis
+                .kir
+                .memory_ssa
+                .definitions
+                .iter()
+                .all(|definition| definition.version > 0)
+        );
         assert!(analysis.kir.expressions.available);
         assert!(
             analysis
