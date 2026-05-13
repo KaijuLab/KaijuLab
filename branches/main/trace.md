@@ -531,3 +531,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 
 [02:40:38] OBSERVE: searched . for "implemented|stub|panic!\(|unimplemented!\(|todo!\(""
 [02:40:38] OBSERVE: searched . for "TODO|FIXME|XXX|remaining|Remaining|not implemented|stub|panic!\(|unimplemented!\(|todo!\("
+[02:40:38] OBSERVE: searched exec|claude for "implemented|agent_bridge|codex"
