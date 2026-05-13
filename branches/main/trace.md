@@ -1541,3 +1541,9 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery_store.rs
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery_store.rs
+
+
+---
+_[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.]_
+---
+

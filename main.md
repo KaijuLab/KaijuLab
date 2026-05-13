@@ -60,11 +60,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Committed web debug/evidence pane plus benchmark-run, crash-offset, and analysis-loop live debug/evidence guidance.
 - [x] Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.
 - [x] Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.
+- [x] Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 15:41 UTC] `main`: Persisted recovery DB + analyst correction API + CFG dock skeleton; committed as 53fd7fe0.
 - [2026-05-13 15:25 UTC] `main`: Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.
 - [2026-05-13 15:16 UTC] `main`: Added derived knowledge graph, ranked triage queue, CLI/REST endpoints, and web Knowledge dock; committed as 06d40992.
 - [2026-05-13 15:04 UTC] `main`: Committed web debug/evidence pane plus benchmark-run, crash-offset, and analysis-loop live debug/evidence guidance.
