@@ -153,6 +153,7 @@ pub struct DecompilerQualityReport {
     pub functions_with_kir_expressions: usize,
     pub functions_with_kir_memory_ssa: usize,
     pub functions_with_kir_type_facts: usize,
+    pub functions_with_kir_render_preview: usize,
     pub total_kir_ops: usize,
     pub total_kir_ssa_definitions: usize,
     pub total_kir_ssa_uses: usize,
@@ -162,6 +163,7 @@ pub struct DecompilerQualityReport {
     pub total_kir_memory_ssa_uses: usize,
     pub total_kir_register_type_facts: usize,
     pub total_kir_memory_type_facts: usize,
+    pub total_kir_render_preview_lines: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -190,6 +192,7 @@ pub struct FunctionQuality {
     pub has_kir_expressions: bool,
     pub has_kir_memory_ssa: bool,
     pub has_kir_type_facts: bool,
+    pub has_kir_render_preview: bool,
     pub kir_ops: usize,
     pub kir_ssa_definitions: usize,
     pub kir_phi_nodes: usize,
@@ -198,6 +201,7 @@ pub struct FunctionQuality {
     pub kir_memory_ssa_uses: usize,
     pub kir_register_type_facts: usize,
     pub kir_memory_type_facts: usize,
+    pub kir_render_preview_lines: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -222,6 +226,7 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_kir_expressions = 0usize;
     let mut functions_with_kir_memory_ssa = 0usize;
     let mut functions_with_kir_type_facts = 0usize;
+    let mut functions_with_kir_render_preview = 0usize;
     let mut total_kir_ops = 0usize;
     let mut total_kir_ssa_definitions = 0usize;
     let mut total_kir_ssa_uses = 0usize;
@@ -231,6 +236,7 @@ pub fn decompiler_quality_report_path(
     let mut total_kir_memory_ssa_uses = 0usize;
     let mut total_kir_register_type_facts = 0usize;
     let mut total_kir_memory_type_facts = 0usize;
+    let mut total_kir_render_preview_lines = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -265,6 +271,8 @@ pub fn decompiler_quality_report_path(
             && (kir.memory_ssa.definition_count > 0 || kir.memory_ssa.use_count > 0);
         let has_kir_type_facts = kir.type_facts.available
             && (kir.type_facts.register_type_count > 0 || kir.type_facts.memory_type_count > 0);
+        let kir_render_preview_lines = kir_render_preview(&kir, 12).len();
+        let has_kir_render_preview = kir_render_preview_lines > 0;
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -293,6 +301,9 @@ pub fn decompiler_quality_report_path(
         if has_kir_type_facts {
             functions_with_kir_type_facts += 1;
         }
+        if has_kir_render_preview {
+            functions_with_kir_render_preview += 1;
+        }
         total_kir_ops += kir.ops.len();
         total_kir_ssa_definitions += kir.ssa.definition_count;
         total_kir_ssa_uses += kir.ssa.use_count;
@@ -302,6 +313,7 @@ pub fn decompiler_quality_report_path(
         total_kir_memory_ssa_uses += kir.memory_ssa.use_count;
         total_kir_register_type_facts += kir.type_facts.register_type_count;
         total_kir_memory_type_facts += kir.type_facts.memory_type_count;
+        total_kir_render_preview_lines += kir_render_preview_lines;
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -358,6 +370,9 @@ pub fn decompiler_quality_report_path(
         if !kir.type_facts.diagnostics.is_empty() {
             notes.extend(kir.type_facts.diagnostics.clone());
         }
+        if !has_kir_render_preview {
+            notes.push("KIR typed render preview unavailable or empty".to_string());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -373,6 +388,7 @@ pub fn decompiler_quality_report_path(
             has_kir_expressions,
             has_kir_memory_ssa,
             has_kir_type_facts,
+            has_kir_render_preview,
             kir_ops: kir.ops.len(),
             kir_ssa_definitions: kir.ssa.definition_count,
             kir_phi_nodes: kir.ssa.phi_count,
@@ -381,6 +397,7 @@ pub fn decompiler_quality_report_path(
             kir_memory_ssa_uses: kir.memory_ssa.use_count,
             kir_register_type_facts: kir.type_facts.register_type_count,
             kir_memory_type_facts: kir.type_facts.memory_type_count,
+            kir_render_preview_lines,
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -402,6 +419,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_expressions,
         functions_with_kir_memory_ssa,
         functions_with_kir_type_facts,
+        functions_with_kir_render_preview,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -418,6 +436,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_expressions,
         functions_with_kir_memory_ssa,
         functions_with_kir_type_facts,
+        functions_with_kir_render_preview,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -438,6 +457,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_expressions,
         functions_with_kir_memory_ssa,
         functions_with_kir_type_facts,
+        functions_with_kir_render_preview,
         total_kir_ops,
         total_kir_ssa_definitions,
         total_kir_ssa_uses,
@@ -447,6 +467,7 @@ pub fn decompiler_quality_report_path(
         total_kir_memory_ssa_uses,
         total_kir_register_type_facts,
         total_kir_memory_type_facts,
+        total_kir_render_preview_lines,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -459,7 +480,7 @@ pub fn decompiler_quality_report_path(
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
             "Promote KIR memory SSA into alias-aware memory partitions".to_string(),
-            "Use KIR expression DAG in structured pseudo-C rendering".to_string(),
+            "Replace KIR typed expression preview with full structured pseudo-C rendering".to_string(),
             "Promote KIR type facts into constraint-solved type propagation".to_string(),
             "Infer call signatures/calling conventions before final expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
@@ -481,6 +502,7 @@ fn decompiler_score(
     kir_expression_facts: usize,
     kir_memory_ssa_facts: usize,
     kir_type_facts: usize,
+    kir_render_preview_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -498,6 +520,7 @@ fn decompiler_score(
     let kir_expression_score = 5.0 * kir_expression_facts as f64 / analyzed;
     let kir_memory_ssa_score = 5.0 * kir_memory_ssa_facts as f64 / analyzed;
     let kir_type_score = 4.0 * kir_type_facts as f64 / analyzed;
+    let kir_render_score = 4.0 * kir_render_preview_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -512,6 +535,7 @@ fn decompiler_score(
         + kir_expression_score
         + kir_memory_ssa_score
         + kir_type_score
+        + kir_render_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -522,6 +546,13 @@ fn decompiler_score(
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
     let cap = if variable_candidates > 0
+        && kir_type_facts > 0
+        && kir_render_preview_facts > 0
+        && kir_memory_ssa_facts > 0
+        && kir_expression_facts > 0
+    {
+        92
+    } else if variable_candidates > 0
         && kir_type_facts > 0
         && kir_memory_ssa_facts > 0
         && kir_expression_facts > 0
@@ -557,6 +588,7 @@ fn decompiler_blockers(
     kir_expression_facts: usize,
     kir_memory_ssa_facts: usize,
     kir_type_facts: usize,
+    kir_render_preview_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -589,6 +621,9 @@ fn decompiler_blockers(
     if kir_type_facts < analyzed_functions {
         blockers.push("KIR type-fact coverage is incomplete".to_string());
     }
+    if kir_render_preview_facts < analyzed_functions {
+        blockers.push("KIR typed render preview coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -610,7 +645,16 @@ fn decompiler_blockers(
                     .to_string(),
             );
         }
-        if kir_type_facts > 0 && kir_memory_ssa_facts > 0 && kir_expression_facts > 0 {
+        if kir_render_preview_facts > 0
+            && kir_type_facts > 0
+            && kir_memory_ssa_facts > 0
+            && kir_expression_facts > 0
+        {
+            blockers.push(
+                "score is capped at 92 until full structured rendering and constraint-solved types land"
+                    .to_string(),
+            );
+        } else if kir_type_facts > 0 && kir_memory_ssa_facts > 0 && kir_expression_facts > 0 {
             blockers.push(
                 "score is capped at 89 until constraint-solved types and structured rendering land"
                     .to_string(),
@@ -3053,8 +3097,59 @@ fn render_enhanced(
         }
     }
     out.push_str("*/\n\n");
+    let preview = kir_render_preview(&analysis.kir, 48);
+    if !preview.is_empty() {
+        out.push_str("/* KIR typed expression preview */\n");
+        for line in preview {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
     out.push_str(legacy_text);
     out
+}
+
+fn kir_render_preview(kir_function: &kir::KirFunction, limit: usize) -> Vec<String> {
+    if !kir_function.expressions.available || kir_function.expressions.assignments.is_empty() {
+        return Vec::new();
+    }
+    let type_by_target = kir_function
+        .type_facts
+        .register_types
+        .iter()
+        .map(|fact| (fact.name.clone(), fact.type_name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut lines = Vec::new();
+    for assignment in &kir_function.expressions.assignments {
+        if assignment.target.is_empty() || assignment.expression == "nop" {
+            continue;
+        }
+        let type_name = type_by_target
+            .get(&assignment.target)
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        lines.push(format!(
+            "{} {} = {}; // {}",
+            kir_render_type(type_name),
+            assignment.target,
+            assignment.expression,
+            assignment.vaddr
+        ));
+        if lines.len() >= limit {
+            break;
+        }
+    }
+    lines
+}
+
+fn kir_render_type(type_name: &str) -> &str {
+    match type_name {
+        "ptr" => "void *",
+        "scalar_or_ptr" => "uintptr_t",
+        "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" | "int" => type_name,
+        _ => "uint64_t",
+    }
 }
 
 fn inspect_function(path: &Path, function: &RecoveredFunction) -> Result<FunctionInsights> {
@@ -3452,6 +3547,8 @@ mod tests {
         assert!(text.contains("edx=0x3c"));
         assert!(text.contains("stack read overflow candidate"));
         assert!(text.contains("dataflow: available=true"));
+        assert!(text.contains("KIR typed expression preview"));
+        assert!(text.contains("eax_"));
 
         let analysis = decompile_analysis_path(path, 0x8048060).expect("structured analysis");
         assert!(analysis.dataflow.available);
@@ -3471,6 +3568,7 @@ mod tests {
         assert!(analysis.kir.type_facts.register_type_count > 0);
         assert!(analysis.kir.expressions.available);
         assert!(analysis.kir.expressions.assignment_count > 0);
+        assert!(!kir_render_preview(&analysis.kir, 8).is_empty());
         assert!(
             analysis
                 .kir
@@ -3560,6 +3658,11 @@ mod tests {
                 .any(|fact| fact.type_name == "local" || fact.type_name == "global")
         );
         assert!(analysis.kir.expressions.available);
+        assert!(
+            kir_render_preview(&analysis.kir, 16)
+                .iter()
+                .any(|line| line.contains(" = load(") || line.contains(" = add("))
+        );
         assert!(
             analysis
                 .kir
