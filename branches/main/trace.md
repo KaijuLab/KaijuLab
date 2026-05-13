@@ -1203,3 +1203,4 @@ _[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploi
 [13:29:39] OBSERVE: searched src/mcp for "src/tools.rs"
 [13:29:39] OBSERVE: read src/main.rs
 [13:29:39] OBSERVE: searched tools.rs for "resolve_plt|list_functions|strings_extract|decompile|run_binary|gdb|cyclic"
+[13:29:39] OBSERVE: searched Cargo.lock for "Cargo.toml"
