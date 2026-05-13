@@ -31,7 +31,7 @@ use crate::{
         },
         knowledge,
         playbooks::{self, PlaybookId, PlaybookRunRequest},
-        recovery,
+        recovery, recovery_store,
         project_store,
         workspace::{read_recent, socket_path_for, Workspace},
     },
@@ -65,6 +65,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/knowledge/graph", get(knowledge_graph))
         .route("/api/knowledge/triage", get(knowledge_triage))
         .route("/api/recovery", get(recovery_index))
+        .route("/api/recovery/stored", get(recovery_stored))
+        .route("/api/recovery/rebuild", post(recovery_rebuild))
+        .route("/api/recovery/corrections", get(recovery_corrections).post(recovery_correct))
         .route("/api/recovery/xrefs/:vaddr", get(recovery_xrefs))
         .route("/api/recovery/cfg/:vaddr", get(recovery_cfg))
         .route("/api/evidence", get(list_evidence))
@@ -396,6 +399,43 @@ async fn recovery_index(
 ) -> Result<Json<recovery::RecoveryIndex>, ApiError> {
     let ws = active(&s)?;
     recovery::recover(ws.binary_path(), q.max_functions.unwrap_or(1000))
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn recovery_stored(
+    State(s): State<AppState>,
+    Query(q): Query<RecoveryQuery>,
+) -> Result<Json<recovery::RecoveryIndex>, ApiError> {
+    let ws = active(&s)?;
+    recovery_store::load_or_rebuild(&ws, q.max_functions.unwrap_or(1000))
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn recovery_rebuild(
+    State(s): State<AppState>,
+    Query(q): Query<RecoveryQuery>,
+) -> Result<Json<recovery::RecoveryIndex>, ApiError> {
+    let ws = active(&s)?;
+    recovery_store::rebuild(&ws, q.max_functions.unwrap_or(1000))
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn recovery_corrections(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    recovery_store::corrections(ws.binary_path())
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn recovery_correct(
+    State(s): State<AppState>,
+    Json(req): Json<recovery_store::RecoveryCorrection>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    recovery_store::correction(&ws, req)
         .map(Json)
         .map_err(ApiError::from)
 }

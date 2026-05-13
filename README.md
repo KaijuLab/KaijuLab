@@ -85,6 +85,9 @@ kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
 kaijulab api recovery-index --file ./foo.bin --max-functions 1000
+kaijulab api recovery-rebuild --file ./foo.bin --max-functions 1000
+kaijulab api recovery-stored --file ./foo.bin
+kaijulab api recovery-correct --file ./foo.bin --action rename_function --vaddr 0x401000 --note main
 kaijulab api recovery-cfg --file ./foo.bin 0x401000
 kaijulab api recovery-xrefs --file ./foo.bin 0x402000
 kaijulab api knowledge-graph --output .kaiju/graph.json
@@ -130,6 +133,9 @@ Convenience subcommands cover the common automation loop:
 - `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
 - `recovery-index [--file FILE] [--max-functions N] [--output OUT]` runs graph-backed function recovery with executable-section discovery, entry/symbol/call-target seeds, recursive x86/x64 CFG recovery, basic blocks, and xrefs.
+- `recovery-rebuild [--file FILE] [--max-functions N]` persists recovered functions, blocks, edges, xrefs, and active corrections into the project SQLite DB.
+- `recovery-stored [--file FILE]` loads persisted recovery facts, rebuilding if no recovery DB exists yet.
+- `recovery-correct --action <rename_function|mark_code|mark_data|split_function|merge_function> --vaddr 0xADDR` records an analyst correction and applies it to persisted recovery facts.
 - `recovery-cfg [--file FILE] 0xADDR` returns the recovered CFG for one function start.
 - `recovery-xrefs [--file FILE] 0xADDR` returns graph-backed direct call/jump/branch references to an address.
 - `knowledge-graph [--file FILE] [--max-functions N] [--max-evidence N] [--output OUT]` builds the derived program graph from static index facts, project DB annotations/findings, and immutable evidence.

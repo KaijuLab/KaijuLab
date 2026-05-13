@@ -168,6 +168,39 @@ export interface KnowledgeGraph {
   stats: { nodes: number; edges: number; evidence_links: number; triage_items: number };
 }
 
+export interface RecoveredBlock {
+  start: string;
+  end: string;
+  instruction_count: number;
+}
+
+export interface RecoveredEdge {
+  from: string;
+  to: string;
+  kind: string;
+}
+
+export interface RecoveredFunction {
+  start: string;
+  size: number;
+  name: string;
+  confidence: string;
+  source: string[];
+  blocks: RecoveredBlock[];
+  edges: RecoveredEdge[];
+}
+
+export interface RecoveryIndex {
+  kind: string;
+  schema_version: number;
+  binary: string;
+  architecture: string;
+  entry?: string | null;
+  functions: RecoveredFunction[];
+  xrefs: Array<{ from: string; to: string; kind: string; function?: string | null; mnemonic: string }>;
+  stats: { executable_sections: number; function_count: number; block_count: number; edge_count: number; xref_count: number };
+}
+
 export function getAuthToken(): string | null {
   try {
     return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -363,6 +396,12 @@ export const api = {
   executionProfiles: () => jget<unknown>('/api/execution-profiles'),
   debugSessionContract: () => jget<unknown>('/api/debug/session-contract'),
   benchmarkSmoke: () => jget<unknown>('/api/benchmarks/smoke'),
+  recoveryStored: (max_functions = 1000) =>
+    jget<RecoveryIndex>(`/api/recovery/stored?max_functions=${max_functions}`),
+  recoveryRebuild: (max_functions = 1000) =>
+    jpost<RecoveryIndex>(`/api/recovery/rebuild?max_functions=${max_functions}`, {}),
+  recoveryCorrect: (body: { action: string; vaddr: string; target?: string | null; note?: string | null; data?: unknown }) =>
+    jpost<{ ok: boolean; id: number }>('/api/recovery/corrections', body),
   knowledgeGraph: (params?: { max_functions?: number; max_evidence?: number }) => {
     const q = new URLSearchParams();
     if (params?.max_functions !== undefined) q.set('max_functions', String(params.max_functions));

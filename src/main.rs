@@ -547,6 +547,55 @@ enum ApiCommands {
         output: Option<PathBuf>,
     },
 
+    /// Rebuild and persist recovery facts into the project SQLite DB.
+    RecoveryRebuild {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions to recover.
+        #[arg(long, default_value_t = 1000)]
+        max_functions: usize,
+    },
+
+    /// Load persisted recovery facts, rebuilding when missing.
+    RecoveryStored {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions if rebuild is needed.
+        #[arg(long, default_value_t = 1000)]
+        max_functions: usize,
+    },
+
+    /// Record an analyst correction for recovered code/data/function facts.
+    RecoveryCorrect {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Correction action: rename_function, mark_code, mark_data, split_function, merge_function.
+        #[arg(long)]
+        action: String,
+
+        /// Address being corrected.
+        #[arg(long)]
+        vaddr: String,
+
+        /// Target address for merge_function.
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Human note or fallback name for rename_function.
+        #[arg(long)]
+        note: Option<String>,
+
+        /// Optional JSON data object.
+        #[arg(long)]
+        data: Option<String>,
+    },
+
     /// Query graph-backed code xrefs to an address.
     RecoveryXrefs {
         /// Override the active daemon binary path.
@@ -1219,6 +1268,47 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 write_json_artifact(&output, &value)?;
             }
             value
+        }
+        ApiCommands::RecoveryRebuild {
+            file,
+            max_functions,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let ws = Workspace::open(&path, WritePolicy::default())?;
+            serde_json::to_value(core::recovery_store::rebuild(&ws, max_functions)?)?
+        }
+        ApiCommands::RecoveryStored {
+            file,
+            max_functions,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let ws = Workspace::open(&path, WritePolicy::default())?;
+            serde_json::to_value(core::recovery_store::load_or_rebuild(&ws, max_functions)?)?
+        }
+        ApiCommands::RecoveryCorrect {
+            file,
+            action,
+            vaddr,
+            target,
+            note,
+            data,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let ws = Workspace::open(&path, WritePolicy::default())?;
+            let data = data
+                .map(|s| serde_json::from_str::<serde_json::Value>(&s))
+                .transpose()?
+                .unwrap_or_else(|| serde_json::json!({}));
+            core::recovery_store::correction(
+                &ws,
+                core::recovery_store::RecoveryCorrection {
+                    action,
+                    vaddr,
+                    target,
+                    note,
+                    data,
+                },
+            )?
         }
         ApiCommands::RecoveryXrefs {
             file,
