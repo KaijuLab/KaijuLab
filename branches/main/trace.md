@@ -1472,3 +1472,4 @@ _[Checkpoint: 6a0492ee — Committed web debug/evidence pane plus benchmark-run,
 [15:13:54] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts
 [15:13:54] ACT: added /home/koukyosyumei/Dev/KaijuLab/web/src/components/KnowledgeWorkbench.tsx
 [15:13:54] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.tsx
+[15:15:39] THINK: Derived knowledge graph from static index + project DB + evidence JSONL instead of duplicating facts into a new persistent store; durable inputs remain source of truth.
