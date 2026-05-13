@@ -1898,3 +1898,4 @@ _[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into S
 [18:20:56] OBSERVE: read src/decompiler/ir/kir.rs
 [18:20:56] OBSERVE: read src/core/decompile.rs
 [18:20:56] OBSERVE: read src/main.rs
+[18:20:56] OBSERVE: read src/core/decompile.rs
