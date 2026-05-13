@@ -90,6 +90,7 @@ pub struct KirRegisterVersion {
 pub struct KirPhiNode {
     pub block: String,
     pub name: String,
+    pub version: u32,
     pub incoming_versions: Vec<String>,
     pub reason: String,
 }

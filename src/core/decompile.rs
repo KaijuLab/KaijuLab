@@ -375,7 +375,7 @@ pub fn decompiler_quality_report_path(
         blockers,
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
-            "Promote KIR phi candidates into fully renamed SSA variables".to_string(),
+            "Use KIR SSA versions in expression DAG rendering".to_string(),
             "Promote heuristic stack/global variable candidates into memory SSA".to_string(),
             "Infer call signatures/calling conventions before expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
@@ -429,7 +429,7 @@ fn decompiler_score(
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
     let cap = if variable_candidates > 0 && kir_ssa_facts > 0 {
-        78
+        80
     } else if variable_candidates > 0 && kir_facts > 0 {
         70
     } else if variable_candidates > 0 {
@@ -490,7 +490,7 @@ fn decompiler_blockers(
         );
         if kir_ssa_facts > 0 {
             blockers.push(
-                "score is capped at 78 until KIR phi renaming/memory SSA/type inference land"
+                "score is capped at 80 until KIR expression rendering/memory SSA/type inference land"
                     .to_string(),
             );
         } else if kir_facts > 0 {
@@ -1026,12 +1026,9 @@ fn analyze_kir_ssa(
     let dominance_frontiers =
         kir_dominance_frontiers(&block_labels, &predecessors, &immediate_dominators);
 
-    let mut versions = BTreeMap::<String, u32>::new();
-    let mut block_out_versions = BTreeMap::<String, BTreeMap<String, u32>>::new();
+    let mut op_reads = BTreeMap::<usize, BTreeSet<String>>::new();
+    let mut op_writes = BTreeMap::<usize, BTreeSet<String>>::new();
     let mut block_definitions = BTreeMap::<String, BTreeSet<String>>::new();
-    let mut definitions = Vec::new();
-    let mut uses = Vec::new();
-
     for op in &kir_function.ops {
         let block = op_to_block
             .get(&op.id)
@@ -1039,6 +1036,45 @@ fn analyze_kir_ssa(
             .unwrap_or_else(|| kir_function.entry.clone());
         let read_regs = kir_read_registers(op, &kir_function.architecture);
         let write_regs = kir_write_registers(op, &kir_function.architecture);
+        op_reads.insert(op.id, read_regs);
+        block_definitions
+            .entry(block)
+            .or_default()
+            .extend(write_regs.iter().cloned());
+        op_writes.insert(op.id, write_regs);
+    }
+    let phi_blocks = kir_phi_blocks(&block_labels, &block_definitions, &dominance_frontiers);
+
+    let mut versions = BTreeMap::<String, u32>::new();
+    let mut block_out_versions = BTreeMap::<String, BTreeMap<String, u32>>::new();
+    let mut definitions = Vec::new();
+    let mut uses = Vec::new();
+    let mut phi_nodes = Vec::new();
+    let mut initialized_blocks = BTreeSet::<String>::new();
+
+    for op in &kir_function.ops {
+        let block = op_to_block
+            .get(&op.id)
+            .cloned()
+            .unwrap_or_else(|| kir_function.entry.clone());
+        if initialized_blocks.insert(block.clone()) {
+            apply_kir_phi_definitions(
+                &block,
+                &phi_blocks,
+                &block_states,
+                &block_out_versions,
+                &mut versions,
+                &mut definitions,
+                &mut phi_nodes,
+            );
+            if let (Some(candidates), Some(state)) =
+                (phi_blocks.get(&block), block_states.get_mut(&block))
+            {
+                state.defined.extend(candidates.iter().cloned());
+            }
+        }
+        let read_regs = op_reads.get(&op.id).cloned().unwrap_or_default();
+        let write_regs = op_writes.get(&op.id).cloned().unwrap_or_default();
 
         if let Some(state) = block_states.get_mut(&block) {
             for reg in &read_regs {
@@ -1063,10 +1099,6 @@ fn analyze_kir_ssa(
                 state.defined.insert(reg.clone());
             }
         }
-        block_definitions
-            .entry(block.clone())
-            .or_default()
-            .extend(write_regs.iter().cloned());
 
         for reg in write_regs {
             let version = versions.get(&reg).copied().unwrap_or(0).saturating_add(1);
@@ -1110,46 +1142,14 @@ fn analyze_kir_ssa(
         .collect::<Vec<_>>();
     block_state_facts.sort_by(|a, b| a.block.cmp(&b.block));
 
-    let mut phi_nodes = Vec::new();
-    let phi_blocks = kir_phi_blocks(&block_labels, &block_definitions, &dominance_frontiers);
-    for block in &block_state_facts {
-        if block.predecessors.len() < 2 {
-            continue;
-        }
-        let Some(candidates) = phi_blocks.get(&block.block) else {
-            continue;
-        };
-        for name in candidates {
-            let mut incoming_versions = block
-                .predecessors
-                .iter()
-                .filter_map(|predecessor| {
-                    block_out_versions
-                        .get(predecessor)
-                        .and_then(|out| out.get(name).copied())
-                        .map(|version| format!("{predecessor}:{name}_{version}"))
-                })
-                .collect::<Vec<_>>();
-            incoming_versions.sort();
-            incoming_versions.dedup();
-            if incoming_versions.len() >= 2 {
-                phi_nodes.push(kir::KirPhiNode {
-                    block: block.block.clone(),
-                    name: name.clone(),
-                    incoming_versions,
-                    reason: "dominance-frontier KIR register versions reach this block".to_string(),
-                });
-            }
-        }
-    }
-
     kir::KirSsaFacts {
         available: !definitions.is_empty() || !uses.is_empty(),
-        dominance_available: !dominators.is_empty() && successors.keys().any(|block| {
-            dominance_frontiers
-                .get(block)
-                .is_some_and(|frontier| !frontier.is_empty())
-        }),
+        dominance_available: !dominators.is_empty()
+            && successors.keys().any(|block| {
+                dominance_frontiers
+                    .get(block)
+                    .is_some_and(|frontier| !frontier.is_empty())
+            }),
         definition_count: definitions.len(),
         use_count: uses.len(),
         phi_count: phi_nodes.len(),
@@ -1158,9 +1158,64 @@ fn analyze_kir_ssa(
         block_states: block_state_facts,
         phi_nodes,
         diagnostics: vec![
-            "KIR SSA v1: alias-aware register rename with CFG dominators and dominance-frontier phi candidates"
+            "KIR SSA v2: alias-aware register rename with dominance-frontier phi definitions"
                 .to_string(),
         ],
+    }
+}
+
+fn apply_kir_phi_definitions(
+    block: &str,
+    phi_blocks: &BTreeMap<String, BTreeSet<String>>,
+    block_states: &BTreeMap<String, KirBlockSsaTemp>,
+    block_out_versions: &BTreeMap<String, BTreeMap<String, u32>>,
+    versions: &mut BTreeMap<String, u32>,
+    definitions: &mut Vec<kir::KirSsaDefinition>,
+    phi_nodes: &mut Vec<kir::KirPhiNode>,
+) {
+    let Some(candidates) = phi_blocks.get(block) else {
+        return;
+    };
+    let Some(state) = block_states.get(block) else {
+        return;
+    };
+    if state.predecessors.len() < 2 {
+        return;
+    }
+
+    for name in candidates {
+        let mut incoming_versions = state
+            .predecessors
+            .iter()
+            .filter_map(|predecessor| {
+                block_out_versions
+                    .get(predecessor)
+                    .and_then(|out| out.get(name).copied())
+                    .map(|version| format!("{predecessor}:{name}_{version}"))
+            })
+            .collect::<Vec<_>>();
+        incoming_versions.sort();
+        incoming_versions.dedup();
+        if incoming_versions.len() < 2 {
+            continue;
+        }
+
+        let version = versions.get(name).copied().unwrap_or(0).saturating_add(1);
+        versions.insert(name.clone(), version);
+        definitions.push(kir::KirSsaDefinition {
+            op_id: usize::MAX,
+            vaddr: block.to_string(),
+            name: name.clone(),
+            version,
+            source: format!("phi({})", incoming_versions.join(", ")),
+        });
+        phi_nodes.push(kir::KirPhiNode {
+            block: block.to_string(),
+            name: name.clone(),
+            version,
+            incoming_versions,
+            reason: "dominance-frontier KIR phi definition".to_string(),
+        });
     }
 }
 
@@ -2848,8 +2903,16 @@ mod tests {
                 .ssa
                 .phi_nodes
                 .iter()
-                .all(|phi| phi.reason.contains("dominance-frontier"))
+                .all(|phi| phi.reason.contains("dominance-frontier") && phi.version > 0)
         );
+        assert!(analysis.kir.ssa.phi_nodes.iter().all(|phi| {
+            analysis.kir.ssa.definitions.iter().any(|def| {
+                def.vaddr == phi.block
+                    && def.name == phi.name
+                    && def.version == phi.version
+                    && def.source.starts_with("phi(")
+            })
+        }));
         assert!(
             analysis
                 .dataflow
