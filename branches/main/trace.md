@@ -2605,3 +2605,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:22] OBSERVE: read src/main.rs
 [23:38:22] OBSERVE: searched main.rs for "fn .*summary"
 [23:38:22] OBSERVE: read src/main.rs
+[23:38:22] OBSERVE: read src/main.rs
