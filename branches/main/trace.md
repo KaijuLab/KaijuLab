@@ -1934,3 +1934,9 @@ _[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into S
 [18:20:57] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:20:57] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [18:20:57] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.]_
+---
+

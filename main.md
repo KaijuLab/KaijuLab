@@ -69,11 +69,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.
 - [x] Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.
 - [x] Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.
+- [x] Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:21 UTC] `main`: Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
 - [2026-05-13 18:13 UTC] `main`: Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.
 - [2026-05-13 18:09 UTC] `main`: Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.
 - [2026-05-13 18:02 UTC] `main`: Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.
