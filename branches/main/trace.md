@@ -2451,3 +2451,4 @@ _[Checkpoint: 6a04fbab — wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-
 ---
 
 [22:35:52] ACT: wrote kaijulab-dubblesort-poc.py
+[22:37:38] OBSERVE: read kaijulab-hacknote-poc.py
