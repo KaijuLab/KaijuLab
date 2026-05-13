@@ -72,11 +72,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
 - [x] Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.
 - [x] Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.
+- [x] edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:35 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.…
 - [2026-05-13 18:35 UTC] `main`: Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.
 - [2026-05-13 18:28 UTC] `main`: Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.
 - [2026-05-13 18:21 UTC] `main`: Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
