@@ -761,3 +761,4 @@ _[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable termin
 
 [03:46:54] NOTE: Agent console renderer fix: replace raw ANSI stripping with dependency-free terminal screen buffer handling OSC, CSI cursor movement, clear screen/line, alternate screen, and resize.
 [03:46:54] OBSERVE: searched src for "state|OpenWorkspace""
+[03:46:54] OBSERVE: searched src for "allow_patch|allow_exec|Permission state|OpenWorkspace"
