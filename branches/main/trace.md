@@ -942,3 +942,4 @@ _[Checkpoint: 6a03fd9c — Reflected MCP function read calls into UI navigation;
 [04:32:19] NOTE: Agent console recovery fix: DELETE /api/agent-console/:agent terminates daemon session; restart clears stale PTY before reconnect; WS handlers ignore stale sockets; command fields readable when disabled.
 [04:32:19] OBSERVE: read web/src/components/AgentConsole.tsx
 [04:32:19] OBSERVE: read web/src/components/AgentConsole.tsx
+[04:32:19] OBSERVE: read src/server/agent_console.rs
