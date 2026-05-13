@@ -1484,3 +1484,4 @@ _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, C
 [15:22:49] OBSERVE: searched src/tools.rs for "list_functions|list_functions|xrefs_to|cfg_view|disassemble|capstone|iced|goblin|Object::Elf|X86|I386""
 [15:22:49] OBSERVE: searched tools.rs for "fn list_functions|list_functions|xrefs_to|cfg_view|disassemble|capstone|iced|goblin|Object::Elf|X86|I386"
 [15:22:49] OBSERVE: read src/tools.rs
+[15:22:49] OBSERVE: read src/tools.rs
