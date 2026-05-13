@@ -2574,3 +2574,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-ready candidate; tcache-tear/silver-bullet timed out; hacknote wrote failing candidate. Hardened generic exploit-loop prompt around bounded triage/early candidate/verify cadence and raw output caps; decompiler now returns structured no-IR error instead of HighFunction panic.]_
 ---
 
+[23:36:08] THINK: implement generic agent tools first: binary-facts/scaffold/interact/heap-probe-plan over challenge skills because failures were workflow/tooling discipline, not missing per-binary recipes.
