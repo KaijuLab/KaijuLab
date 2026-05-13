@@ -1,0 +1,828 @@
+//! Recovery-backed decompile context.
+//!
+//! The legacy pseudo-C renderer still owns expression rendering. This module
+//! feeds it better recovered function facts and adds machine-level context that
+//! exploit agents need: CFG blocks, stack-frame hints, calls, and syscalls.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+use anyhow::{Context, Result, anyhow};
+use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+use object::{Architecture, Object, ObjectSection};
+use serde::Serialize;
+
+use crate::tools;
+
+use super::recovery::{self, RecoveredFunction, RecoveryIndex};
+
+#[derive(Debug, Clone)]
+struct ExecSection {
+    address: u64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+enum KnownValue {
+    Imm(u64),
+    Reg(String),
+    StackPointer,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DecompileAnalysis {
+    pub kind: String,
+    pub binary: String,
+    pub vaddr: String,
+    pub function: RecoveredFunction,
+    pub cfg: CfgDiagnostics,
+    pub machine: FunctionInsights,
+    pub references: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CfgDiagnostics {
+    pub entry: String,
+    pub block_count: usize,
+    pub edge_count: usize,
+    pub exit_blocks: Vec<String>,
+    pub back_edges: Vec<String>,
+    pub loop_headers: Vec<String>,
+    pub strongly_connected_components: usize,
+    pub irreducible_sccs: usize,
+    pub reducible: bool,
+    pub goto_pressure: usize,
+    pub structuring_strategy: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FunctionInsights {
+    frame_size: u64,
+    #[serde(skip)]
+    current_stack: u64,
+    stack_accesses: Vec<String>,
+    calls: Vec<String>,
+    syscalls: Vec<String>,
+    risks: Vec<String>,
+}
+
+pub fn decompile_analysis_path(path: &Path, vaddr: u64) -> Result<DecompileAnalysis> {
+    if vaddr == 0 {
+        return Err(anyhow!("vaddr is required"));
+    }
+
+    let index = recovery::recover(path, 2000)
+        .with_context(|| format!("recover functions for {}", path.display()))?;
+    let function = find_function(&index, vaddr)
+        .ok_or_else(|| anyhow!("function 0x{vaddr:x} was not recovered"))?
+        .clone();
+    let mut insights = inspect_function(path, &function).unwrap_or_else(|err| FunctionInsights {
+        risks: vec![format!("machine-insight unavailable: {err}")],
+        ..Default::default()
+    });
+    insights.current_stack = 0;
+
+    Ok(DecompileAnalysis {
+        kind: "decompile_analysis".to_string(),
+        binary: path.to_string_lossy().into_owned(),
+        vaddr: format!("0x{vaddr:x}"),
+        cfg: analyze_cfg(&function),
+        function,
+        machine: insights,
+        references: vec![
+            "Reko scanner model: recursive ICFG discovery, procedure clustering, shingled fallback"
+                .to_string(),
+            "Phoenix: semantics-preserving structural analysis with iterative refinement"
+                .to_string(),
+            "SAILR: compiler-aware deoptimization before structuring; preserve intended gotos"
+                .to_string(),
+        ],
+    })
+}
+
+pub fn decompile_enhanced_path(path: &Path, vaddr: u64) -> Result<String> {
+    let analysis = decompile_analysis_path(path, vaddr)?;
+
+    let legacy = tools::dispatch(
+        "decompile",
+        &serde_json::json!({ "path": path.to_string_lossy(), "vaddr": vaddr }),
+    );
+    let legacy_text = if legacy.output.starts_with("Error:") {
+        format!("legacy decompiler unavailable: {}", legacy.output)
+    } else {
+        legacy.output
+    };
+
+    Ok(render_enhanced(path, vaddr, &analysis, &legacy_text))
+}
+
+fn find_function(index: &RecoveryIndex, vaddr: u64) -> Option<&RecoveredFunction> {
+    index.functions.iter().find(|function| {
+        let Some(start) = parse_addr(&function.start) else {
+            return false;
+        };
+        vaddr == start || (vaddr > start && vaddr < start.saturating_add(function.size))
+    })
+}
+
+fn analyze_cfg(function: &RecoveredFunction) -> CfgDiagnostics {
+    let entry = function.start.clone();
+    let mut nodes = BTreeSet::<String>::new();
+    for block in &function.blocks {
+        nodes.insert(block.start.clone());
+    }
+    nodes.insert(entry.clone());
+
+    let mut succ = BTreeMap::<String, Vec<String>>::new();
+    let mut pred = BTreeMap::<String, Vec<String>>::new();
+    for edge in &function.edges {
+        nodes.insert(edge.from.clone());
+        nodes.insert(edge.to.clone());
+        succ.entry(edge.from.clone())
+            .or_default()
+            .push(edge.to.clone());
+        pred.entry(edge.to.clone())
+            .or_default()
+            .push(edge.from.clone());
+    }
+
+    let exit_blocks = nodes
+        .iter()
+        .filter(|node| succ.get(*node).map_or(true, |edges| edges.is_empty()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let back_edges = cfg_back_edges(&entry, &succ);
+    let sccs = strongly_connected_components(&nodes, &succ);
+    let mut loop_headers = BTreeSet::<String>::new();
+    let mut irreducible_sccs = 0usize;
+    let mut goto_pressure = 0usize;
+
+    for component in sccs
+        .iter()
+        .filter(|component| is_cyclic_component(component, &succ))
+    {
+        let component_set = component.iter().cloned().collect::<BTreeSet<_>>();
+        let mut entries = BTreeSet::<String>::new();
+        for node in component {
+            for predecessor in pred.get(node).into_iter().flatten() {
+                if !component_set.contains(predecessor) {
+                    entries.insert(node.clone());
+                }
+            }
+        }
+        if component_set.contains(&entry) {
+            entries.insert(entry.clone());
+        }
+        if entries.len() <= 1 {
+            if let Some(header) = entries
+                .iter()
+                .next()
+                .cloned()
+                .or_else(|| component.first().cloned())
+            {
+                loop_headers.insert(header);
+            }
+        } else {
+            irreducible_sccs += 1;
+            goto_pressure += entries.len().saturating_sub(1);
+        }
+    }
+
+    let reducible = irreducible_sccs == 0;
+    let structuring_strategy = if reducible {
+        "phoenix-style semantic structuring can proceed without node splitting".to_string()
+    } else {
+        "apply SAILR-style compiler-aware deoptimization or node splitting before structuring"
+            .to_string()
+    };
+
+    CfgDiagnostics {
+        entry,
+        block_count: nodes.len(),
+        edge_count: function.edges.len(),
+        exit_blocks,
+        back_edges,
+        loop_headers: loop_headers.into_iter().collect(),
+        strongly_connected_components: sccs.len(),
+        irreducible_sccs,
+        reducible,
+        goto_pressure,
+        structuring_strategy,
+    }
+}
+
+fn cfg_back_edges(entry: &str, succ: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    fn visit(
+        node: &str,
+        succ: &BTreeMap<String, Vec<String>>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if !visited.insert(node.to_string()) {
+            return;
+        }
+        visiting.insert(node.to_string());
+        for next in succ.get(node).into_iter().flatten() {
+            if visiting.contains(next) {
+                out.push(format!("{node}->{next}"));
+            } else {
+                visit(next, succ, visiting, visited, out);
+            }
+        }
+        visiting.remove(node);
+    }
+
+    let mut out = Vec::new();
+    visit(
+        entry,
+        succ,
+        &mut BTreeSet::new(),
+        &mut BTreeSet::new(),
+        &mut out,
+    );
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn strongly_connected_components(
+    nodes: &BTreeSet<String>,
+    succ: &BTreeMap<String, Vec<String>>,
+) -> Vec<Vec<String>> {
+    struct Tarjan<'a> {
+        succ: &'a BTreeMap<String, Vec<String>>,
+        index: usize,
+        stack: Vec<String>,
+        on_stack: BTreeSet<String>,
+        indexes: BTreeMap<String, usize>,
+        lowlinks: BTreeMap<String, usize>,
+        components: Vec<Vec<String>>,
+    }
+
+    impl Tarjan<'_> {
+        fn strong_connect(&mut self, node: String) {
+            self.indexes.insert(node.clone(), self.index);
+            self.lowlinks.insert(node.clone(), self.index);
+            self.index += 1;
+            self.stack.push(node.clone());
+            self.on_stack.insert(node.clone());
+
+            for next in self.succ.get(&node).into_iter().flatten() {
+                if !self.indexes.contains_key(next) {
+                    self.strong_connect(next.clone());
+                    let low = self.lowlinks[&node].min(self.lowlinks[next]);
+                    self.lowlinks.insert(node.clone(), low);
+                } else if self.on_stack.contains(next) {
+                    let low = self.lowlinks[&node].min(self.indexes[next]);
+                    self.lowlinks.insert(node.clone(), low);
+                }
+            }
+
+            if self.lowlinks[&node] == self.indexes[&node] {
+                let mut component = Vec::new();
+                while let Some(member) = self.stack.pop() {
+                    self.on_stack.remove(&member);
+                    component.push(member.clone());
+                    if member == node {
+                        break;
+                    }
+                }
+                component.sort();
+                self.components.push(component);
+            }
+        }
+    }
+
+    let mut tarjan = Tarjan {
+        succ,
+        index: 0,
+        stack: Vec::new(),
+        on_stack: BTreeSet::new(),
+        indexes: BTreeMap::new(),
+        lowlinks: BTreeMap::new(),
+        components: Vec::new(),
+    };
+    for node in nodes {
+        if !tarjan.indexes.contains_key(node) {
+            tarjan.strong_connect(node.clone());
+        }
+    }
+    tarjan.components
+}
+
+fn is_cyclic_component(component: &[String], succ: &BTreeMap<String, Vec<String>>) -> bool {
+    if component.len() > 1 {
+        return true;
+    }
+    let Some(node) = component.first() else {
+        return false;
+    };
+    succ.get(node)
+        .into_iter()
+        .flatten()
+        .any(|next| next == node)
+}
+
+fn render_enhanced(
+    path: &Path,
+    vaddr: u64,
+    analysis: &DecompileAnalysis,
+    legacy_text: &str,
+) -> String {
+    let function = &analysis.function;
+    let insights = &analysis.machine;
+    let cfg = &analysis.cfg;
+    let mut out = String::new();
+    out.push_str("/* KaijuLab enhanced decompile context\n");
+    out.push_str(&format!("   binary: {}\n", path.display()));
+    out.push_str(&format!(
+        "   selected: 0x{vaddr:x}  recovered_start: {}  size: {}  confidence: {}\n",
+        function.start, function.size, function.confidence
+    ));
+    if !function.source.is_empty() {
+        out.push_str(&format!(
+            "   recovery_sources: {}\n",
+            function.source.join(", ")
+        ));
+    }
+    out.push_str(&format!(
+        "   cfg: {} blocks, {} edges\n",
+        function.blocks.len(),
+        function.edges.len()
+    ));
+    out.push_str(&format!(
+        "   structuring: reducible={} sccs={} irreducible_sccs={} goto_pressure={} strategy={}\n",
+        cfg.reducible,
+        cfg.strongly_connected_components,
+        cfg.irreducible_sccs,
+        cfg.goto_pressure,
+        cfg.structuring_strategy
+    ));
+    if !cfg.loop_headers.is_empty() {
+        out.push_str(&format!(
+            "     loop_headers: {}\n",
+            cfg.loop_headers.join(", ")
+        ));
+    }
+    if !cfg.back_edges.is_empty() {
+        out.push_str(&format!("     back_edges: {}\n", cfg.back_edges.join(", ")));
+    }
+    for block in function.blocks.iter().take(12) {
+        out.push_str(&format!(
+            "     block {}..{} insns={}\n",
+            block.start, block.end, block.instruction_count
+        ));
+    }
+    if function.blocks.len() > 12 {
+        out.push_str(&format!(
+            "     ... {} more blocks\n",
+            function.blocks.len() - 12
+        ));
+    }
+    for edge in function.edges.iter().take(16) {
+        out.push_str(&format!(
+            "     edge {} -> {} ({})\n",
+            edge.from, edge.to, edge.kind
+        ));
+    }
+    if function.edges.len() > 16 {
+        out.push_str(&format!(
+            "     ... {} more edges\n",
+            function.edges.len() - 16
+        ));
+    }
+
+    out.push_str(&format!(
+        "   stack_frame: minimum {} bytes from stack-pointer deltas\n",
+        insights.frame_size
+    ));
+    for access in insights.stack_accesses.iter().take(16) {
+        out.push_str(&format!("     {access}\n"));
+    }
+    if insights.stack_accesses.len() > 16 {
+        out.push_str(&format!(
+            "     ... {} more stack references\n",
+            insights.stack_accesses.len() - 16
+        ));
+    }
+    if !insights.calls.is_empty() {
+        out.push_str("   calls:\n");
+        for call in insights.calls.iter().take(24) {
+            out.push_str(&format!("     {call}\n"));
+        }
+    }
+    if !insights.syscalls.is_empty() {
+        out.push_str("   syscalls:\n");
+        for syscall in &insights.syscalls {
+            out.push_str(&format!("     {syscall}\n"));
+        }
+    }
+    if !insights.risks.is_empty() {
+        out.push_str("   analysis_notes:\n");
+        for risk in &insights.risks {
+            out.push_str(&format!("     {risk}\n"));
+        }
+    }
+    out.push_str("*/\n\n");
+    out.push_str(legacy_text);
+    out
+}
+
+fn inspect_function(path: &Path, function: &RecoveredFunction) -> Result<FunctionInsights> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let obj = object::File::parse(&*data).with_context(|| format!("parse {}", path.display()))?;
+    let arch = obj.architecture();
+    let bits = match arch {
+        Architecture::I386 => 32,
+        Architecture::X86_64 | Architecture::X86_64_X32 => 64,
+        _ => return Ok(FunctionInsights::default()),
+    };
+    let sections = executable_sections(&obj)?;
+    let start = parse_addr(&function.start).ok_or_else(|| anyhow!("bad function start"))?;
+    let size = function.size.max(1).min(0x20000);
+    let bytes = bytes_at(&sections, start, size)
+        .ok_or_else(|| anyhow!("function bytes unavailable at 0x{start:x}"))?;
+
+    let mut decoder = Decoder::with_ip(bits, bytes, start, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut regs = BTreeMap::<String, KnownValue>::new();
+    let mut insights = FunctionInsights::default();
+    let sp = if bits == 64 { "rsp" } else { "esp" };
+    let bp = if bits == 64 { "rbp" } else { "ebp" };
+
+    while decoder.can_decode() {
+        let instr = decoder.decode();
+        let ip = instr.ip();
+        let mut text = String::new();
+        formatter.format(&instr, &mut text);
+        let normalized = text.to_ascii_lowercase().replace(' ', "");
+
+        if normalized.starts_with("sub") {
+            if let Some((dst, value)) = parse_reg_imm(&normalized, "sub") {
+                if dst == sp {
+                    grow_stack(&mut insights, value);
+                }
+            }
+        } else if normalized.starts_with("add") {
+            if let Some((dst, value)) = parse_reg_imm(&normalized, "add") {
+                if dst == sp {
+                    insights.current_stack = insights.current_stack.saturating_sub(value);
+                }
+            }
+        } else if normalized.starts_with("push") {
+            grow_stack(&mut insights, (bits / 8) as u64);
+        } else if normalized.starts_with("mov") {
+            apply_mov(&normalized, &mut regs);
+        } else if normalized.starts_with("xor") {
+            apply_xor_zero(&normalized, &mut regs);
+        } else if normalized.starts_with("lea") {
+            apply_lea(&normalized, &mut regs);
+        }
+
+        if normalized.starts_with("call") {
+            let target = normalized.trim_start_matches("call");
+            insights.calls.push(format!(
+                "0x{ip:x}: call {}",
+                if target.is_empty() { "unknown" } else { target }
+            ));
+        }
+
+        if normalized.starts_with("int80") || normalized == "int0x80" || normalized == "int80h" {
+            let syscall = render_syscall(bits, ip, &regs);
+            check_syscall_risk(&syscall, insights.frame_size, &mut insights);
+            insights.syscalls.push(syscall);
+        } else if normalized == "syscall" {
+            let syscall = render_syscall(bits, ip, &regs);
+            check_syscall_risk(&syscall, insights.frame_size, &mut insights);
+            insights.syscalls.push(syscall);
+        }
+
+        collect_stack_access(ip, &normalized, sp, bp, &mut insights);
+    }
+
+    insights.stack_accesses.sort();
+    insights.stack_accesses.dedup();
+    Ok(insights)
+}
+
+fn executable_sections(obj: &object::File<'_>) -> Result<Vec<ExecSection>> {
+    let mut sections = Vec::new();
+    for section in obj.sections() {
+        if section.address() == 0 || section.size() == 0 {
+            continue;
+        }
+        if section.kind() != object::SectionKind::Text {
+            continue;
+        }
+        let Ok(bytes) = section.uncompressed_data() else {
+            continue;
+        };
+        sections.push(ExecSection {
+            address: section.address(),
+            bytes: bytes.into_owned(),
+        });
+    }
+    Ok(sections)
+}
+
+fn grow_stack(insights: &mut FunctionInsights, bytes: u64) {
+    insights.current_stack = insights.current_stack.saturating_add(bytes);
+    insights.frame_size = insights.frame_size.max(insights.current_stack);
+}
+
+fn bytes_at(sections: &[ExecSection], vaddr: u64, size: u64) -> Option<&[u8]> {
+    let section = sections.iter().find(|section| {
+        vaddr >= section.address
+            && vaddr < section.address.saturating_add(section.bytes.len() as u64)
+    })?;
+    let offset = vaddr.checked_sub(section.address)? as usize;
+    let available = section.bytes.len().saturating_sub(offset);
+    let len = (size as usize).min(available);
+    Some(&section.bytes[offset..offset + len])
+}
+
+fn apply_mov(text: &str, regs: &mut BTreeMap<String, KnownValue>) {
+    let Some((dst, src)) = split_binary(text, "mov") else {
+        return;
+    };
+    let dst = full_register(dst);
+    if !is_register(dst) {
+        return;
+    }
+    let value = if let Some(n) = parse_num(src) {
+        KnownValue::Imm(n)
+    } else if src == "esp" || src == "rsp" {
+        KnownValue::StackPointer
+    } else if is_register(src) {
+        regs.get(src)
+            .cloned()
+            .unwrap_or_else(|| KnownValue::Reg(src.to_string()))
+    } else {
+        KnownValue::Unknown
+    };
+    regs.insert(dst.to_string(), value);
+}
+
+fn apply_xor_zero(text: &str, regs: &mut BTreeMap<String, KnownValue>) {
+    let Some((dst, src)) = split_binary(text, "xor") else {
+        return;
+    };
+    let dst = full_register(dst);
+    let src = full_register(src);
+    if dst == src && is_register(dst) {
+        regs.insert(dst.to_string(), KnownValue::Imm(0));
+    }
+}
+
+fn apply_lea(text: &str, regs: &mut BTreeMap<String, KnownValue>) {
+    let Some((dst, src)) = split_binary(text, "lea") else {
+        return;
+    };
+    let dst = full_register(dst);
+    if is_register(dst) && (src.contains("[esp") || src.contains("[rsp")) {
+        regs.insert(dst.to_string(), KnownValue::StackPointer);
+    }
+}
+
+fn parse_reg_imm<'a>(text: &'a str, opcode: &str) -> Option<(&'a str, u64)> {
+    let (dst, src) = split_binary(text, opcode)?;
+    Some((dst, parse_num(src)?))
+}
+
+fn split_binary<'a>(text: &'a str, opcode: &str) -> Option<(&'a str, &'a str)> {
+    let rest = text.strip_prefix(opcode)?;
+    let mut parts = rest.splitn(2, ',');
+    let dst = parts.next()?.trim();
+    let src = parts.next()?.trim();
+    Some((dst, src))
+}
+
+fn collect_stack_access(ip: u64, text: &str, sp: &str, bp: &str, insights: &mut FunctionInsights) {
+    let stack_ref = text.contains(&format!("[{sp}"))
+        || text.contains(&format!("[{bp}"))
+        || text.contains(&format!("[e{}]", &sp[1..]))
+        || text.contains(&format!("[e{}]", &bp[1..]));
+    if stack_ref {
+        insights
+            .stack_accesses
+            .push(format!("0x{ip:x}: {}", text.replace(',', ", ")));
+    }
+}
+
+fn render_syscall(bits: u32, ip: u64, regs: &BTreeMap<String, KnownValue>) -> String {
+    if bits == 32 {
+        let nr = value_for(regs, &["eax"]);
+        let name = nr.and_then(syscall_name_i386).unwrap_or("unknown");
+        let args = [
+            ("ebx", value_label(regs, "ebx")),
+            ("ecx", value_label(regs, "ecx")),
+            ("edx", value_label(regs, "edx")),
+            ("esi", value_label(regs, "esi")),
+            ("edi", value_label(regs, "edi")),
+        ];
+        format!(
+            "0x{ip:x}: int 0x80 {}({})",
+            syscall_number_label(nr, name),
+            args.iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        let nr = value_for(regs, &["rax", "eax"]);
+        let name = nr.and_then(syscall_name_x86_64).unwrap_or("unknown");
+        let args = [
+            ("rdi", value_label(regs, "rdi")),
+            ("rsi", value_label(regs, "rsi")),
+            ("rdx", value_label(regs, "rdx")),
+            ("r10", value_label(regs, "r10")),
+            ("r8", value_label(regs, "r8")),
+            ("r9", value_label(regs, "r9")),
+        ];
+        format!(
+            "0x{ip:x}: syscall {}({})",
+            syscall_number_label(nr, name),
+            args.iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn check_syscall_risk(syscall: &str, frame_size: u64, insights: &mut FunctionInsights) {
+    if !(syscall.contains("read") || syscall.contains("recv")) {
+        return;
+    }
+    let reads_stack = syscall.contains("ecx=sp") || syscall.contains("rsi=sp");
+    let Some(count) =
+        extract_named_imm(syscall, "edx").or_else(|| extract_named_imm(syscall, "rdx"))
+    else {
+        return;
+    };
+    if reads_stack && frame_size > 0 && count > frame_size {
+        insights.risks.push(format!(
+            "stack read overflow candidate: count {count} exceeds recovered stack allocation {frame_size}"
+        ));
+    }
+}
+
+fn extract_named_imm(text: &str, name: &str) -> Option<u64> {
+    let needle = format!("{name}=0x");
+    let pos = text.find(&needle)?;
+    let start = pos + needle.len();
+    let end = text[start..]
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .map(|rel| start + rel)
+        .unwrap_or(text.len());
+    u64::from_str_radix(&text[start..end], 16).ok()
+}
+
+fn syscall_number_label(nr: Option<u64>, name: &str) -> String {
+    nr.map(|n| format!("{name}#{n}"))
+        .unwrap_or_else(|| name.to_string())
+}
+
+fn syscall_name_i386(nr: u64) -> Option<&'static str> {
+    Some(match nr {
+        1 => "exit",
+        3 => "read",
+        4 => "write",
+        5 => "open",
+        11 => "execve",
+        45 => "brk",
+        90 => "mmap",
+        91 => "munmap",
+        125 => "mprotect",
+        _ => return None,
+    })
+}
+
+fn syscall_name_x86_64(nr: u64) -> Option<&'static str> {
+    Some(match nr {
+        0 => "read",
+        1 => "write",
+        2 => "open",
+        3 => "close",
+        9 => "mmap",
+        10 => "mprotect",
+        11 => "munmap",
+        59 => "execve",
+        60 => "exit",
+        231 => "exit_group",
+        _ => return None,
+    })
+}
+
+fn value_for(regs: &BTreeMap<String, KnownValue>, names: &[&str]) -> Option<u64> {
+    names.iter().find_map(|name| match regs.get(*name) {
+        Some(KnownValue::Imm(n)) => Some(*n),
+        _ => None,
+    })
+}
+
+fn value_label(regs: &BTreeMap<String, KnownValue>, name: &str) -> String {
+    let value = regs
+        .get(name)
+        .or_else(|| alias(name).and_then(|alias| regs.get(alias)));
+    match value {
+        Some(KnownValue::Imm(n)) => format!("0x{n:x}"),
+        Some(KnownValue::Reg(reg)) => reg.clone(),
+        Some(KnownValue::StackPointer) => "sp".to_string(),
+        Some(KnownValue::Unknown) | None => "?".to_string(),
+    }
+}
+
+fn alias(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "rax" => "eax",
+        "rdi" => "edi",
+        "rsi" => "esi",
+        "rdx" => "edx",
+        _ => return None,
+    })
+}
+
+fn is_register(name: &str) -> bool {
+    matches!(
+        name,
+        "eax"
+            | "ebx"
+            | "ecx"
+            | "edx"
+            | "esi"
+            | "edi"
+            | "esp"
+            | "ebp"
+            | "rax"
+            | "rbx"
+            | "rcx"
+            | "rdx"
+            | "rsi"
+            | "rdi"
+            | "rsp"
+            | "rbp"
+            | "r8"
+            | "r9"
+            | "r10"
+            | "al"
+            | "bl"
+            | "cl"
+            | "dl"
+    )
+}
+
+fn full_register(name: &str) -> &str {
+    match name {
+        "al" | "ah" | "ax" => "eax",
+        "bl" | "bh" | "bx" => "ebx",
+        "cl" | "ch" | "cx" => "ecx",
+        "dl" | "dh" | "dx" => "edx",
+        _ => name,
+    }
+}
+
+fn parse_num(text: &str) -> Option<u64> {
+    let mut s = text.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(hex) = s.strip_prefix("0x") {
+        return u64::from_str_radix(hex, 16).ok();
+    }
+    if let Some(hex) = s.strip_suffix('h') {
+        if hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return u64::from_str_radix(hex, 16).ok();
+        }
+    }
+    if s.starts_with('-') {
+        return None;
+    }
+    s = s.trim_start_matches('+');
+    s.parse::<u64>().ok()
+}
+
+fn parse_addr(text: &str) -> Option<u64> {
+    parse_num(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_sample_reports_syscalls_and_stack_overflow() {
+        let path = Path::new("samples/PwnableTW/Start/start");
+        if !path.exists() {
+            return;
+        }
+        let text = decompile_enhanced_path(path, 0x8048060).expect("enhanced decompile");
+        assert!(text.contains("recovered_start: 0x8048060"));
+        assert!(text.contains("write#4"));
+        assert!(text.contains("read#3"));
+        assert!(text.contains("edx=0x3c"));
+        assert!(text.contains("stack read overflow candidate"));
+    }
+}

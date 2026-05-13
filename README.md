@@ -83,6 +83,8 @@ kaijulab api runtime-run --stdin 'AAAA' --save-evidence --tag smoke
 kaijulab api debug-probe --stdin @crash.input --break 0x401000 --save-evidence --tag crash
 kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
+kaijulab api decompile-enhanced --file ./foo.bin 0x401000
+kaijulab api decompile-analysis --file ./foo.bin 0x401000
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
 kaijulab api recovery-index --file ./foo.bin --max-functions 1000
 kaijulab api recovery-rebuild --file ./foo.bin --max-functions 1000
@@ -130,7 +132,9 @@ Convenience subcommands cover the common automation loop:
 - `runtime-run [--file FILE] [--arg X] [--stdin TEXT|@FILE] [--runner qemu-i386 --sysroot ROOT] [--save-evidence]` runs the target with captured stdout/stderr, timeout, exit code, signal, and runtime diagnostics.
 - `debug-probe [--file FILE] [--stdin TEXT|@FILE] [--break ADDR] [--sysroot ROOT] [--save-evidence]` runs a non-interactive `gdb`/`gdb-multiarch` probe and returns parsed registers, backtrace, PC disassembly, mappings, signal hints, and next action. Foreign-architecture ELF targets are run under qemu's gdbstub automatically; dynamically linked foreign targets need a matching `--sysroot`.
 - `exploit-kit [--file FILE] [--cyclic-len N] [--cyclic-find VALUE]` emits checksec/runtime data, PLT/GOT text, gadget hints, exploit recipes, and cyclic pattern helpers.
-- `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
+- `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns recovery-backed function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
+- `decompile-enhanced [--file FILE] 0xADDR` emits recovered function/CFG facts, stack-frame hints, call/syscall annotations, overflow notes, and the annotated pseudo-C body.
+- `decompile-analysis [--file FILE] 0xADDR` emits structured decompiler facts for automation: recovered CFG diagnostics, reducibility/goto-pressure metrics, stack facts, and call/syscall facts.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
 - `recovery-index [--file FILE] [--max-functions N] [--output OUT]` runs graph-backed function recovery with executable-section discovery, entry/symbol/call-target seeds, recursive x86/x64 CFG recovery, basic blocks, and xrefs.
 - `recovery-rebuild [--file FILE] [--max-functions N]` persists recovered functions, blocks, edges, xrefs, and active corrections into the project SQLite DB.

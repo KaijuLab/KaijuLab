@@ -453,6 +453,28 @@ enum ApiCommands {
         max: usize,
     },
 
+    /// Emit recovery-backed decompile context for one function.
+    DecompileEnhanced {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Function virtual address to inspect.
+        #[arg(value_name = "VADDR")]
+        vaddr: String,
+    },
+
+    /// Emit structured decompiler analysis facts for one function.
+    DecompileAnalysis {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Function virtual address to inspect.
+        #[arg(value_name = "VADDR")]
+        vaddr: String,
+    },
+
     /// Build a stateful analysis-loop bundle for agents or automation.
     AnalysisLoop {
         /// Override the active daemon binary path.
@@ -1203,6 +1225,21 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             ir_query_json(&path, function.as_deref(), search.as_deref(), max)?
+        }
+        ApiCommands::DecompileEnhanced { file, vaddr } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let vaddr = parse_int(&vaddr)?;
+            serde_json::json!({
+                "kind": "decompile_enhanced",
+                "binary": path,
+                "vaddr": format!("0x{vaddr:x}"),
+                "text": core::decompile::decompile_enhanced_path(&path, vaddr)?,
+            })
+        }
+        ApiCommands::DecompileAnalysis { file, vaddr } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let vaddr = parse_int(&vaddr)?;
+            serde_json::to_value(core::decompile::decompile_analysis_path(&path, vaddr)?)?
         }
         ApiCommands::AnalysisLoop {
             file,
@@ -2822,16 +2859,34 @@ fn ir_query_json(
     max: usize,
 ) -> Result<serde_json::Value> {
     let max = max.clamp(1, 500);
-    let funcs_raw = tools::dispatch(
-        "list_functions",
-        &serde_json::json!({
-            "path": binary.to_string_lossy(),
-            "max_results": max,
-            "json": true,
+    let functions = match core::recovery::recover(binary, max) {
+        Ok(index) => serde_json::json!({
+            "source": "professional_recovery",
+            "total": index.functions.len(),
+            "functions": index.functions.iter().map(|function| serde_json::json!({
+                "address": function.start,
+                "vaddr": function.start,
+                "size": function.size,
+                "name": function.name,
+                "confidence": function.confidence,
+                "blocks": function.blocks.len(),
+                "edges": function.edges.len(),
+                "source": function.source,
+            })).collect::<Vec<_>>(),
         }),
-    );
-    let functions = serde_json::from_str::<serde_json::Value>(&funcs_raw.output)
-        .unwrap_or_else(|_| serde_json::json!({ "raw": funcs_raw.output }));
+        Err(err) => {
+            let funcs_raw = tools::dispatch(
+                "list_functions",
+                &serde_json::json!({
+                    "path": binary.to_string_lossy(),
+                    "max_results": max,
+                    "json": true,
+                }),
+            );
+            serde_json::from_str::<serde_json::Value>(&funcs_raw.output)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": funcs_raw.output, "recovery_error": err.to_string() }))
+        }
+    };
     let strings_raw = tools::dispatch(
         "strings_extract",
         &serde_json::json!({
@@ -2852,10 +2907,8 @@ fn ir_query_json(
                 "length": 320,
             }),
         );
-        let decomp = tools::dispatch(
-            "decompile",
-            &serde_json::json!({ "path": binary.to_string_lossy(), "vaddr": vaddr }),
-        );
+        let decomp = core::decompile::decompile_enhanced_path(binary, vaddr)
+            .unwrap_or_else(|err| format!("Error: {err}"));
         let xrefs = tools::dispatch(
             "xrefs_to",
             &serde_json::json!({ "path": binary.to_string_lossy(), "vaddr": vaddr }),
@@ -2863,7 +2916,7 @@ fn ir_query_json(
         selected = serde_json::json!({
             "vaddr": format!("0x{vaddr:x}"),
             "disassembly": tool_text_json(disasm.output),
-            "decompile": tool_text_json(decomp.output),
+            "decompile": tool_text_json(decomp),
             "xrefs_to": tool_text_json(xrefs.output),
         });
     }

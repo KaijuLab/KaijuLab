@@ -8,6 +8,7 @@ pub mod analysis;
 pub mod debug_session;
 pub mod evidence;
 pub mod events;
+pub mod decompile;
 pub mod findings;
 pub mod jobs;
 pub mod knowledge;

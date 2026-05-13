@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use crate::tools;
 
-use super::{recovery, workspace::Workspace};
+use super::{decompile as enhanced_decompile, recovery, workspace::Workspace};
 
 fn raw(name: &str, args: Value) -> Result<String> {
     let r = tools::dispatch(name, &args);
@@ -88,10 +88,12 @@ pub fn disassemble(ws: &Workspace, vaddr: u64, length: Option<u32>) -> Result<St
 }
 
 pub fn decompile(ws: &Workspace, vaddr: u64) -> Result<String> {
-    raw(
-        "decompile",
-        json!({ "path": ws.binary_path_str(), "vaddr": vaddr }),
-    )
+    enhanced_decompile::decompile_enhanced_path(ws.binary_path(), vaddr).or_else(|_| {
+        raw(
+            "decompile",
+            json!({ "path": ws.binary_path_str(), "vaddr": vaddr }),
+        )
+    })
 }
 
 pub fn xrefs_to(ws: &Workspace, vaddr: u64) -> Result<String> {
