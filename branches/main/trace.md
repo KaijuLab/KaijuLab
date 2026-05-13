@@ -1154,3 +1154,4 @@ _[Checkpoint: 6a047595 — Ran Claude+KaijuLab over remaining PwnableTW samples;
 [13:14:17] OBSERVE: read src/main.rs
 [13:14:17] OBSERVE: read src/tools.rs
 [13:14:17] OBSERVE: read src/mcp/tools.rs
+[13:14:17] OBSERVE: read Cargo.toml
