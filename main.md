@@ -96,11 +96,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [x] wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [x] Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.
+- [x] Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:47 UTC] `main`: Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
 - [2026-05-13 22:40 UTC] `main`: Ran KaijuLab+Claude exploit-loop on requested x86/x86_64 PwnableTW samples; all produced SCRIPT_READY_BLOCKED scaffolds, no working exit(42) exploit.
 - [2026-05-13 22:39 UTC] `main`: wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py
 - [2026-05-13 22:38 UTC] `main`: wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubblesort-poc.py; wrote kaijulab-hacknote-poc.py

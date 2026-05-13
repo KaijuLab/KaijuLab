@@ -2511,3 +2511,9 @@ _[Checkpoint: 6a04fdde — Ran KaijuLab+Claude exploit-loop on requested x86/x86
 [22:47:39] THINK: Strict exploit-verify predicates plus known PwnableTW recipes over more prompt retries because prior Claude runs stopped at SCRIPT_READY_BLOCKED scaffolds despite working qemu/sysroots.
 [22:47:45] OBSERVE: searched /tmp/kaijulab-*-poc.py
 [22:47:45] OBSERVE: searched kaijulab-*-poc.py for "SCRIPT_READY_BLOCKED"
+
+
+---
+_[Checkpoint: 6a04ff91 — Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.]_
+---
+
