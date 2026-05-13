@@ -5,6 +5,7 @@
 //! `core::events::EventBus` with explicit source attribution.
 
 pub mod analysis;
+pub mod debug_session;
 pub mod evidence;
 pub mod events;
 pub mod findings;

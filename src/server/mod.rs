@@ -23,7 +23,7 @@ use serde_json::json;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::core::{EventBus, JobRunner, WorkspaceRegistry};
+use crate::core::{debug_session::DebugSessionManager, EventBus, JobRunner, WorkspaceRegistry};
 use agent_console::AgentConsoleManager;
 
 #[derive(Clone)]
@@ -33,6 +33,7 @@ pub struct AppState {
     pub jobs: JobRunner,
     pub auth_token: Option<Arc<String>>,
     pub agent_console: AgentConsoleManager,
+    pub debug_sessions: DebugSessionManager,
 }
 
 pub async fn serve(
@@ -49,6 +50,7 @@ pub async fn serve(
         jobs,
         auth_token: auth_token.map(Arc::new),
         agent_console: AgentConsoleManager::new(),
+        debug_sessions: DebugSessionManager::new(),
     };
 
     let auth_layer = middleware::from_fn_with_state(state.clone(), require_auth);

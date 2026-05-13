@@ -87,6 +87,10 @@ kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP
 kaijulab api evidence-list --limit 10
 kaijulab api execution-profiles
 kaijulab api debug-session-contract
+kaijulab api debug-session-start
+kaijulab api debug-session-action dbg_1234abcd break --address 0x401000
+kaijulab api debug-session-action dbg_1234abcd continue
+kaijulab api debug-session-stop dbg_1234abcd
 kaijulab api benchmark-smoke
 kaijulab api workstation-status --file ./foo.bin
 kaijulab api index-build --file ./foo.bin --output .kaiju/index/foo.json
@@ -121,6 +125,7 @@ Convenience subcommands cover the common automation loop:
 - `evidence-list [--file FILE] [--kind KIND]` lists immutable JSONL evidence records saved by runtime/debug/verification commands.
 - `execution-profiles [--file FILE]` emits native/qemu/hostile-sample execution profiles and their safety policies.
 - `debug-session-contract [--file FILE]` emits the planned persistent debugger API contract: start, breakpoints, continue, step, registers, memory, snapshot, stop.
+- `debug-session-start`, `debug-session-list`, `debug-session-get ID`, `debug-session-action ID ACTION`, and `debug-session-stop ID` manage daemon-owned live `gdb`/`gdb-multiarch` sessions. Foreign ELF targets use qemu's gdbstub; every action appends evidence.
 - `benchmark-smoke [--file FILE]` emits per-target smoke checks for index/runtime/debug/evidence regression tests.
 - `workstation-status [--file FILE]` reports production-readiness across the seven core areas: dynamic/debug, binary database, exploit automation, agent jobs, sysroots/containers, workbench UI, and benchmarks.
 - `index-build [--file FILE] [--output OUT]` emits a normalized binary index with hash, sections, functions, strings, ELF protections, imports, and contracts for UI/agent consumers.

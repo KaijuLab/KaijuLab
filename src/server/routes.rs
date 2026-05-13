@@ -23,6 +23,7 @@ use crate::{
     },
     core::{
         analysis,
+        debug_session::{DebugAction, StartDebugSession},
         evidence,
         events::Source,
         findings::{
@@ -62,6 +63,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/evidence", get(list_evidence))
         .route("/api/execution-profiles", get(execution_profiles))
         .route("/api/debug/session-contract", get(debug_session_contract))
+        .route("/api/debug/sessions", get(list_debug_sessions).post(start_debug_session))
+        .route("/api/debug/sessions/:id", get(get_debug_session).delete(stop_debug_session))
+        .route("/api/debug/sessions/:id/action", post(debug_session_action))
         .route("/api/benchmarks/smoke", get(benchmark_smoke))
         .route("/api/project", get(project_snapshot))
         .route("/api/project/renames", post(post_rename))
@@ -377,6 +381,64 @@ async fn execution_profiles(State(s): State<AppState>) -> Result<Json<Value>, Ap
 async fn debug_session_contract(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
     let ws = active(&s)?;
     Ok(Json(evidence::debug_session_contract(ws.binary_path())))
+}
+
+async fn list_debug_sessions(State(s): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "kind": "debug_sessions",
+        "sessions": s.debug_sessions.list(),
+    }))
+}
+
+async fn start_debug_session(
+    State(s): State<AppState>,
+    Json(req): Json<StartDebugSession>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let binary = ws.binary_path().to_path_buf();
+    let manager = s.debug_sessions.clone();
+    let value = tokio::task::spawn_blocking(move || manager.start(&binary, req))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(ApiError::from)?;
+    Ok(Json(value))
+}
+
+async fn get_debug_session(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let session = s
+        .debug_sessions
+        .get(&id)
+        .ok_or_else(|| ApiError::not_found("debug session not found"))?;
+    Ok(Json(json!({ "session": session })))
+}
+
+async fn debug_session_action(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(action): Json<DebugAction>,
+) -> Result<Json<Value>, ApiError> {
+    let manager = s.debug_sessions.clone();
+    let value = tokio::task::spawn_blocking(move || manager.action(&id, action))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(ApiError::from)?;
+    Ok(Json(value))
+}
+
+async fn stop_debug_session(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let manager = s.debug_sessions.clone();
+    let value = tokio::task::spawn_blocking(move || manager.stop(&id))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found("debug session not found"))?;
+    Ok(Json(value))
 }
 
 async fn benchmark_smoke(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {

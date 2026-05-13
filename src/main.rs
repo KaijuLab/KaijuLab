@@ -576,6 +576,54 @@ enum ApiCommands {
         #[arg(long)]
         file: Option<PathBuf>,
     },
+
+    /// Start a daemon-owned live debugger session for the active target.
+    DebugSessionStart {
+        /// Arguments passed to the debug target.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+
+        /// qemu -L sysroot for foreign dynamic targets.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+    },
+
+    /// List daemon-owned live debugger sessions.
+    DebugSessionList,
+
+    /// Show one live debugger session.
+    DebugSessionGet {
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
+    },
+
+    /// Run one action against a live debugger session.
+    DebugSessionAction {
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
+
+        /// Action: break, continue, stepi, registers, backtrace, disassemble_pc, memory, snapshot, raw.
+        #[arg(value_name = "ACTION")]
+        action: String,
+
+        /// Address for break/memory.
+        #[arg(long)]
+        address: Option<String>,
+
+        /// Length for memory/disassemble_pc.
+        #[arg(long)]
+        length: Option<usize>,
+
+        /// Raw gdb command when ACTION=raw.
+        #[arg(long)]
+        command: Option<String>,
+    },
+
+    /// Stop one live debugger session.
+    DebugSessionStop {
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
+    },
 }
 
 #[tokio::main]
@@ -1049,6 +1097,68 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         ApiCommands::BenchmarkSmoke { file } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             core::evidence::benchmark_smoke_plan(&path)
+        }
+        ApiCommands::DebugSessionStart { args, sysroot } => {
+            api_request(
+                &client,
+                &base_url,
+                token.as_deref(),
+                "POST",
+                "/api/debug/sessions",
+                Some(serde_json::json!({
+                    "args": args,
+                    "sysroot": sysroot.map(|p| p.to_string_lossy().into_owned()),
+                })),
+            )
+            .await?
+        }
+        ApiCommands::DebugSessionList => {
+            api_request(&client, &base_url, token.as_deref(), "GET", "/api/debug/sessions", None)
+                .await?
+        }
+        ApiCommands::DebugSessionGet { id } => {
+            api_request(
+                &client,
+                &base_url,
+                token.as_deref(),
+                "GET",
+                &format!("/api/debug/sessions/{id}"),
+                None,
+            )
+            .await?
+        }
+        ApiCommands::DebugSessionAction {
+            id,
+            action,
+            address,
+            length,
+            command,
+        } => {
+            api_request(
+                &client,
+                &base_url,
+                token.as_deref(),
+                "POST",
+                &format!("/api/debug/sessions/{id}/action"),
+                Some(serde_json::json!({
+                    "action": action,
+                    "address": address,
+                    "length": length,
+                    "command": command,
+                })),
+            )
+            .await?
+        }
+        ApiCommands::DebugSessionStop { id } => {
+            api_request(
+                &client,
+                &base_url,
+                token.as_deref(),
+                "DELETE",
+                &format!("/api/debug/sessions/{id}"),
+                None,
+            )
+            .await?
         }
     };
     print_api_value(&value)?;

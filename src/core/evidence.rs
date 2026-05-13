@@ -130,7 +130,7 @@ pub fn debug_session_contract(binary: &Path) -> Value {
     json!({
         "kind": "debug_session_contract",
         "binary": binary,
-        "state": "planned",
+        "state": "live_session_foundation",
         "evidence_path": evidence_path(binary),
         "commands": [
             "start",
@@ -147,7 +147,8 @@ pub fn debug_session_contract(binary: &Path) -> Value {
         ],
         "current_implementation": {
             "one_shot_probe": "kaijulab api debug-probe",
-            "persistent_sessions": "contract defined; executor not yet durable"
+            "persistent_sessions": "daemon-owned gdb/gdb-multiarch sessions via /api/debug/sessions and debug-session-* CLI commands",
+            "evidence": "start/action/stop append immutable evidence records"
         },
         "evidence_rule": "every continue/step/crash/snapshot should append an immutable evidence record",
     })
