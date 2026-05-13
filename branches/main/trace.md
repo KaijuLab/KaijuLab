@@ -783,3 +783,4 @@ _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Co
 [03:52:39] OBSERVE: listed files under web
 [03:52:39] OBSERVE: listed files under web
 [03:52:39] OBSERVE: searched web/package-lock.json for "web/package.json"
+[03:52:39] OBSERVE: searched package.json for "xterm|terminal|AgentConsole"
