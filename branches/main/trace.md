@@ -779,3 +779,4 @@ _[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable termin
 _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Console with dependency-free VT screen renderer and rebuilt web bundle.]_
 ---
 
+[03:52:39] NOTE: Agent console real terminal fix: replaced pre/custom parser with @xterm/xterm + fit addon; xterm onData writes raw PTY input and server output writes directly to terminal.
