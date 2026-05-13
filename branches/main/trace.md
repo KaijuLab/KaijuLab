@@ -773,3 +773,9 @@ _[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable termin
 [03:46:54] OBSERVE: read web/src/components/AgentConsole.tsx
 [03:46:54] OBSERVE: read web/package.json
 [03:46:54] ACT: edited web/src/components/AgentConsole.tsx
+
+
+---
+_[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Console with dependency-free VT screen renderer and rebuilt web bundle.]_
+---
+
