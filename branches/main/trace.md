@@ -2641,3 +2641,9 @@ _[Checkpoint: 6a050b7e — Implemented generic pwn-agent APIs: binary-facts, exp
 _[Checkpoint: 6a050de3 — wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py]_
 ---
 
+
+
+---
+_[Checkpoint: 6a050ea7 — wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py]_
+---
+

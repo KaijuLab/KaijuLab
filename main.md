@@ -102,11 +102,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Re-solve smoke: realloc failed with best-effort non-ready candidate; tcache-tear/silver-bullet timed out; hacknote wrote failing candidate. Hardened generic exploit-loop prompt around bounded triage/early candidate/verify cadence and raw output caps; decompiler now returns structured no-IR error instead of HighFunction panic.
 - [x] Implemented generic pwn-agent APIs: binary-facts, exploit-scaffold, exploit-interact, heap-probe-plan; wired exploit-loop prompt to use them; cargo fmt/check/build and HackNote smoke commands pass.
 - [x] wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
+- [x] wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 23:52 UTC] `main`: wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 - [2026-05-13 23:48 UTC] `main`: wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 - [2026-05-13 23:38 UTC] `main`: Implemented generic pwn-agent APIs: binary-facts, exploit-scaffold, exploit-interact, heap-probe-plan; wired exploit-loop prompt to use them; cargo fmt/check/build and HackNote smoke commands pass.
 - [2026-05-13 23:30 UTC] `main`: Re-solve smoke: realloc failed with best-effort non-ready candidate; tcache-tear/silver-bullet timed out; hacknote wrote failing candidate. Hardened generic exploit-loop prompt around bounded triage/early candidate/verify cadence and raw output caps; decompiler now returns structured no-IR error instead of HighFunction panic.
