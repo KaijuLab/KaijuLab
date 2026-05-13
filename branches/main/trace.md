@@ -1836,3 +1836,9 @@ _[Checkpoint: 6a04b7b3 — Committed memory facts, then added KIR v0 decompiler 
 [18:02:31] OBSERVE: read src/core/decompile.rs
 [18:02:31] OBSERVE: read src/core/decompile.rs
 [18:02:31] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.]_
+---
+
