@@ -1,5 +1,7 @@
 paper/
 ref
+samples/**/*.evidence.jsonl
+
 CRED/
 qemu_start_*
 
