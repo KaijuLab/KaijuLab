@@ -842,3 +842,4 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 _[Checkpoint: 6a03f769 — Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.]_
 ---
 
+[04:04:23] NOTE: Agent console input fix: xterm Enter CR normalized to LF for PTY input; command/guided prompt submit also sends LF so Claude/Codex accept return consistently.
