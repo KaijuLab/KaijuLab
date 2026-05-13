@@ -542,3 +542,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:40:38] OBSERVE: read src/agent_bridge/codex.rs
 [02:40:38] OBSERVE: searched agent_bridge for "NotImplemented|Unsupported|todo|TODO|spawn|run"
 [02:40:38] OBSERVE: read src/server/routes.rs
+[02:40:38] OBSERVE: searched TODOs|agent_bridge for "follow-ups|Open"
