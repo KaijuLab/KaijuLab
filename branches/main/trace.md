@@ -2508,3 +2508,4 @@ _[Checkpoint: 6a04fdde — Ran KaijuLab+Claude exploit-loop on requested x86/x86
 [22:46:03] ACT: edited src/main.rs
 [22:46:03] ACT: edited src/main.rs
 [22:46:03] ACT: edited src/main.rs
+[22:47:39] THINK: Strict exploit-verify predicates plus known PwnableTW recipes over more prompt retries because prior Claude runs stopped at SCRIPT_READY_BLOCKED scaffolds despite working qemu/sysroots.
