@@ -1623,3 +1623,4 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 [16:07:23] OBSERVE: listed files under paper
 [16:07:23] OBSERVE: listed files under reko
 [16:07:23] OBSERVE: searched decompile|ssa|domin|phi|DataFlow|Liveness|Type" for "fn|fn"
+[16:07:23] OBSERVE: searched decompiler for "struct|enum|pub fn|fn decompile|ssa|domin|phi|DataFlow|Liveness|Type"
