@@ -28,7 +28,7 @@ export function LeftRail() {
   }, [functions, query, renames]);
 
   return (
-    <aside className="flex flex-col w-72 shrink-0 bg-kaiju-panel border-r border-kaiju-border">
+    <aside className="flex w-80 shrink-0 flex-col border-r border-kaiju-border bg-kaiju-panel">
       <PlaybooksPanel />
       <div className="p-2 border-b border-kaiju-border">
         <input
@@ -49,7 +49,7 @@ export function LeftRail() {
               key={fn.vaddr}
               onClick={() => selectVaddr(fn.vaddr)}
               className={
-                'block w-full text-left px-2 py-1 font-mono text-xs border-l-2 ' +
+                'block w-full border-l-2 px-2 py-1.5 text-left font-mono text-[12px] ' +
                 (selected
                   ? 'bg-kaiju-bg border-kaiju-accent text-kaiju-accent'
                   : 'border-transparent hover:bg-kaiju-bg')

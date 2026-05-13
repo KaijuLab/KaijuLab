@@ -44,7 +44,7 @@ export function CenterWorkspace() {
   }, [selectedVaddr]);
 
   return (
-    <section className="grid flex-1 min-w-0 grid-cols-2 grid-rows-2">
+    <section className="grid min-w-0 flex-1 grid-cols-2 grid-rows-2">
       <Pane title="Disassembly" pane={disasm} />
       <Pane title="Decompile" pane={decompile} />
       <Pane title="Context Pack" pane={context} />
@@ -56,17 +56,17 @@ export function CenterWorkspace() {
 function Pane({ title, pane }: { title: string; pane: TextPane }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-col border-r border-b border-kaiju-border">
-      <div className="px-3 py-1 text-xs uppercase tracking-wider text-kaiju-muted border-b border-kaiju-border bg-kaiju-panel">
+      <div className="border-b border-kaiju-border bg-kaiju-panel px-3 py-1 text-xs uppercase tracking-wider text-kaiju-muted">
         {title}
         {pane.loading && <span className="ml-2 text-kaiju-accent">…</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto bg-kaiju-bg">
         {pane.error ? (
-          <pre className="text-kaiju-danger text-xs p-3 whitespace-pre-wrap">{pane.error}</pre>
+          <pre className="whitespace-pre-wrap p-3 text-xs text-kaiju-danger">{pane.error}</pre>
         ) : !pane.loading && !pane.text.trim() ? (
-          <div className="p-3 text-xs text-kaiju-muted">No output for this pane.</div>
+          <div className="p-3 text-[13px] text-kaiju-muted">No output for this pane.</div>
         ) : (
-          <pre className="mono text-xs p-3 whitespace-pre text-kaiju-text leading-relaxed">{pane.text}</pre>
+          <pre className="mono whitespace-pre p-3 text-[13px] leading-relaxed text-kaiju-text">{pane.text}</pre>
         )}
       </div>
     </div>

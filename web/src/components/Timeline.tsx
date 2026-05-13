@@ -3,7 +3,7 @@ import { useStore, sourceColor, type Source } from '../state';
 
 const SOURCES: Source[] = ['user', 'claude', 'codex', 'tool', 'plugin', 'system'];
 
-export function Timeline() {
+export function Timeline({ className = '' }: { className?: string }) {
   const { timeline } = useStore();
   const [filter, setFilter] = useState<Set<Source>>(new Set(SOURCES));
   const [collapsed, setCollapsed] = useState(false);
@@ -25,7 +25,7 @@ export function Timeline() {
   };
 
   return (
-    <footer className="shrink-0 border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <footer className={`${className} flex shrink-0 flex-col bg-kaiju-panel text-xs`}>
       <div className="flex items-center gap-2 px-3 py-1 border-b border-kaiju-border">
         <button
           onClick={() => setCollapsed(!collapsed)}
@@ -54,7 +54,7 @@ export function Timeline() {
         <span className="ml-auto text-kaiju-muted">{filtered.length} / {timeline.length} events</span>
       </div>
       {!collapsed && (
-        <div className="h-32 overflow-auto font-mono">
+        <div className="min-h-0 flex-1 overflow-auto font-mono">
           {filtered.length > 0 ? (
             filtered.map((e, idx) => <EventRow key={idx} event={e} />)
           ) : (

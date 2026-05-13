@@ -21,7 +21,7 @@ const EXPERT_PLAYBOOKS = new Set([
   'auth_bypass_review',
 ]);
 
-export function ExpertWorkbench() {
+export function ExpertWorkbench({ className = 'h-64' }: { className?: string }) {
   const { selectedVaddr, functions, project, timeline, selectVaddr, setProject, notify } = useStore();
   const [tab, setTab] = useState<Tab>('mission');
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -118,7 +118,7 @@ export function ExpertWorkbench() {
   };
 
   return (
-    <section className="h-64 shrink-0 overflow-hidden border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <section className={`${className} shrink-0 overflow-hidden bg-kaiju-panel text-xs`}>
       <div className="flex items-center gap-2 border-b border-kaiju-border px-3 py-1">
         <span className="uppercase tracking-wider text-kaiju-muted">Expert Workbench</span>
         <div className="ml-3 flex gap-1">

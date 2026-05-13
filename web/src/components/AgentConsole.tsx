@@ -20,7 +20,7 @@ const GUIDED_PROMPTS = [
   'Review the current findings. Separate confirmed evidence from hypotheses and list what I should verify manually.',
 ];
 
-export function AgentConsole() {
+export function AgentConsole({ className = 'h-80' }: { className?: string }) {
   const { workspace, selectedVaddr, notify } = useStore();
   const [agent, setAgent] = useState<Agent>('claude');
   const [status, setStatus] = useState<ConsoleStatus>('idle');
@@ -180,7 +180,7 @@ export function AgentConsole() {
   const existing = sessions.find((s) => s.agent === agent && s.running);
 
   return (
-    <section className="h-80 shrink-0 overflow-hidden border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <section className={`${className} shrink-0 overflow-hidden bg-kaiju-panel text-xs`}>
       <div className="flex items-center gap-2 border-b border-kaiju-border px-3 py-1">
         <span className="uppercase tracking-wider text-kaiju-muted">Agent Console</span>
         <select

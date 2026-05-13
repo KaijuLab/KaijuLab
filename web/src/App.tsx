@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, parseFunctionsText } from './api';
 import { useStore } from './state';
 import { useEventStream } from './hooks/useEventStream';
@@ -14,9 +14,19 @@ import { CommandPalette } from './components/CommandPalette';
 import { OpenBinary } from './components/OpenBinary';
 import { Notices } from './components/Notices';
 
+type BottomTab = 'agent' | 'findings' | 'timeline' | 'workbench';
+
+const BOTTOM_TABS: Array<{ id: BottomTab; label: string }> = [
+  { id: 'agent', label: 'Agent Console' },
+  { id: 'findings', label: 'Findings' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'workbench', label: 'Review Workbench' },
+];
+
 export default function App() {
   useEventStream();
   const { workspace, setWorkspace, setFunctions, setProject, openPalette, notify } = useStore();
+  const [bottomTab, setBottomTab] = useState<BottomTab>('agent');
 
   const loadWorkspaceData = useCallback(() => {
     api.activeWorkspace()
@@ -61,19 +71,40 @@ export default function App() {
   }, [openPalette]);
 
   return (
-    <div className="flex h-screen flex-col bg-kaiju-bg text-kaiju-text">
+    <div className="flex h-screen flex-col bg-kaiju-bg text-[13px] text-kaiju-text">
       <TopBar onCloseWorkspace={() => loadWorkspaceData()} />
       {workspace ? (
         <>
-          <div className="flex flex-1 min-h-0 border-t border-kaiju-border">
+          <div className="flex min-h-0 flex-1 border-t border-kaiju-border">
             <LeftRail />
             <CenterWorkspace />
             <Inspector />
           </div>
-          <ExpertWorkbench />
-          <AgentConsole />
-          <FindingsBoard />
-          <Timeline />
+          <section className="flex h-[38vh] min-h-[280px] shrink-0 flex-col border-t border-kaiju-border bg-kaiju-panel">
+            <div className="flex items-center gap-1 border-b border-kaiju-border px-3 py-1">
+              <span className="mr-2 text-xs uppercase tracking-wider text-kaiju-muted">Bottom Dock</span>
+              {BOTTOM_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setBottomTab(tab.id)}
+                  className={
+                    'border px-2 py-0.5 text-xs ' +
+                    (bottomTab === tab.id
+                      ? 'border-kaiju-accent text-kaiju-accent'
+                      : 'border-kaiju-border text-kaiju-muted hover:text-kaiju-text')
+                  }
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {bottomTab === 'agent' && <AgentConsole className="h-full" />}
+              {bottomTab === 'findings' && <FindingsBoard className="h-full" />}
+              {bottomTab === 'timeline' && <Timeline className="h-full" />}
+              {bottomTab === 'workbench' && <ExpertWorkbench className="h-full" />}
+            </div>
+          </section>
           <CommandPalette />
         </>
       ) : (
