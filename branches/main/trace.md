@@ -1297,3 +1297,4 @@ _[Checkpoint: 6a047e5e — Extended debug-probe after gdb-multiarch install: for
 _[Checkpoint: 6a04804f — Committed prior CLI primitive work, then added production workstation foundation commands and core workstation manifests for seven roadmap areas.]_
 ---
 
+[14:33:19] NOTE: Implemented evidence foundation: JSONL evidence sidecar, CLI --save-evidence for runtime/debug/verify, evidence-list/profiles/session-contract/benchmark-smoke commands, REST endpoints.
