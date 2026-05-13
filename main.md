@@ -71,11 +71,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.
 - [x] Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
 - [x] Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.
+- [x] Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:35 UTC] `main`: Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.
 - [2026-05-13 18:28 UTC] `main`: Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.
 - [2026-05-13 18:21 UTC] `main`: Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.
 - [2026-05-13 18:13 UTC] `main`: Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.

@@ -2040,3 +2040,9 @@ _[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/u
 [18:34:54] OBSERVE: read src/core/decompile.rs
 [18:34:54] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:34:54] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c463 — Added KIR type facts over register SSA and memory SSA, benchmark counters/gate, signed memory-name formatting, and tests. cargo test passed; PwnableTW benchmark aggregate 80.]_
+---
+
