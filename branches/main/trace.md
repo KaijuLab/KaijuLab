@@ -1873,3 +1873,4 @@ _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonic
 _[Checkpoint: 6a04be4e — Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.]_
 ---
 
+[18:13:02] THINK: KIR phi definitions over memory SSA now because dominance-frontier candidates needed assigned versions before downstream expression DAG rendering can trust SSA.
