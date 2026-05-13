@@ -1153,3 +1153,4 @@ _[Checkpoint: 6a047595 — Ran Claude+KaijuLab over remaining PwnableTW samples;
 [13:14:16] OBSERVE: searched src for "ApiCommands|run_agent_console|agent-console|RunPlaybook|AgentRun"
 [13:14:17] OBSERVE: read src/main.rs
 [13:14:17] OBSERVE: read src/tools.rs
+[13:14:17] OBSERVE: read src/mcp/tools.rs
