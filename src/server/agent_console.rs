@@ -12,9 +12,10 @@ use std::{
     os::fd::{FromRawFd, RawFd},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -24,7 +25,7 @@ use axum::{
         Path, State,
     },
     response::IntoResponse,
-    routing::get,
+    routing::{delete, get},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -34,11 +35,18 @@ use tokio::sync::broadcast;
 use super::AppState;
 
 const TRANSCRIPT_LIMIT: usize = 96 * 1024;
+const DEFAULT_IDLE_SECS: u64 = 60 * 60;
+const DEFAULT_MAX_RUNTIME_SECS: u64 = 6 * 60 * 60;
+const DEFAULT_TRANSCRIPT_BYTES: u64 = 5 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/agent-console", get(list_sessions))
         .route("/api/agent-console/:agent", get(console_handler))
+        .route(
+            "/api/agent-console/:agent/transcript",
+            delete(delete_transcript),
+        )
         .with_state(state)
 }
 
@@ -69,10 +77,42 @@ impl AgentConsoleManager {
         let sessions = self.sessions.lock().unwrap();
         sessions.values().map(|session| session.info()).collect()
     }
+
+    fn delete_transcript(&self, agent: &str) -> Result<()> {
+        let sessions = self.sessions.lock().unwrap();
+        let Some(session) = sessions.get(agent) else {
+            return Err(anyhow!("no agent console session for {agent}"));
+        };
+        session.clear_transcript()
+    }
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Json<Vec<AgentConsoleSessionInfo>> {
     Json(state.agent_console.list())
+}
+
+async fn delete_transcript(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+) -> Result<Json<AgentConsoleSessionInfo>, (axum::http::StatusCode, String)> {
+    state
+        .agent_console
+        .delete_transcript(&agent)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+    let info = state
+        .agent_console
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&agent)
+        .map(|session| session.info())
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("no agent console session for {agent}"),
+            )
+        })?;
+    Ok(Json(info))
 }
 
 async fn console_handler(
@@ -160,7 +200,9 @@ async fn send_json(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     msg: ServerMessage,
 ) -> Result<(), axum::Error> {
-    sender.send(Message::Text(serde_json::to_string(&msg).unwrap())).await
+    sender
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
+        .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,6 +247,11 @@ struct AgentSession {
     running: Arc<AtomicBool>,
     transcript: Arc<Mutex<String>>,
     transcript_path: PathBuf,
+    transcript_bytes: Arc<AtomicU64>,
+    transcript_limit: u64,
+    last_activity: Arc<AtomicI64>,
+    max_runtime_secs: u64,
+    idle_secs: u64,
     tx: broadcast::Sender<ServerMessage>,
 }
 
@@ -256,10 +303,22 @@ impl AgentSession {
             running: Arc::new(AtomicBool::new(true)),
             transcript: Arc::new(Mutex::new(String::new())),
             transcript_path,
+            transcript_bytes: Arc::new(AtomicU64::new(0)),
+            transcript_limit: env_u64(
+                "KAIJULAB_AGENT_CONSOLE_TRANSCRIPT_BYTES",
+                DEFAULT_TRANSCRIPT_BYTES,
+            ),
+            last_activity: Arc::new(AtomicI64::new(started_at)),
+            max_runtime_secs: env_u64(
+                "KAIJULAB_AGENT_CONSOLE_MAX_RUNTIME_SECS",
+                DEFAULT_MAX_RUNTIME_SECS,
+            ),
+            idle_secs: env_u64("KAIJULAB_AGENT_CONSOLE_IDLE_SECS", DEFAULT_IDLE_SECS),
             tx,
         };
 
         session.spawn_reader(&mut reader, transcript_file);
+        session.spawn_guard();
         Ok(session)
     }
 
@@ -268,27 +327,50 @@ impl AgentSession {
         let tx = self.tx.clone();
         let running = self.running.clone();
         let transcript = self.transcript.clone();
+        let transcript_bytes = self.transcript_bytes.clone();
+        let transcript_limit = self.transcript_limit;
         let agent = self.agent.clone();
+        let child_pid = self.child_pid;
         std::thread::spawn(move || {
             let mut buf = [0_u8; 4096];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         running.store(false, Ordering::SeqCst);
+                        reap_child(child_pid);
                         let msg = format!("\r\n[{agent} exited]\r\n");
-                        append_transcript(&transcript, &mut transcript_file, &msg);
+                        append_transcript(
+                            &transcript,
+                            &transcript_bytes,
+                            transcript_limit,
+                            &mut transcript_file,
+                            &msg,
+                        );
                         let _ = tx.send(ServerMessage::Output(msg));
                         break;
                     }
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        append_transcript(&transcript, &mut transcript_file, &text);
+                        append_transcript(
+                            &transcript,
+                            &transcript_bytes,
+                            transcript_limit,
+                            &mut transcript_file,
+                            &text,
+                        );
                         let _ = tx.send(ServerMessage::Output(text));
                     }
                     Err(e) => {
                         running.store(false, Ordering::SeqCst);
+                        reap_child(child_pid);
                         let msg = format!("\r\n[{agent} read error: {e}]\r\n");
-                        append_transcript(&transcript, &mut transcript_file, &msg);
+                        append_transcript(
+                            &transcript,
+                            &transcript_bytes,
+                            transcript_limit,
+                            &mut transcript_file,
+                            &msg,
+                        );
                         let _ = tx.send(ServerMessage::Error(msg));
                         break;
                     }
@@ -297,7 +379,49 @@ impl AgentSession {
         });
     }
 
+    fn spawn_guard(&self) {
+        let running = self.running.clone();
+        let last_activity = self.last_activity.clone();
+        let started_at = self.started_at;
+        let idle_secs = self.idle_secs;
+        let max_runtime_secs = self.max_runtime_secs;
+        let child_pid = self.child_pid;
+        let tx = self.tx.clone();
+        let info = self.info();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(30));
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+            let now = crate::core::events::now_ts();
+            let idle_expired = idle_secs > 0
+                && now.saturating_sub(last_activity.load(Ordering::SeqCst)) as u64 > idle_secs;
+            let runtime_expired =
+                max_runtime_secs > 0 && now.saturating_sub(started_at) as u64 > max_runtime_secs;
+            if idle_expired || runtime_expired {
+                running.store(false, Ordering::SeqCst);
+                unsafe {
+                    libc::kill(child_pid, libc::SIGHUP);
+                }
+                let reason = if idle_expired {
+                    "idle timeout"
+                } else {
+                    "runtime limit"
+                };
+                let _ = tx.send(ServerMessage::Error(format!(
+                    "agent console stopped by {reason}"
+                )));
+                let mut stopped = info.clone();
+                stopped.running = false;
+                let _ = tx.send(ServerMessage::Status(stopped));
+                break;
+            }
+        });
+    }
+
     fn write_input(&self, bytes: &[u8]) -> Result<()> {
+        self.last_activity
+            .store(crate::core::events::now_ts(), Ordering::SeqCst);
         let mut master = self.master.lock().unwrap();
         master.write_all(bytes).context("write to agent PTY")?;
         master.flush().ok();
@@ -327,6 +451,7 @@ impl AgentSession {
         unsafe {
             libc::kill(self.child_pid, libc::SIGHUP);
         }
+        reap_child(self.child_pid);
         let _ = self.tx.send(ServerMessage::Status(self.info()));
     }
 
@@ -351,6 +476,17 @@ impl AgentSession {
     fn transcript_tail(&self) -> String {
         self.transcript.lock().unwrap().clone()
     }
+
+    fn clear_transcript(&self) -> Result<()> {
+        *self.transcript.lock().unwrap() = String::new();
+        self.transcript_bytes.store(0, Ordering::SeqCst);
+        File::create(&self.transcript_path)
+            .with_context(|| format!("truncate transcript {}", self.transcript_path.display()))?;
+        let _ = self.tx.send(ServerMessage::Output(
+            "\r\n[transcript cleared from KaijuLab]\r\n".into(),
+        ));
+        Ok(())
+    }
 }
 
 impl Drop for AgentSession {
@@ -359,9 +495,26 @@ impl Drop for AgentSession {
     }
 }
 
-fn append_transcript(transcript: &Arc<Mutex<String>>, file: &mut File, text: &str) {
-    let _ = file.write_all(text.as_bytes());
-    let _ = file.flush();
+fn append_transcript(
+    transcript: &Arc<Mutex<String>>,
+    transcript_bytes: &Arc<AtomicU64>,
+    transcript_limit: u64,
+    file: &mut File,
+    text: &str,
+) {
+    let current = transcript_bytes.load(Ordering::SeqCst);
+    if transcript_limit == 0 || current < transcript_limit {
+        let remaining = transcript_limit.saturating_sub(current);
+        let bytes = text.as_bytes();
+        let to_write = if transcript_limit == 0 {
+            bytes
+        } else {
+            &bytes[..bytes.len().min(remaining as usize)]
+        };
+        let _ = file.write_all(to_write);
+        let _ = file.flush();
+        transcript_bytes.fetch_add(to_write.len() as u64, Ordering::SeqCst);
+    }
     let mut t = transcript.lock().unwrap();
     t.push_str(text);
     if t.len() > TRANSCRIPT_LIMIT {
@@ -418,16 +571,23 @@ fn child_exec(command: &AgentCommand) -> ! {
 
     let term = CString::new("TERM").unwrap();
     let term_value = CString::new("xterm-256color").unwrap();
+    let mcp_hint = CString::new("KAIJULAB_AGENT_CONSOLE").unwrap();
+    let mcp_hint_value = CString::new("1").unwrap();
     unsafe {
         libc::setenv(term.as_ptr(), term_value.as_ptr(), 1);
+        libc::setenv(mcp_hint.as_ptr(), mcp_hint_value.as_ptr(), 1);
         libc::execvp(program.as_ptr(), argv.as_ptr());
         libc::_exit(127);
     }
 }
 
 fn transcript_path(agent: &str, started_at: i64) -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let dir = PathBuf::from(home).join(".kaiju").join("agent-console");
+    let dir = if let Ok(root) = std::env::var("KAIJULAB_AGENT_CONSOLE_TRANSCRIPT_DIR") {
+        PathBuf::from(root)
+    } else {
+        let home = std::env::var("HOME").context("HOME not set")?;
+        PathBuf::from(home).join(".kaiju").join("agent-console")
+    };
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join(format!("{agent}-{started_at}.log")))
 }
@@ -435,6 +595,20 @@ fn transcript_path(agent: &str, started_at: i64) -> Result<PathBuf> {
 fn master_fd(master: &File) -> libc::c_int {
     use std::os::fd::AsRawFd;
     master.as_raw_fd()
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn reap_child(pid: libc::pid_t) {
+    unsafe {
+        let mut status = 0;
+        let _ = libc::waitpid(pid, &mut status, libc::WNOHANG);
+    }
 }
 
 #[cfg(unix)]
@@ -452,11 +626,44 @@ extern "C" {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn agent_program_uses_default_binary() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("KAIJULAB_AGENT_CONSOLE_CLAUDE_CMD");
         let cmd = agent_program("claude").unwrap();
         assert_eq!(cmd.program, "claude");
         assert!(cmd.args.is_empty());
+    }
+
+    #[test]
+    fn agent_program_uses_command_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("KAIJULAB_AGENT_CONSOLE_CLAUDE_CMD", "printf ready");
+        let cmd = agent_program("claude").unwrap();
+        std::env::remove_var("KAIJULAB_AGENT_CONSOLE_CLAUDE_CMD");
+        assert_eq!(cmd.program, "/bin/sh");
+        assert_eq!(cmd.args, vec!["-lc", "printf ready"]);
+    }
+
+    #[test]
+    fn pty_smoke_test_with_shell_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let transcript_dir = tempfile::tempdir().unwrap();
+        std::env::set_var(
+            "KAIJULAB_AGENT_CONSOLE_TRANSCRIPT_DIR",
+            transcript_dir.path(),
+        );
+        let cmd = AgentCommand {
+            program: "/bin/sh".into(),
+            args: vec!["-lc".into(), "printf kaijulab-pty-ok".into()],
+        };
+        let session = AgentSession::spawn("test", &cmd, 80, 24).unwrap();
+        std::env::remove_var("KAIJULAB_AGENT_CONSOLE_TRANSCRIPT_DIR");
+        std::thread::sleep(Duration::from_millis(200));
+        let transcript = session.transcript_tail();
+        session.terminate();
+        assert!(transcript.contains("kaijulab-pty-ok"), "{transcript:?}");
     }
 }

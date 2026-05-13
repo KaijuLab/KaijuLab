@@ -99,6 +99,18 @@ export function AgentConsole() {
     refreshSessions();
   };
 
+  const clearTranscript = async () => {
+    try {
+      const info = await api.clearAgentConsoleTranscript(agent);
+      setCurrentSession(info);
+      setOutput('');
+      refreshSessions();
+      notify('info', `${agent} console transcript cleared`);
+    } catch (e) {
+      notify('error', `clear transcript failed: ${String(e)}`);
+    }
+  };
+
   const detach = () => {
     wsRef.current?.close();
     wsRef.current = null;
@@ -181,6 +193,13 @@ export function AgentConsole() {
           >
             stop
           </button>
+          <button
+            onClick={clearTranscript}
+            disabled={!currentSession}
+            className="border border-kaiju-border px-2 py-0.5 hover:border-kaiju-danger disabled:opacity-50"
+          >
+            clear log
+          </button>
         </div>
       </div>
 
@@ -214,6 +233,15 @@ export function AgentConsole() {
           </div>
         </div>
         <aside className="border-l border-kaiju-border p-2">
+          <div className="mb-2 border border-kaiju-border bg-kaiju-bg p-2 text-[11px] leading-snug">
+            <div className="text-kaiju-warn">Permission state</div>
+            <div className="text-kaiju-muted">
+              patch: {workspace?.allow_patch ? 'enabled' : 'blocked'} · exec: {workspace?.allow_exec ? 'enabled' : 'blocked'}
+            </div>
+            <div className="mt-1 text-kaiju-muted">
+              Terminal text is logged locally. MCP events and project writes are the structured truth.
+            </div>
+          </div>
           <div className="mb-2 uppercase tracking-wider text-kaiju-muted">Guided prompts</div>
           <div className="space-y-1">
             {GUIDED_PROMPTS.map((prompt, idx) => (
@@ -230,6 +258,13 @@ export function AgentConsole() {
           <div className="mt-3 text-kaiju-muted">
             Use {'{selected}'} in a prompt to insert the selected address.
           </div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={status !== 'live'}
+            placeholder="paste multi-line prompt here, then send"
+            className="mt-2 h-20 w-full resize-none bg-kaiju-bg border border-kaiju-border p-2 text-[11px] outline-none focus:border-kaiju-accent disabled:opacity-50"
+          />
         </aside>
       </div>
     </section>
