@@ -1750,3 +1750,4 @@ _[Checkpoint: 6a04ab02 — Added first-pass decompiler register SSA/data-flow fa
 [16:53:08] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [16:53:08] OBSERVE: searched absolute_memory_address" for "stack_offset|fn"
 [16:53:08] OBSERVE: searched decompile.rs for "fn stack_offset|fn absolute_memory_address"
+[16:53:08] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
