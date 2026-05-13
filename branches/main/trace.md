@@ -996,3 +996,4 @@ _[Checkpoint: 6a040012 — edited web/src/api.ts; edited web/src/components/Agen
 [12:04:27] OBSERVE: read src/main.rs
 [12:04:27] OBSERVE: read src/server/routes.rs
 [12:04:27] OBSERVE: read src/core/jobs.rs
+[12:04:27] OBSERVE: read README.md
