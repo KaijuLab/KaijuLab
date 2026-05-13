@@ -1627,3 +1627,4 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 [16:07:23] OBSERVE: read ../reko/README.md
 [16:07:23] OBSERVE: read ../reko/README.md
 [16:07:23] OBSERVE: listed files under ../reko/src
+[16:07:23] OBSERVE: listed files under reko
