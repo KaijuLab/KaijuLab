@@ -1891,3 +1891,4 @@ _[Checkpoint: 6a04be4e — Added KIR SSA v1 dominance data: successors, dominato
 _[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.]_
 ---
 
+[18:20:56] THINK: KIR expression DAG over direct pseudo-C renderer because SSA assignments give structured renderer/type input without touching legacy renderer.
