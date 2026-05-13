@@ -2195,3 +2195,4 @@ _[Checkpoint: 6a04ca28 — Added agent-decompile-loop CLI integration for Agent 
 [19:04:20] OBSERVE: read web/dist/index.html
 [19:04:20] OBSERVE: listed files under web/dist
 [19:04:20] OBSERVE: read web/dist/index.html
+[19:04:20] OBSERVE: read src/server/static_assets.rs
