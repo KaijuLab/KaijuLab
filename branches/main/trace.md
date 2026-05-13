@@ -1508,3 +1508,9 @@ _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, C
 [15:25:29] OBSERVE: searched README.md
 [15:25:29] OBSERVE: searched README.md for "knowledge-graph|triage-queue|recovery"
 [15:25:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+
+
+---
+_[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.]_
+---
+
