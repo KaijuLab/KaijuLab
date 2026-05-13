@@ -2546,3 +2546,4 @@ _[Checkpoint: 6a0500d7 — Removed overfit PwnableTW filename recipes. exploit-r
 _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py]_
 ---
 
+[23:06:47] NOTE: tcache-tear re-solve run runaway: Claude used raw target command producing >500MB menu output; exploit-loop prompt now requires timeouts/output caps and prefers runtime-run/debug-probe.
