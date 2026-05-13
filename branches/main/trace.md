@@ -2554,3 +2554,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 [23:24:37] THINK: exploit-loop phase contract over open-ended analysis because re-solve runs showed Claude identifies primitives but spends timeout on free-form disassembly/verification churn before producing or converging artifact.
 [23:28:58] NOTE: decompile-enhanced postpatch hacknote smoke exposed HighFunction panic when requested address has no IR slot; decompiler now returns structured no-IR error before HighFunction::from_mem.
 [23:30:40] OBSERVE: read /tmp/kaijulab-resolve-hacknote.py
+[23:30:40] OBSERVE: read /tmp/kaijulab-resolve-hacknote.py
