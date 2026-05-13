@@ -2414,3 +2414,4 @@ _[Checkpoint: 6a04f8ee — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; w
 
 [22:20:51] OBSERVE: listed files under /opt/sysroots/x86_64/usr/lib64/ld-linux-x86-64.so.2
 [22:20:51] OBSERVE: listed files under ld-linux-x86-64.so.2
+[22:20:51] OBSERVE: listed files under /tmp/kaijulab-realloc-poc.py
