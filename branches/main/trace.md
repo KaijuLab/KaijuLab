@@ -1183,3 +1183,9 @@ _[Checkpoint: 6a047595 — Ran Claude+KaijuLab over remaining PwnableTW samples;
 [13:15:20] OBSERVE: read src/main.rs
 [13:15:20] OBSERVE: read src/main.rs
 [13:15:20] OBSERVE: read README.md
+
+
+---
+_[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploit-context, exploit-verify, exploit-loop with runtime, gadget, protection, environment hints, and Agent Console prompt.]_
+---
+

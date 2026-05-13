@@ -51,11 +51,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Committed current bot-friendly API and agent console CLI status.
 - [x] Validated PwnableTW Start exploit under qemu-i386; updated generated /tmp PoC to fallback to qemu for local mode.
 - [x] Ran Claude+KaijuLab over remaining PwnableTW samples; produced and validated stdlib PoCs for calc and 3x17; generated ORW PoC but local validation blocked by missing i386 dynamic loader.
+- [x] Implemented exploit analysis-loop CLI support: exploit-context, exploit-verify, exploit-loop with runtime, gadget, protection, environment hints, and Agent Console prompt.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 13:15 UTC] `main`: Implemented exploit analysis-loop CLI support: exploit-context, exploit-verify, exploit-loop with runtime, gadget, protection, environment hints, and Agent Console prompt.
 - [2026-05-13 12:59 UTC] `main`: Ran Claude+KaijuLab over remaining PwnableTW samples; produced and validated stdlib PoCs for calc and 3x17; generated ORW PoC but local validation blocked by missing i386 dynamic loader.
 - [2026-05-13 12:39 UTC] `main`: Validated PwnableTW Start exploit under qemu-i386; updated generated /tmp PoC to fallback to qemu for local mode.
 - [2026-05-13 12:37 UTC] `main`: Committed current bot-friendly API and agent console CLI status.
