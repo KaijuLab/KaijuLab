@@ -2473,3 +2473,4 @@ _[Checkpoint: 6a04fd98 — wrote kaijulab-seethefile-poc.py; wrote kaijulab-dubb
 [22:40:27] OBSERVE: listed files under /tmp/kaijulab-{realloc,silver-bullet,tcache-tear,seethefile,dubblesort,hacknote,applestore}-poc.py
 [22:40:27] OBSERVE: searched /tmp/kaijulab-*-poc.py
 [22:40:27] OBSERVE: listed files under kaijulab-{realloc,silver-bullet,tcache-tear,seethefile,dubblesort,hacknote,applestore}-poc.py
+[22:40:27] OBSERVE: searched kaijulab-*-poc.py for "SCRIPT_READY|SCRIPT_READY_BLOCKED|BLOCKER|Status:"
