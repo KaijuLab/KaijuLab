@@ -1503,3 +1503,4 @@ _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, C
 [15:22:49] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/knowledge.rs
 [15:25:29] THINK: Added structured recovery beside legacy tools.rs so professional function/CFG/xref facts are typed and graph-backed; analysis endpoints prefer recovery JSON but keep legacy fallback.
 [15:25:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery.rs
+[15:25:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery.rs
