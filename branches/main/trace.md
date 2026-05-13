@@ -1617,3 +1617,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/API path: core enhanced decompile context with CFG, stack, call/syscall notes; ir-query uses recovery function list and enhanced decompile; verified Start sample and cargo tests.]_
 ---
 
+[15:56:28] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
