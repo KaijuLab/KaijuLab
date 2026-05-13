@@ -613,3 +613,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:58:26] NOTE: Maturity pass: web connection state + notices, richer API errors, project refresh after mutations, 4-pane workspace context/xrefs, palette history/busy state, visible playbook/finding/agent errors.
 [02:58:29] OBSERVE: searched \{\}\)|any\)|window.prompt|No for "=>"
 [02:58:29] OBSERVE: listed files under web/src/components
+[02:58:29] OBSERVE: listed files under components
