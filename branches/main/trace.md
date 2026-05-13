@@ -2133,3 +2133,4 @@ _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/retu
 [18:57:43] OBSERVE: read src/agent_bridge/scope.rs
 [18:57:43] OBSERVE: read src/agent_bridge/claude.rs
 [18:57:43] OBSERVE: read src/agent_bridge/scope.rs
+[18:57:43] OBSERVE: read src/agent_bridge/claude.rs
