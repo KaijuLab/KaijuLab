@@ -1729,3 +1729,4 @@ _[Checkpoint: 6a04ab02 — Added first-pass decompiler register SSA/data-flow fa
 [16:53:08] OBSERVE: searched DataFlowFacts|fn for "struct"
 [16:53:08] OBSERVE: searched decompile.rs for "pub struct DataFlowFacts|fn analyze_dataflow|dataflow_facts|first-pass register SSA"
 [16:53:08] OBSERVE: read src/core/decompile.rs
+[16:53:08] OBSERVE: read src/core/decompile.rs
