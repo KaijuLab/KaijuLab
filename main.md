@@ -89,11 +89,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
+- [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; wrote kaijulab-realloc-poc.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:19 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; wrote kaijulab-realloc-poc.py
 - [2026-05-13 22:16 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 - [2026-05-13 22:13 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 - [2026-05-13 22:09 UTC] `main`: Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.
