@@ -1548,3 +1548,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 ---
 
 [15:54:18] OBSERVE: searched src/decompiler for "decompile|decompile\(|HighFunction|stack|pseudo|pseudocode|ir""
+[15:54:19] OBSERVE: searched decompiler for "fn decompile|decompile\(|HighFunction|stack|pseudo|pseudocode|ir"
