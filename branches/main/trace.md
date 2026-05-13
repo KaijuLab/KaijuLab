@@ -1539,3 +1539,4 @@ _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and com
 [15:41:13] OBSERVE: read web/src/components/CfgWorkbench.tsx
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/components/CfgWorkbench.tsx
 [15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/recovery_store.rs
+[15:41:13] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
