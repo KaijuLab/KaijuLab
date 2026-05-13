@@ -2199,3 +2199,4 @@ _[Checkpoint: 6a04ca28 — Added agent-decompile-loop CLI integration for Agent 
 [19:04:20] OBSERVE: read web/src/App.tsx
 [19:04:20] OBSERVE: listed files under web
 [19:04:20] OBSERVE: read .gitignore
+[19:04:20] OBSERVE: listed files under web/dist
