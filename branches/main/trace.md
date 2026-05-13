@@ -2224,3 +2224,9 @@ _[Checkpoint: 6a04cb40 — Fixed kaijulab serve white page by rebuilding web/dis
 _[Checkpoint: 6a04cc9a — edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/st…]_
 ---
 
+
+
+---
+_[Checkpoint: 6a04ccc8 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_assets.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/st…]_
+---
+
