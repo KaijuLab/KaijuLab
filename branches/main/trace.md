@@ -753,3 +753,9 @@ _[Checkpoint: 6a03f1bb — Hardened embedded Claude/Codex agent console with ses
 [03:43:14] OBSERVE: read web/src/components/AgentConsole.tsx
 [03:43:14] ACT: edited web/src/components/AgentConsole.tsx
 [03:43:14] ACT: edited web/src/components/AgentConsole.tsx
+
+
+---
+_[Checkpoint: 6a03f364 — Fixed embedded agent console typing: focusable terminal pane sends raw PTY keys, arrows, Ctrl combos, paste, keeps command box fallback, and web build passed.]_
+---
+
