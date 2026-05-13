@@ -1514,3 +1514,4 @@ _[Checkpoint: 6a0495b5 — Added derived knowledge graph, ranked triage queue, C
 _[Checkpoint: 6a049801 — Added graph-backed function/CFG/xref recovery and committed as 6dcd0a65.]_
 ---
 
+[15:37:25] OBSERVE: read src/project.rs
