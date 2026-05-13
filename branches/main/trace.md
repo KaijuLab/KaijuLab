@@ -1844,3 +1844,4 @@ _[Checkpoint: 6a04bcb7 — Added KIR SSA facts with alias-aware register canonic
 
 [18:08:57] THINK: Dominance-frontier KIR phi candidates over renderer work because correct SSA placement is prerequisite for expression simplification and memory SSA.
 [18:08:57] OBSERVE: searched src/decompiler/ir/kir.rs for "src/core/decompile.rs"
+[18:08:57] OBSERVE: searched decompile.rs for "dominance|KirSsa|analyze_kir_ssa|phi|decompiler_score|next_engine_work"
