@@ -1412,3 +1412,4 @@ _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-own
 [15:01:14] OBSERVE: searched state.ts for "selectVaddr|interface Store|create"
 [15:01:14] OBSERVE: searched server for "debug/sessions|evidence|benchmark"
 [15:01:14] OBSERVE: read web/src/state.ts
+[15:01:14] OBSERVE: read src/main.rs
