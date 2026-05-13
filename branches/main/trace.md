@@ -1334,3 +1334,4 @@ _[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidenc
 ---
 
 [14:37:47] THINK: Implement debug sessions as daemon-owned live gdb/gdb-multiarch subprocesses with qemu -g for foreign ELF; actions append evidence so UI/agents can cite stop states.
+[14:52:52] OBSERVE: read src/server/mod.rs
