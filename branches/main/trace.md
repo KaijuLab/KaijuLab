@@ -2579,3 +2579,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:22] OBSERVE: read src/main.rs
 [23:38:22] OBSERVE: searched read_input_spec|write_evidence|evidence" for "ApiCommands|runtime_run_json|exploit_kit_json|ir_query|ExploitKit|RuntimeRun|fn"
 [23:38:22] OBSERVE: searched main.rs for "enum ApiCommands|runtime_run_json|exploit_kit_json|ir_query|ExploitKit|RuntimeRun|fn read_input_spec|write_evidence|evidence"
+[23:38:22] OBSERVE: searched .*runtime-run|debug-probe|exploit-loop" for ".*Command|Subcommand|api"
