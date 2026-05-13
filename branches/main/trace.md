@@ -2344,3 +2344,4 @@ _[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroo
 [21:58:14] THINK: Auto-select existing per-arch sysroot over requiring agents pass --sysroot because sysroot-doctor already discovers /opt/sysroots/i386 and prior loops blocked on omitted -L.
 [21:59:41] THINK: Expose adjacent .so files in exploit-context over relying on agent directory inference because applestore stub missed bundled libc_32.so.6.
 [22:00:38] OBSERVE: searched src/main.rs for "run_captured|read_limited""
+[22:00:38] OBSERVE: searched main.rs for "fn run_captured|read_limited"
