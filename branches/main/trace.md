@@ -2620,3 +2620,4 @@ _[Checkpoint: 6a0509a0 — Re-solve smoke: realloc failed with best-effort non-r
 [23:38:23] OBSERVE: read src/main.rs
 [23:38:23] OBSERVE: read src/main.rs
 [23:38:23] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+[23:38:35] NOTE: Implemented generic exploit-agent tools in src/main.rs: binary-facts, exploit-scaffold, exploit-interact, heap-probe-plan; prompt now tells agents to use them before raw guessing.
