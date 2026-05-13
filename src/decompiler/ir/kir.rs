@@ -17,6 +17,7 @@ pub struct KirFunction {
     pub blocks: Vec<KirBlock>,
     pub ops: Vec<KirOp>,
     pub ssa: KirSsaFacts,
+    pub expressions: KirExpressionFacts,
     pub diagnostics: Vec<String>,
 }
 
@@ -93,6 +94,25 @@ pub struct KirPhiNode {
     pub version: u32,
     pub incoming_versions: Vec<String>,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KirExpressionFacts {
+    pub available: bool,
+    pub assignment_count: usize,
+    pub node_count: usize,
+    pub assignments: Vec<KirExpressionAssignment>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirExpressionAssignment {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub target: String,
+    pub expression: String,
+    pub inputs: Vec<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

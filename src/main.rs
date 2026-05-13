@@ -1893,10 +1893,12 @@ fn decompiler_benchmark_json(
     let mut dataflow_facts = 0usize;
     let mut kir_facts = 0usize;
     let mut kir_ssa_facts = 0usize;
+    let mut kir_expression_facts = 0usize;
     let mut kir_ops = 0usize;
     let mut kir_ssa_definitions = 0usize;
     let mut kir_ssa_uses = 0usize;
     let mut kir_phi_nodes = 0usize;
+    let mut kir_expression_assignments = 0usize;
     let mut phi_candidates = 0usize;
     let mut memory_accesses = 0usize;
     let mut variable_candidates = 0usize;
@@ -1914,10 +1916,12 @@ fn decompiler_benchmark_json(
                 dataflow_facts += report.functions_with_dataflow_facts;
                 kir_facts += report.functions_with_kir;
                 kir_ssa_facts += report.functions_with_kir_ssa;
+                kir_expression_facts += report.functions_with_kir_expressions;
                 kir_ops += report.total_kir_ops;
                 kir_ssa_definitions += report.total_kir_ssa_definitions;
                 kir_ssa_uses += report.total_kir_ssa_uses;
                 kir_phi_nodes += report.total_kir_phi_nodes;
+                kir_expression_assignments += report.total_kir_expression_assignments;
                 phi_candidates += report.total_phi_candidates;
                 memory_accesses += report.total_memory_accesses;
                 variable_candidates += report.total_variable_candidates;
@@ -1960,10 +1964,12 @@ fn decompiler_benchmark_json(
             "functions_with_dataflow_facts": dataflow_facts,
             "functions_with_kir": kir_facts,
             "functions_with_kir_ssa": kir_ssa_facts,
+            "functions_with_kir_expressions": kir_expression_facts,
             "total_kir_ops": kir_ops,
             "total_kir_ssa_definitions": kir_ssa_definitions,
             "total_kir_ssa_uses": kir_ssa_uses,
             "total_kir_phi_nodes": kir_phi_nodes,
+            "total_kir_expression_assignments": kir_expression_assignments,
             "total_phi_candidates": phi_candidates,
             "total_memory_accesses": memory_accesses,
             "total_variable_candidates": variable_candidates,

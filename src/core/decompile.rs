@@ -150,10 +150,12 @@ pub struct DecompilerQualityReport {
     pub functions_with_dataflow_facts: usize,
     pub functions_with_kir: usize,
     pub functions_with_kir_ssa: usize,
+    pub functions_with_kir_expressions: usize,
     pub total_kir_ops: usize,
     pub total_kir_ssa_definitions: usize,
     pub total_kir_ssa_uses: usize,
     pub total_kir_phi_nodes: usize,
+    pub total_kir_expression_assignments: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -179,9 +181,11 @@ pub struct FunctionQuality {
     pub has_dataflow_facts: bool,
     pub has_kir: bool,
     pub has_kir_ssa: bool,
+    pub has_kir_expressions: bool,
     pub kir_ops: usize,
     pub kir_ssa_definitions: usize,
     pub kir_phi_nodes: usize,
+    pub kir_expression_assignments: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -203,10 +207,12 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_dataflow_facts = 0usize;
     let mut functions_with_kir = 0usize;
     let mut functions_with_kir_ssa = 0usize;
+    let mut functions_with_kir_expressions = 0usize;
     let mut total_kir_ops = 0usize;
     let mut total_kir_ssa_definitions = 0usize;
     let mut total_kir_ssa_uses = 0usize;
     let mut total_kir_phi_nodes = 0usize;
+    let mut total_kir_expression_assignments = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -236,6 +242,7 @@ pub fn decompiler_quality_report_path(
         let has_dataflow_facts = dataflow.available && !dataflow.definitions.is_empty();
         let has_kir = kir.available && !kir.ops.is_empty();
         let has_kir_ssa = kir.ssa.available && kir.ssa.definition_count > 0;
+        let has_kir_expressions = kir.expressions.available && kir.expressions.assignment_count > 0;
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -255,10 +262,14 @@ pub fn decompiler_quality_report_path(
         if has_kir_ssa {
             functions_with_kir_ssa += 1;
         }
+        if has_kir_expressions {
+            functions_with_kir_expressions += 1;
+        }
         total_kir_ops += kir.ops.len();
         total_kir_ssa_definitions += kir.ssa.definition_count;
         total_kir_ssa_uses += kir.ssa.use_count;
         total_kir_phi_nodes += kir.ssa.phi_count;
+        total_kir_expression_assignments += kir.expressions.assignment_count;
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -297,6 +308,12 @@ pub fn decompiler_quality_report_path(
         if !kir.ssa.diagnostics.is_empty() {
             notes.extend(kir.ssa.diagnostics.clone());
         }
+        if !has_kir_expressions {
+            notes.push("KIR expression facts unavailable or empty".to_string());
+        }
+        if !kir.expressions.diagnostics.is_empty() {
+            notes.extend(kir.expressions.diagnostics.clone());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -309,9 +326,11 @@ pub fn decompiler_quality_report_path(
             has_dataflow_facts,
             has_kir,
             has_kir_ssa,
+            has_kir_expressions,
             kir_ops: kir.ops.len(),
             kir_ssa_definitions: kir.ssa.definition_count,
             kir_phi_nodes: kir.ssa.phi_count,
+            kir_expression_assignments: kir.expressions.assignment_count,
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -330,6 +349,7 @@ pub fn decompiler_quality_report_path(
         functions_with_dataflow_facts,
         functions_with_kir,
         functions_with_kir_ssa,
+        functions_with_kir_expressions,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -343,6 +363,7 @@ pub fn decompiler_quality_report_path(
         functions_with_dataflow_facts,
         functions_with_kir,
         functions_with_kir_ssa,
+        functions_with_kir_expressions,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -360,10 +381,12 @@ pub fn decompiler_quality_report_path(
         functions_with_dataflow_facts,
         functions_with_kir,
         functions_with_kir_ssa,
+        functions_with_kir_expressions,
         total_kir_ops,
         total_kir_ssa_definitions,
         total_kir_ssa_uses,
         total_kir_phi_nodes,
+        total_kir_expression_assignments,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -375,8 +398,8 @@ pub fn decompiler_quality_report_path(
         blockers,
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
-            "Use KIR SSA versions in expression DAG rendering".to_string(),
             "Promote heuristic stack/global variable candidates into memory SSA".to_string(),
+            "Use KIR expression DAG in structured pseudo-C rendering".to_string(),
             "Infer call signatures/calling conventions before expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
                 .to_string(),
@@ -394,6 +417,7 @@ fn decompiler_score(
     dataflow_facts: usize,
     kir_facts: usize,
     kir_ssa_facts: usize,
+    kir_expression_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -408,6 +432,7 @@ fn decompiler_score(
     let machine_score = 15.0 * machine_facts as f64 / analyzed;
     let kir_score = 10.0 * kir_facts as f64 / analyzed;
     let kir_ssa_score = 10.0 * kir_ssa_facts as f64 / analyzed;
+    let kir_expression_score = 5.0 * kir_expression_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -419,6 +444,7 @@ fn decompiler_score(
         + machine_score
         + kir_score
         + kir_ssa_score
+        + kir_expression_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -428,7 +454,9 @@ fn decompiler_score(
     // Register and memory facts are still pre-IR facts, not production
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
-    let cap = if variable_candidates > 0 && kir_ssa_facts > 0 {
+    let cap = if variable_candidates > 0 && kir_expression_facts > 0 {
+        83
+    } else if variable_candidates > 0 && kir_ssa_facts > 0 {
         80
     } else if variable_candidates > 0 && kir_facts > 0 {
         70
@@ -451,6 +479,7 @@ fn decompiler_blockers(
     dataflow_facts: usize,
     kir_facts: usize,
     kir_ssa_facts: usize,
+    kir_expression_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -474,6 +503,9 @@ fn decompiler_blockers(
     if kir_ssa_facts < analyzed_functions {
         blockers.push("KIR SSA coverage is incomplete".to_string());
     }
+    if kir_expression_facts < analyzed_functions {
+        blockers.push("KIR expression coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -488,7 +520,12 @@ fn decompiler_blockers(
             "memory facts are heuristic stack/global candidates only; no memory SSA/type inference yet"
                 .to_string(),
         );
-        if kir_ssa_facts > 0 {
+        if kir_expression_facts > 0 {
+            blockers.push(
+                "score is capped at 83 until memory SSA/type inference/structured rendering land"
+                    .to_string(),
+            );
+        } else if kir_ssa_facts > 0 {
             blockers.push(
                 "score is capped at 80 until KIR expression rendering/memory SSA/type inference land"
                     .to_string(),
@@ -941,13 +978,162 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         blocks,
         ops,
         ssa: kir::KirSsaFacts::default(),
+        expressions: kir::KirExpressionFacts::default(),
         diagnostics: vec![
             "KIR v0: iced-x86 semantic skeleton; flags and precise operand sizes are partial"
                 .to_string(),
         ],
     };
     function_kir.ssa = analyze_kir_ssa(&function_kir, function);
+    function_kir.expressions = build_kir_expressions(&function_kir);
     Ok(function_kir)
+}
+
+fn build_kir_expressions(kir_function: &kir::KirFunction) -> kir::KirExpressionFacts {
+    if !kir_function.ssa.available {
+        return kir::KirExpressionFacts {
+            diagnostics: vec!["KIR expressions unavailable: SSA facts are empty".to_string()],
+            ..Default::default()
+        };
+    }
+
+    let ops = kir_function
+        .ops
+        .iter()
+        .map(|op| (op.id, op))
+        .collect::<BTreeMap<_, _>>();
+    let uses_by_op = kir_function.ssa.uses.iter().fold(
+        BTreeMap::<usize, Vec<String>>::new(),
+        |mut acc, use_| {
+            acc.entry(use_.op_id)
+                .or_default()
+                .push(kir_ssa_name(&use_.name, use_.version));
+            acc
+        },
+    );
+
+    let mut assignments = Vec::new();
+    for def in &kir_function.ssa.definitions {
+        if def.source.starts_with("phi(") {
+            assignments.push(kir::KirExpressionAssignment {
+                op_id: def.op_id,
+                vaddr: def.vaddr.clone(),
+                target: kir_ssa_name(&def.name, Some(def.version)),
+                expression: def.source.clone(),
+                inputs: kir_phi_inputs(&def.source),
+                source: def.source.clone(),
+            });
+            continue;
+        }
+
+        let Some(op) = ops.get(&def.op_id) else {
+            continue;
+        };
+        let inputs = uses_by_op.get(&op.id).cloned().unwrap_or_default();
+        let expression = kir_expression_for_op(op, &inputs);
+        assignments.push(kir::KirExpressionAssignment {
+            op_id: op.id,
+            vaddr: op.vaddr.clone(),
+            target: kir_ssa_name(&def.name, Some(def.version)),
+            expression,
+            inputs,
+            source: op.instruction.clone(),
+        });
+    }
+
+    kir::KirExpressionFacts {
+        available: !assignments.is_empty(),
+        assignment_count: assignments.len(),
+        node_count: assignments
+            .iter()
+            .map(|assignment| 1 + assignment.inputs.len())
+            .sum(),
+        assignments,
+        diagnostics: vec![
+            "KIR expressions v0: SSA assignment DAG over register definitions; memory SSA pending"
+                .to_string(),
+        ],
+    }
+}
+
+fn kir_expression_for_op(op: &kir::KirOp, inputs: &[String]) -> String {
+    let args = if inputs.is_empty() {
+        op.inputs
+            .iter()
+            .map(kir_value_expression)
+            .collect::<Vec<_>>()
+    } else {
+        inputs.to_vec()
+    };
+    match op.opcode {
+        kir::KirOpcode::Copy => args.first().cloned().unwrap_or_else(|| "?".to_string()),
+        kir::KirOpcode::Load => format!("load({})", args.join(", ")),
+        kir::KirOpcode::AddressOf => format!("addr({})", args.join(", ")),
+        kir::KirOpcode::IntAdd => format!("add({})", args.join(", ")),
+        kir::KirOpcode::IntSub => format!("sub({})", args.join(", ")),
+        kir::KirOpcode::IntMul => format!("mul({})", args.join(", ")),
+        kir::KirOpcode::IntAnd => format!("and({})", args.join(", ")),
+        kir::KirOpcode::IntOr => format!("or({})", args.join(", ")),
+        kir::KirOpcode::IntXor => format!("xor({})", args.join(", ")),
+        kir::KirOpcode::Compare => format!("cmp({})", args.join(", ")),
+        kir::KirOpcode::Call => format!("call({})", args.join(", ")),
+        kir::KirOpcode::Syscall => "syscall()".to_string(),
+        kir::KirOpcode::StackPush => format!("stack_push({})", args.join(", ")),
+        kir::KirOpcode::StackPop => "stack_pop()".to_string(),
+        kir::KirOpcode::Store => format!("store({})", args.join(", ")),
+        kir::KirOpcode::Branch => format!("branch({})", args.join(", ")),
+        kir::KirOpcode::Return => "return".to_string(),
+        kir::KirOpcode::Nop => "nop".to_string(),
+        kir::KirOpcode::Unknown => format!("unknown({})", op.instruction),
+    }
+}
+
+fn kir_value_expression(value: &kir::KirValue) -> String {
+    match value {
+        kir::KirValue::Register { name, .. } => name.clone(),
+        kir::KirValue::Immediate { value, .. } => value.clone(),
+        kir::KirValue::Memory {
+            base,
+            index,
+            scale,
+            displacement,
+            ..
+        } => {
+            let mut parts = Vec::new();
+            if let Some(base) = base {
+                parts.push(base.clone());
+            }
+            if let Some(index) = index {
+                parts.push(format!("{index}*{scale}"));
+            }
+            if *displacement != 0 {
+                parts.push(format!("{displacement:+#x}"));
+            }
+            format!("mem[{}]", parts.join(" "))
+        }
+        kir::KirValue::BranchTarget { target } => target.clone(),
+        kir::KirValue::Unknown { text } => text.clone(),
+    }
+}
+
+fn kir_ssa_name(name: &str, version: Option<u32>) -> String {
+    version
+        .map(|version| format!("{name}_{version}"))
+        .unwrap_or_else(|| format!("{name}_undef"))
+}
+
+fn kir_phi_inputs(source: &str) -> Vec<String> {
+    source
+        .strip_prefix("phi(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .map(|inner| {
+            inner
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Default)]
@@ -2834,6 +3020,8 @@ mod tests {
         );
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.definition_count > 0);
+        assert!(analysis.kir.expressions.available);
+        assert!(analysis.kir.expressions.assignment_count > 0);
         assert!(
             analysis
                 .kir
@@ -2893,6 +3081,19 @@ mod tests {
         );
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.phi_count > 0);
+        assert!(analysis.kir.expressions.available);
+        assert!(
+            analysis
+                .kir
+                .expressions
+                .assignments
+                .iter()
+                .any(|assignment| assignment.target.contains('_')
+                    && (assignment.expression.starts_with("add(")
+                        || assignment.expression.starts_with("sub(")
+                        || assignment.expression.starts_with("mul(")
+                        || assignment.expression.starts_with("load(")))
+        );
         assert!(analysis.kir.ssa.dominance_available);
         assert!(analysis.kir.ssa.block_states.iter().any(|block| {
             !block.dominance_frontier.is_empty() || block.immediate_dominator.is_some()
@@ -2912,6 +3113,18 @@ mod tests {
                     && def.version == phi.version
                     && def.source.starts_with("phi(")
             })
+        }));
+        assert!(analysis.kir.ssa.phi_nodes.iter().all(|phi| {
+            analysis
+                .kir
+                .expressions
+                .assignments
+                .iter()
+                .any(|assignment| {
+                    assignment.vaddr == phi.block
+                        && assignment.target == format!("{}_{}", phi.name, phi.version)
+                        && assignment.expression.starts_with("phi(")
+                })
         }));
         assert!(
             analysis
