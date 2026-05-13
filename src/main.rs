@@ -475,6 +475,43 @@ enum ApiCommands {
         vaddr: String,
     },
 
+    /// Send a decompiler-focused analysis loop prompt into Agent Console.
+    AgentDecompileLoop {
+        #[arg(value_name = "AGENT")]
+        agent: String,
+
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Function virtual address to inspect.
+        #[arg(long)]
+        function: String,
+
+        /// Analysis goal for the selected function.
+        #[arg(
+            long,
+            default_value = "Explain this function, identify risky semantics, and propose verified next steps."
+        )]
+        goal: String,
+
+        /// Maximum inspect/hypothesize/verify attempts the prompt should spend.
+        #[arg(long, default_value_t = 3)]
+        attempts: u32,
+
+        /// Maximum functions used for decompiler quality context.
+        #[arg(long, default_value_t = 200)]
+        max_functions: usize,
+
+        /// Agent console hard timeout.
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
+
+        /// Console idle timeout.
+        #[arg(long, default_value_t = 30)]
+        idle_timeout_secs: u64,
+    },
+
     /// Score decompiler quality for one binary or corpus.
     DecompilerBenchmark {
         /// Override the active daemon binary path.
@@ -1264,6 +1301,36 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let vaddr = parse_int(&vaddr)?;
             serde_json::to_value(core::decompile::decompile_analysis_path(&path, vaddr)?)?
         }
+        ApiCommands::AgentDecompileLoop {
+            agent,
+            file,
+            function,
+            goal,
+            attempts,
+            max_functions,
+            timeout_secs,
+            idle_timeout_secs,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let function = parse_int(&function)?;
+            let prompt =
+                agent_decompile_loop_prompt(&path, function, &goal, attempts, max_functions)?;
+            run_agent_console(
+                &base_url,
+                token.as_deref(),
+                &agent,
+                Some(prompt),
+                true,
+                Some(idle_timeout_secs),
+                Some(timeout_secs),
+                1500,
+                true,
+                120,
+                40,
+            )
+            .await?;
+            return Ok(());
+        }
         ApiCommands::DecompilerBenchmark {
             file,
             root,
@@ -1273,7 +1340,8 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         } => {
             let value = if let Some(file) = file {
                 let path =
-                    resolve_api_binary_path(&client, &base_url, token.as_deref(), Some(file)).await?;
+                    resolve_api_binary_path(&client, &base_url, token.as_deref(), Some(file))
+                        .await?;
                 serde_json::to_value(core::decompile::decompiler_quality_report_path(
                     &path,
                     max_functions,
@@ -1328,7 +1396,8 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             let ws = Workspace::open(&path, WritePolicy::default())?;
-            let value = serde_json::to_value(core::knowledge::build(&ws, max_functions, max_evidence)?)?;
+            let value =
+                serde_json::to_value(core::knowledge::build(&ws, max_functions, max_evidence)?)?;
             if let Some(output) = output {
                 write_json_artifact(&output, &value)?;
             }
@@ -1957,7 +2026,8 @@ fn decompiler_benchmark_json(
                 reports.push(serde_json::to_value(report)?);
             }
             Err(err) => {
-                blockers.insert("one or more binaries could not be decompiler-benchmarked".to_string());
+                blockers
+                    .insert("one or more binaries could not be decompiler-benchmarked".to_string());
                 reports.push(serde_json::json!({
                     "kind": "decompiler_quality_report",
                     "binary": binary,
@@ -3275,6 +3345,83 @@ Rules:
         binary_q = shell_quote(&binary.to_string_lossy()),
         output_q = shell_quote(&output.to_string_lossy()),
     ))
+}
+
+fn agent_decompile_loop_prompt(
+    binary: &Path,
+    function: u64,
+    goal: &str,
+    attempts: u32,
+    max_functions: usize,
+) -> Result<String> {
+    let enhanced = core::decompile::decompile_enhanced_path(binary, function)?;
+    let analysis = core::decompile::decompile_analysis_path(binary, function)?;
+    let quality = core::decompile::decompiler_quality_report_path(binary, max_functions)?;
+    let analysis = serde_json::to_value(analysis)?;
+    let quality = serde_json::to_value(quality)?;
+    let compact = serde_json::json!({
+        "function": analysis.get("function"),
+        "cfg": analysis.get("cfg"),
+        "machine": analysis.get("machine"),
+        "dataflow": analysis.get("dataflow"),
+        "kir": {
+            "op_count": analysis.pointer("/kir/op_count"),
+            "ssa": analysis.pointer("/kir/ssa"),
+            "memory_ssa": analysis.pointer("/kir/memory_ssa"),
+            "expression_facts": analysis.pointer("/kir/expression_facts"),
+            "type_facts": analysis.pointer("/kir/type_facts"),
+            "call_facts": analysis.pointer("/kir/call_facts"),
+        },
+        "quality": {
+            "binary": quality.get("binary"),
+            "summary": quality.get("summary"),
+            "blockers": quality.get("blockers"),
+        }
+    });
+    let compact = serde_json::to_string_pretty(&compact)?;
+    let enhanced = truncate_chars(&enhanced, 24_000);
+    Ok(format!(
+        r#"Use KaijuLab as a decompiler-focused reverse-engineering workbench.
+
+Target: {binary}
+Selected function: 0x{function:x}
+Goal: {goal}
+Attempt budget: {attempts}
+
+Structured decompiler context:
+{compact}
+
+Enhanced decompile text:
+{enhanced}
+
+Rules:
+- Maintain an inspect -> hypothesize -> verify loop. Spend at most {attempts} attempts.
+- Prefer KaijuLab facts over ad-hoc guessing. Refresh with `target/debug/kaijulab api decompile-analysis --file {binary_q} 0x{function:x}` and `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0x{function:x}` when needed.
+- Use `target/debug/kaijulab api recovery-cfg --file {binary_q} 0x{function:x}` and `target/debug/kaijulab api recovery-xrefs --file {binary_q} 0xADDR` for graph-backed control flow and xrefs.
+- Use `target/debug/kaijulab api ir-query --file {binary_q} --function 0x{function:x}` for mixed disassembly, strings, xrefs, and pseudo-C.
+- Use `target/debug/kaijulab api runtime-run --file {binary_q}` or `target/debug/kaijulab api debug-probe --file {binary_q}` before claiming behavior that depends on runtime state.
+- When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and `debug-session-stop <id>`.
+- Save important runtime/debug observations with `--save-evidence`, then cite evidence IDs from `target/debug/kaijulab api evidence-list --file {binary_q}`.
+- If the decompiler output looks wrong, state the likely missing recovery/type/alias fact and the exact KaijuLab improvement that would fix it.
+- Finish with DECOMPILER_LOOP_DONE and a concise JSON object: summary, function_semantics, risks, evidence_commands, decompiler_gaps, recommended_next_actions.
+"#,
+        binary = binary.display(),
+        function = function,
+        goal = goal,
+        attempts = attempts.max(1),
+        compact = compact,
+        enhanced = enhanced,
+        binary_q = shell_quote(&binary.to_string_lossy()),
+    ))
+}
+
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    out.push_str("\n...[truncated]...");
+    out
 }
 
 fn shell_quote(s: &str) -> String {
