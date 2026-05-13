@@ -875,3 +875,4 @@ _[Checkpoint: 6a03f8ea — Restored raw xterm return input for Agent Console aft
 _[Checkpoint: 6a03f96d — edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentC…]_
 ---
 
+[04:12:23] NOTE: UI structure refactor: replaced stacked fixed bottom panels with bottom dock tabs; left navigator widened; center code font increased; bottom tools fill dock instead of competing vertically.
