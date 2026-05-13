@@ -44,11 +44,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx
 - [x] Added bot-friendly kaijulab api CLI over WebUI REST endpoints with docs and smoke-tested health/open/functions.
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyos…
+- [x] Verified KaijuLab+Claude on PwnableTW Start; fixed Claude stream-json flag; tests pass.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 12:11 UTC] `main`: Verified KaijuLab+Claude on PwnableTW Start; fixed Claude stream-json flag; tests pass.
 - [2026-05-13 12:10 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyos…
 - [2026-05-13 12:07 UTC] `main`: Added bot-friendly kaijulab api CLI over WebUI REST endpoints with docs and smoke-tested health/open/functions.
 - [2026-05-13 04:37 UTC] `main`: edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx
