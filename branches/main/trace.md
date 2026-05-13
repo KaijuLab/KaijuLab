@@ -2561,3 +2561,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 [23:30:40] OBSERVE: read src/main.rs
 [23:30:40] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [23:30:40] OBSERVE: read src/decompiler/ir/high_function.rs
+[23:30:40] OBSERVE: searched get for "to"
