@@ -68,11 +68,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.
 - [x] Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.
 - [x] Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.
+- [x] Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 18:13 UTC] `main`: Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.
 - [2026-05-13 18:09 UTC] `main`: Added KIR SSA v1 dominance data: successors, dominators, immediate dominators, dominance frontiers, dominance-frontier phi candidates, regression assertions, and benchmark cap/next-work update. Full cargo test passed; PwnableTW benchmark aggregate 72.
 - [2026-05-13 18:02 UTC] `main`: Added KIR SSA facts with alias-aware register canonicalization, benchmark counters, README docs, and regression tests; benchmark aggregate remains 70 with cap 75 for KIR SSA+memory candidates.
 - [2026-05-13 17:41 UTC] `main`: Committed memory facts, then added KIR v0 decompiler foundation with API output, benchmark scoring, stack/syscall ops, and tests.

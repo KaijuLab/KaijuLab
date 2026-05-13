@@ -1885,3 +1885,9 @@ _[Checkpoint: 6a04be4e — Added KIR SSA v1 dominance data: successors, dominato
 [18:13:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:13:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:13:02] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into SSA definitions with assigned versions, block-entry rename state, regression checks, and benchmark cap update. cargo test passed; PwnableTW benchmark aggregate 73.]_
+---
+
