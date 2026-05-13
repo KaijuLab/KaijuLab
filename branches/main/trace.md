@@ -676,3 +676,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:09:39] OBSERVE: read src/mcp/mod.rs
 [03:09:39] OBSERVE: read src/core/workspace.rs
 [03:09:39] OBSERVE: read src/mcp/server.rs
+[03:09:39] OBSERVE: read src/mcp/server.rs
