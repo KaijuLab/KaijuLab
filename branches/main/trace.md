@@ -724,3 +724,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:36:10] NOTE: Agent console production hardening: daemon sessions list/delete transcript, bounded transcript logs, idle/runtime guard, PTY child reap, browser clear log/permission banner/session attach, env overrides covered by tests.
 [03:36:10] OBSERVE: searched package.json for "web"
 [03:36:10] OBSERVE: read src/server/agent_console.rs
+[03:36:10] OBSERVE: read src/server/agent_console.rs
