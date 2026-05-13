@@ -959,3 +959,4 @@ _[Checkpoint: 6a03fd9c — Reflected MCP function read calls into UI navigation;
 _[Checkpoint: 6a03feec — Fixed stale Agent Console attach/restart and gray command input state; cargo test server and web build passed.]_
 ---
 
+[04:35:53] NOTE: Agent console visibility fix: remove output CR rewriting before xterm.write; add explicit kaijulab connected/status/detached lines so live backend attach is visible even if agent TUI is quiet.
