@@ -2295,3 +2295,9 @@ _[Checkpoint: 6a04eb5c — edited kaijulab-hacknote-poc.py; wrote kaijulab-apple
 [21:24:19] OBSERVE: listed files under /tmp
 [21:24:19] OBSERVE: searched tmp for "kaijulab-*-poc.py"
 [21:24:27] THINK: Resume crash by preserving src/main.rs sysroot bridge for exploit-verify/exploit-loop over reverting because cargo check and CLI help confirm flags are coherent.
+
+
+---
+_[Checkpoint: 6a04ec22 — Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.]_
+---
+

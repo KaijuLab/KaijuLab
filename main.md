@@ -84,11 +84,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Tested KaijuLab+Claude on new PwnableTW targets; one real silver-bullet Claude loop blocked on missing x86 loader, sysroot-doctor shows same blocker for all seven.
 - [x] wrote kaijulab-silver-bullet-poc.py; wrote kaijulab-silver-bullet-poc.py
 - [x] edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py
+- [x] Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 21:24 UTC] `main`: Resumed crashed session; committed src/main.rs sysroot propagation for exploit-verify and exploit-loop; validated cargo check and CLI help. Runtime sample chmod/evidence artifacts remain uncommitted.
 - [2026-05-13 21:21 UTC] `main`: edited kaijulab-hacknote-poc.py; wrote kaijulab-applestore-poc.py; wrote kaijulab-applestore-poc.py
 - [2026-05-13 21:15 UTC] `main`: wrote kaijulab-silver-bullet-poc.py; wrote kaijulab-silver-bullet-poc.py
 - [2026-05-13 19:23 UTC] `main`: Tested KaijuLab+Claude on new PwnableTW targets; one real silver-bullet Claude loop blocked on missing x86 loader, sysroot-doctor shows same blocker for all seven.
