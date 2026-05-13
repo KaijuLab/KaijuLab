@@ -948,3 +948,4 @@ _[Checkpoint: 6a03fd9c — Reflected MCP function read calls into UI navigation;
 [04:32:19] OBSERVE: read web/src/api.ts
 [04:32:19] OBSERVE: read web/src/api.ts
 [04:32:19] OBSERVE: read web/src/api.ts
+[04:32:19] OBSERVE: read src/server/agent_console.rs
