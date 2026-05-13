@@ -25,7 +25,7 @@ export function Timeline() {
   };
 
   return (
-    <footer className="border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <footer className="shrink-0 border-t border-kaiju-border bg-kaiju-panel text-xs">
       <div className="flex items-center gap-2 px-3 py-1 border-b border-kaiju-border">
         <button
           onClick={() => setCollapsed(!collapsed)}

@@ -69,7 +69,7 @@ export function FindingsBoard() {
   };
 
   return (
-    <section className="flex h-56 border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <section className="flex h-56 shrink-0 overflow-hidden border-t border-kaiju-border bg-kaiju-panel text-xs">
       <div className="flex w-[420px] shrink-0 flex-col border-r border-kaiju-border">
         <div className="flex items-center gap-2 border-b border-kaiju-border px-3 py-1">
           <span className="text-kaiju-muted uppercase tracking-wider">Findings</span>

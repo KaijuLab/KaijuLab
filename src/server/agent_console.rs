@@ -12,21 +12,21 @@ use std::{
     os::fd::{FromRawFd, RawFd},
     path::PathBuf,
     sync::{
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
-        Arc, Mutex,
     },
     time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{
+    Json, Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
     routing::{delete, get},
-    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,7 @@ impl AgentConsoleManager {
 
     fn get_or_spawn(&self, agent: &str) -> Result<Arc<AgentSession>> {
         let program = agent_program(agent)?;
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = lock_or_recover(&self.sessions);
         if let Some(session) = sessions.get(agent) {
             if session.is_running() {
                 return Ok(session.clone());
@@ -74,12 +74,12 @@ impl AgentConsoleManager {
     }
 
     fn list(&self) -> Vec<AgentConsoleSessionInfo> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_or_recover(&self.sessions);
         sessions.values().map(|session| session.info()).collect()
     }
 
     fn delete_transcript(&self, agent: &str) -> Result<()> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_or_recover(&self.sessions);
         let Some(session) = sessions.get(agent) else {
             return Err(anyhow!("no agent console session for {agent}"));
         };
@@ -99,19 +99,18 @@ async fn delete_transcript(
         .agent_console
         .delete_transcript(&agent)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
-    let info = state
-        .agent_console
-        .sessions
-        .lock()
-        .unwrap()
-        .get(&agent)
-        .map(|session| session.info())
-        .ok_or_else(|| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                format!("no agent console session for {agent}"),
-            )
-        })?;
+    let info = {
+        let sessions = lock_or_recover(&state.agent_console.sessions);
+        sessions
+            .get(&agent)
+            .map(|session| session.info())
+            .ok_or_else(|| {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    format!("no agent console session for {agent}"),
+                )
+            })?
+    };
     Ok(Json(info))
 }
 
@@ -200,9 +199,10 @@ async fn send_json(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     msg: ServerMessage,
 ) -> Result<(), axum::Error> {
-    sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
-        .await
+    let json = serde_json::to_string(&msg).unwrap_or_else(|_| {
+        "{\"type\":\"error\",\"data\":\"serialize console message failed\"}".into()
+    });
+    sender.send(Message::Text(json)).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -388,33 +388,35 @@ impl AgentSession {
         let child_pid = self.child_pid;
         let tx = self.tx.clone();
         let info = self.info();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(30));
-            if !running.load(Ordering::SeqCst) {
-                break;
-            }
-            let now = crate::core::events::now_ts();
-            let idle_expired = idle_secs > 0
-                && now.saturating_sub(last_activity.load(Ordering::SeqCst)) as u64 > idle_secs;
-            let runtime_expired =
-                max_runtime_secs > 0 && now.saturating_sub(started_at) as u64 > max_runtime_secs;
-            if idle_expired || runtime_expired {
-                running.store(false, Ordering::SeqCst);
-                unsafe {
-                    libc::kill(child_pid, libc::SIGHUP);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+                if !running.load(Ordering::SeqCst) {
+                    break;
                 }
-                let reason = if idle_expired {
-                    "idle timeout"
-                } else {
-                    "runtime limit"
-                };
-                let _ = tx.send(ServerMessage::Error(format!(
-                    "agent console stopped by {reason}"
-                )));
-                let mut stopped = info.clone();
-                stopped.running = false;
-                let _ = tx.send(ServerMessage::Status(stopped));
-                break;
+                let now = crate::core::events::now_ts();
+                let idle_expired = idle_secs > 0
+                    && now.saturating_sub(last_activity.load(Ordering::SeqCst)) as u64 > idle_secs;
+                let runtime_expired = max_runtime_secs > 0
+                    && now.saturating_sub(started_at) as u64 > max_runtime_secs;
+                if idle_expired || runtime_expired {
+                    running.store(false, Ordering::SeqCst);
+                    unsafe {
+                        libc::kill(child_pid, libc::SIGHUP);
+                    }
+                    let reason = if idle_expired {
+                        "idle timeout"
+                    } else {
+                        "runtime limit"
+                    };
+                    let _ = tx.send(ServerMessage::Error(format!(
+                        "agent console stopped by {reason}"
+                    )));
+                    let mut stopped = info.clone();
+                    stopped.running = false;
+                    let _ = tx.send(ServerMessage::Status(stopped));
+                    break;
+                }
             }
         });
     }
@@ -422,7 +424,7 @@ impl AgentSession {
     fn write_input(&self, bytes: &[u8]) -> Result<()> {
         self.last_activity
             .store(crate::core::events::now_ts(), Ordering::SeqCst);
-        let mut master = self.master.lock().unwrap();
+        let mut master = lock_or_recover(&self.master);
         master.write_all(bytes).context("write to agent PTY")?;
         master.flush().ok();
         Ok(())
@@ -435,7 +437,7 @@ impl AgentSession {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        let master = self.master.lock().unwrap();
+        let master = lock_or_recover(&self.master);
         let rc = unsafe { libc::ioctl(master_fd(&master), libc::TIOCSWINSZ, &win) };
         if rc == -1 {
             return Err(anyhow!(
@@ -474,11 +476,11 @@ impl AgentSession {
     }
 
     fn transcript_tail(&self) -> String {
-        self.transcript.lock().unwrap().clone()
+        lock_or_recover(&self.transcript).clone()
     }
 
     fn clear_transcript(&self) -> Result<()> {
-        *self.transcript.lock().unwrap() = String::new();
+        *lock_or_recover(&self.transcript) = String::new();
         self.transcript_bytes.store(0, Ordering::SeqCst);
         File::create(&self.transcript_path)
             .with_context(|| format!("truncate transcript {}", self.transcript_path.display()))?;
@@ -515,13 +517,22 @@ fn append_transcript(
         let _ = file.flush();
         transcript_bytes.fetch_add(to_write.len() as u64, Ordering::SeqCst);
     }
-    let mut t = transcript.lock().unwrap();
+    let mut t = lock_or_recover(transcript);
     t.push_str(text);
     if t.len() > TRANSCRIPT_LIMIT {
-        let keep_from = t.len().saturating_sub(TRANSCRIPT_LIMIT);
+        let mut keep_from = t.len().saturating_sub(TRANSCRIPT_LIMIT);
+        while keep_from < t.len() && !t.is_char_boundary(keep_from) {
+            keep_from += 1;
+        }
         let trimmed = t[keep_from..].to_string();
         *t = trimmed;
     }
+}
+
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Debug, Clone)]
@@ -665,5 +676,17 @@ mod tests {
         let transcript = session.transcript_tail();
         session.terminate();
         assert!(transcript.contains("kaijulab-pty-ok"), "{transcript:?}");
+    }
+
+    #[test]
+    fn transcript_trim_keeps_utf8_boundary() {
+        let transcript = Arc::new(Mutex::new(String::new()));
+        let transcript_bytes = Arc::new(AtomicU64::new(0));
+        let mut file = tempfile::tempfile().unwrap();
+        let text = "✶ Concocting…\n".repeat(16_000);
+        append_transcript(&transcript, &transcript_bytes, 0, &mut file, &text);
+        let tail = transcript.lock().unwrap();
+        assert!(tail.is_char_boundary(0));
+        assert!(tail.len() <= TRANSCRIPT_LIMIT);
     }
 }

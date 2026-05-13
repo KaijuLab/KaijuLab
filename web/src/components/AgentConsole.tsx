@@ -180,7 +180,7 @@ export function AgentConsole() {
   const existing = sessions.find((s) => s.agent === agent && s.running);
 
   return (
-    <section className="h-80 border-t border-kaiju-border bg-kaiju-panel text-xs">
+    <section className="h-80 shrink-0 overflow-hidden border-t border-kaiju-border bg-kaiju-panel text-xs">
       <div className="flex items-center gap-2 border-b border-kaiju-border px-3 py-1">
         <span className="uppercase tracking-wider text-kaiju-muted">Agent Console</span>
         <select
@@ -239,12 +239,12 @@ export function AgentConsole() {
         </div>
       </div>
 
-      <div className="grid h-[calc(100%-29px)] grid-cols-[1fr_300px]">
-        <div className="grid min-w-0 grid-rows-[1fr_auto]">
+      <div className="grid h-[calc(100%-29px)] min-h-0 grid-cols-[minmax(0,1fr)_300px] overflow-hidden">
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden">
           <div
             ref={terminalHostRef}
             onMouseDown={() => terminalRef.current?.focus()}
-            className="min-h-0 overflow-hidden bg-black p-2 outline-none [&_.xterm]:h-full [&_.xterm-viewport]:!overflow-y-auto"
+            className="relative h-full min-h-0 overflow-hidden bg-black p-2 outline-none [&_.xterm]:h-full [&_.xterm-viewport]:!overflow-y-auto"
           />
           <div className="flex gap-2 border-t border-kaiju-border p-2">
             <input
@@ -269,7 +269,7 @@ export function AgentConsole() {
             </button>
           </div>
         </div>
-        <aside className="border-l border-kaiju-border p-2">
+        <aside className="min-h-0 overflow-auto border-l border-kaiju-border p-2">
           <div className="mb-2 border border-kaiju-border bg-kaiju-bg p-2 text-[11px] leading-snug">
             <div className="text-kaiju-warn">Permission state</div>
             <div className="text-kaiju-muted">
