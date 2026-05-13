@@ -46,11 +46,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyos…
 - [x] Verified KaijuLab+Claude on PwnableTW Start; fixed Claude stream-json flag; tests pass.
 - [x] Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.
+- [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 12:34 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…
 - [2026-05-13 12:18 UTC] `main`: Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.
 - [2026-05-13 12:11 UTC] `main`: Verified KaijuLab+Claude on PwnableTW Start; fixed Claude stream-json flag; tests pass.
 - [2026-05-13 12:10 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/koukyos…

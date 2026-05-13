@@ -1056,3 +1056,9 @@ _[Checkpoint: 6a046a71 — Verified KaijuLab+Claude on PwnableTW Start; fixed Cl
 _[Checkpoint: 6a046bfd — Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/README.md; edited /home/kouky…]_
+---
+
