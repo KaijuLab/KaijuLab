@@ -821,3 +821,4 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 [03:57:47] ACT: edited web/src/components/AgentConsole.tsx
 [03:57:47] ACT: edited web/src/components/ExpertWorkbench.tsx
 [03:57:47] ACT: edited web/src/components/FindingsBoard.tsx
+[03:57:47] ACT: edited web/src/components/Timeline.tsx
