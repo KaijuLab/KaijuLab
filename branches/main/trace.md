@@ -1050,3 +1050,9 @@ _[Checkpoint: 6a046a71 — Verified KaijuLab+Claude on PwnableTW Start; fixed Cl
 [12:18:05] OBSERVE: read src/server/agent_console.rs
 [12:18:05] OBSERVE: read src/server/agent_console.rs
 [12:18:05] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a046bfd — Added kaijulab api console WebSocket client for daemon-owned Claude/Codex Agent Console PTY, with prompt idle mode docs and smoke test.]_
+---
+
