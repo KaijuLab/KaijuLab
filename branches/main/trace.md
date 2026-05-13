@@ -1940,3 +1940,4 @@ _[Checkpoint: 6a04bf44 — Promoted KIR dominance-frontier phi candidates into S
 _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, phi expressions, benchmark counters/gate, and tests. cargo test passed; PwnableTW benchmark aggregate 76.]_
 ---
 
+[18:28:03] OBSERVE: searched src/core/decompile.rs for "SSA|memory_ssa|VariableCandidate|variable_candidates|KirExpression|pseudo|renderer|render""
