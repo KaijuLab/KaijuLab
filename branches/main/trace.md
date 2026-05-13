@@ -2129,3 +2129,4 @@ _[Checkpoint: 6a04c878 — Added KIR call facts with ABI register arguments/retu
 ---
 
 [18:57:43] OBSERVE: searched web for "src"
+[18:57:43] OBSERVE: searched src for "agent|claude|codex|console|analysis-loop|decompile|ContextPack|playbook|api"
