@@ -1339,3 +1339,4 @@ _[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidenc
 [14:52:52] OBSERVE: read src/server/mod.rs
 [14:52:52] OBSERVE: read src/core/events.rs
 [14:52:53] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/mod.rs
+[14:52:53] ACT: added /home/koukyosyumei/Dev/KaijuLab/src/core/debug_session.rs
