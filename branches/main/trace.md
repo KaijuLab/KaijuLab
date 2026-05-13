@@ -2393,3 +2393,9 @@ _[Checkpoint: 6a04f4c4 — Checked PwnableTW batch status and improved exploit l
 _[Checkpoint: 6a04f6af — Checked x86_64 sysroot: KaijuLab selects /opt/sysroots/x86_64 but qemu still fails because usr/lib64/ld-linux-x86-64.so.2 absolute symlink resolves outside sysroot; sudo repair needs password.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a04f791 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…]_
+---
+
