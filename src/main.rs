@@ -25,7 +25,7 @@ use object::{Object, ObjectSection};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use core::workspace::{socket_path_for, Workspace, WorkspaceRegistry, WritePolicy};
+use core::workspace::{Workspace, WorkspaceRegistry, WritePolicy, socket_path_for};
 
 #[derive(Parser)]
 #[command(
@@ -320,6 +320,137 @@ enum ApiCommands {
         #[arg(long, default_value_t = 30)]
         idle_timeout_secs: u64,
     },
+
+    /// Run the target with captured stdin/stdout/stderr and runtime diagnostics.
+    RuntimeRun {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Arguments passed to the target.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+
+        /// Environment entries as KEY=VALUE.
+        #[arg(long = "env")]
+        envs: Vec<String>,
+
+        /// Stdin text to feed, or @path to read bytes from a file.
+        #[arg(long)]
+        stdin: Option<String>,
+
+        /// Working directory.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+
+        /// Force a runner command, e.g. qemu-i386.
+        #[arg(long)]
+        runner: Option<String>,
+
+        /// qemu -L sysroot when using qemu-user.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Wall-clock timeout.
+        #[arg(long, default_value_t = 10)]
+        timeout_secs: u64,
+    },
+
+    /// Run a non-interactive gdb probe and return registers/backtrace/disassembly.
+    DebugProbe {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Arguments passed to the target inside gdb.
+        #[arg(long = "arg")]
+        args: Vec<String>,
+
+        /// Stdin text to feed, or @path to read bytes from a file.
+        #[arg(long)]
+        stdin: Option<String>,
+
+        /// qemu -L sysroot when remote-debugging a foreign-architecture target.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Breakpoint address or symbol. Can be repeated.
+        #[arg(long = "break")]
+        breakpoints: Vec<String>,
+
+        /// Continue after hitting breakpoints instead of stopping at first hit.
+        #[arg(long)]
+        continue_after_break: bool,
+
+        /// GDB wall-clock timeout.
+        #[arg(long, default_value_t = 20)]
+        timeout_secs: u64,
+    },
+
+    /// Emit exploit helper data: checksec, PLT/GOT, gadgets, cyclic patterns.
+    ExploitKit {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Generate a cyclic pattern of this length.
+        #[arg(long)]
+        cyclic_len: Option<usize>,
+
+        /// Find a little-endian integer/hex/text value inside the cyclic pattern.
+        #[arg(long)]
+        cyclic_find: Option<String>,
+
+        /// Pattern length used by --cyclic-find.
+        #[arg(long, default_value_t = 8192)]
+        cyclic_search_len: usize,
+
+        /// Maximum matches per gadget pattern.
+        #[arg(long, default_value_t = 16)]
+        max_gadgets: usize,
+    },
+
+    /// Query structured static-analysis data for agent workflows.
+    IrQuery {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Function virtual address to inspect.
+        #[arg(long)]
+        function: Option<String>,
+
+        /// Search term for function names/decompile/strings.
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Maximum functions/strings to include.
+        #[arg(long, default_value_t = 80)]
+        max: usize,
+    },
+
+    /// Build a stateful analysis-loop bundle for agents or automation.
+    AnalysisLoop {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Current hypothesis or task goal.
+        #[arg(long, default_value = "Develop and verify a local exploit PoC.")]
+        goal: String,
+
+        /// Last observation from a failed run/debug probe.
+        #[arg(long)]
+        observation: Option<String>,
+
+        /// Candidate PoC path, if any.
+        #[arg(long)]
+        candidate: Option<PathBuf>,
+
+        /// Maximum matches per gadget pattern.
+        #[arg(long, default_value_t = 8)]
+        max_gadgets: usize,
+    },
 }
 
 #[tokio::main]
@@ -347,7 +478,7 @@ async fn main() -> Result<()> {
 }
 
 fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt};
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
@@ -622,6 +753,89 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             .await?;
             return Ok(());
         }
+        ApiCommands::RuntimeRun {
+            file,
+            args,
+            envs,
+            stdin,
+            cwd,
+            runner,
+            sysroot,
+            timeout_secs,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            runtime_run_json(
+                &path,
+                &args,
+                &envs,
+                stdin.as_deref(),
+                cwd.as_deref(),
+                runner.as_deref(),
+                sysroot.as_deref(),
+                timeout_secs,
+            )?
+        }
+        ApiCommands::DebugProbe {
+            file,
+            args,
+            stdin,
+            sysroot,
+            breakpoints,
+            continue_after_break,
+            timeout_secs,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            debug_probe_json(
+                &path,
+                &args,
+                stdin.as_deref(),
+                sysroot.as_deref(),
+                &breakpoints,
+                continue_after_break,
+                timeout_secs,
+            )?
+        }
+        ApiCommands::ExploitKit {
+            file,
+            cyclic_len,
+            cyclic_find,
+            cyclic_search_len,
+            max_gadgets,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            exploit_kit_json(
+                &path,
+                cyclic_len,
+                cyclic_find.as_deref(),
+                cyclic_search_len,
+                max_gadgets,
+            )?
+        }
+        ApiCommands::IrQuery {
+            file,
+            function,
+            search,
+            max,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            ir_query_json(&path, function.as_deref(), search.as_deref(), max)?
+        }
+        ApiCommands::AnalysisLoop {
+            file,
+            goal,
+            observation,
+            candidate,
+            max_gadgets,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            analysis_loop_json(
+                &path,
+                &goal,
+                observation.as_deref(),
+                candidate.as_deref(),
+                max_gadgets,
+            )?
+        }
     };
     print_api_value(&value)?;
     Ok(())
@@ -768,13 +982,14 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
                 .map(serde_json::Value::from)
                 .unwrap_or(serde_json::Value::Null);
             out["protections"] = elf_protections(&elf);
-            out["imports_sample"] = serde_json::json!(elf
-                .dynsyms
-                .iter()
-                .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
-                .filter(|s| !s.is_empty())
-                .take(40)
-                .collect::<Vec<_>>());
+            out["imports_sample"] = serde_json::json!(
+                elf.dynsyms
+                    .iter()
+                    .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+                    .filter(|s| !s.is_empty())
+                    .take(40)
+                    .collect::<Vec<_>>()
+            );
             out["gadget_hints"] = serde_json::json!(gadget_hints(path, &data, &arch, max_gadgets)?);
             out["analysis_loop"] = serde_json::json!({
                 "recommended_order": [
@@ -903,6 +1118,38 @@ fn runtime_candidates(path: &Path, data: &[u8]) -> serde_json::Value {
         "candidates": candidates,
         "notes": notes,
     })
+}
+
+fn binary_arch_from_data(data: &[u8]) -> Option<String> {
+    match goblin::Object::parse(data).ok()? {
+        goblin::Object::Elf(elf) => Some(elf_arch_label(&elf)),
+        _ => None,
+    }
+}
+
+fn host_arch_label() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "x86" | "i386" | "i586" | "i686" => "i386",
+        "aarch64" => "aarch64",
+        "arm" | "armv7" => "arm",
+        other => other,
+    }
+}
+
+fn default_runner_for_arch(arch: Option<&str>) -> Option<String> {
+    let arch = arch?;
+    if arch == host_arch_label() {
+        return None;
+    }
+    let candidates: &[&str] = match arch {
+        "i386" => &["qemu-i386-static", "qemu-i386"],
+        "x86_64" => &["qemu-x86_64-static", "qemu-x86_64"],
+        "aarch64" => &["qemu-aarch64-static", "qemu-aarch64"],
+        "arm" => &["qemu-arm-static", "qemu-arm"],
+        _ => &[],
+    };
+    candidates.iter().find_map(|name| find_in_path(name))
 }
 
 fn find_in_path(name: &str) -> Option<String> {
@@ -1079,7 +1326,24 @@ fn verify_exploit_script(
     }
 
     let start = Instant::now();
-    let mut child = cmd.spawn()?;
+    let program = format!("{:?}", cmd);
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "command": program,
+                "spawn_error": e.to_string(),
+                "timed_out": false,
+                "duration_ms": start.elapsed().as_millis(),
+                "exit_code": null,
+                "signal": null,
+                "stdout": "",
+                "stderr": "",
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+            }));
+        }
+    };
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
     let stdout_thread = std::thread::spawn(move || read_limited(stdout, 256 * 1024));
@@ -1153,6 +1417,624 @@ fn read_limited<R: Read>(reader: R, max: u64) -> Vec<u8> {
     out
 }
 
+fn runtime_run_json(
+    binary: &Path,
+    args: &[String],
+    envs: &[String],
+    stdin_spec: Option<&str>,
+    cwd: Option<&Path>,
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let context = build_exploit_context(binary, 8)?;
+    let stdin_bytes = read_input_spec(stdin_spec)?;
+    let mut cmdline = Vec::new();
+
+    let arch = binary_arch_from_data(&data);
+    let effective_runner = runner
+        .map(|r| r.to_string())
+        .or_else(|| default_runner_for_arch(arch.as_deref()));
+
+    if let Some(runner) = &effective_runner {
+        cmdline.push(runner.to_string());
+        if let Some(sysroot) = sysroot {
+            cmdline.push("-L".to_string());
+            cmdline.push(sysroot.to_string_lossy().into_owned());
+        }
+        cmdline.push(binary.to_string_lossy().into_owned());
+    } else {
+        cmdline.push(binary.to_string_lossy().into_owned());
+    }
+    cmdline.extend(args.iter().cloned());
+
+    let mut cmd = Command::new(&cmdline[0]);
+    cmd.args(&cmdline[1..])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    for env in envs {
+        let Some((key, value)) = env.split_once('=') else {
+            anyhow::bail!("invalid --env '{}'; expected KEY=VALUE", env);
+        };
+        cmd.env(key, value);
+    }
+    if stdin_bytes.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let output = run_captured(cmd, stdin_bytes.as_deref(), timeout_secs, 512 * 1024)?;
+    Ok(serde_json::json!({
+        "kind": "runtime_run",
+        "binary": binary,
+        "cmd": cmdline,
+        "runner_selected": effective_runner,
+        "cwd": cwd,
+        "timeout_secs": timeout_secs.clamp(1, 300),
+        "elf_runtime": runtime_candidates(binary, &data),
+        "context_summary": {
+            "format": context.get("format"),
+            "arch": context.get("arch"),
+            "protections": context.get("protections"),
+            "runtime_notes": context.pointer("/runtime/notes"),
+        },
+        "result": output,
+        "next_action": runtime_next_action(&output),
+    }))
+}
+
+fn debug_probe_json(
+    binary: &Path,
+    args: &[String],
+    stdin_spec: Option<&str>,
+    sysroot: Option<&Path>,
+    breakpoints: &[String],
+    continue_after_break: bool,
+    timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let arch = binary_arch_from_data(&data);
+    if arch.as_deref().is_some_and(|a| a != host_arch_label()) {
+        return debug_probe_remote_json(
+            binary,
+            arch.as_deref(),
+            args,
+            stdin_spec,
+            sysroot,
+            breakpoints,
+            continue_after_break,
+            timeout_secs,
+        );
+    }
+
+    let Some(gdb) = find_in_path("gdb") else {
+        return Ok(serde_json::json!({
+            "kind": "debug_probe",
+            "available": false,
+            "missing_tool": "gdb",
+            "install_hint": "install gdb to enable register/backtrace/crash probes",
+        }));
+    };
+
+    let stdin_bytes = read_input_spec(stdin_spec)?;
+    let stdin_file = if let Some(bytes) = stdin_bytes {
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(&bytes)?;
+        Some(file)
+    } else {
+        None
+    };
+
+    let mut gdb_args = vec![
+        "--quiet".to_string(),
+        "--batch".to_string(),
+        binary.to_string_lossy().into_owned(),
+        "-ex".to_string(),
+        "set pagination off".to_string(),
+        "-ex".to_string(),
+        "set confirm off".to_string(),
+        "-ex".to_string(),
+        "set disassembly-flavor intel".to_string(),
+    ];
+    if !args.is_empty() {
+        gdb_args.push("-ex".to_string());
+        gdb_args.push(format!(
+            "set args {}",
+            args.iter()
+                .map(|s| gdb_quote(s))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
+    for bp in breakpoints {
+        gdb_args.push("-ex".to_string());
+        let bp = if bp.starts_with("0x") || bp.chars().all(|c| c.is_ascii_hexdigit()) {
+            format!("break *{}", bp)
+        } else {
+            format!("break {}", bp)
+        };
+        gdb_args.push(bp);
+    }
+    gdb_args.push("-ex".to_string());
+    let run_cmd = if let Some(file) = &stdin_file {
+        format!("run < {}", file.path().display())
+    } else {
+        "run".to_string()
+    };
+    gdb_args.push(run_cmd);
+    if continue_after_break && !breakpoints.is_empty() {
+        gdb_args.push("-ex".to_string());
+        gdb_args.push("continue".to_string());
+    }
+    let reg_command = register_command_for_arch(arch.as_deref());
+    for command in [reg_command.as_str(), "bt", "x/16i $pc", "info proc mappings"] {
+        gdb_args.push("-ex".to_string());
+        gdb_args.push(command.to_string());
+    }
+    let mut cmd = Command::new(&gdb);
+    cmd.args(&gdb_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let output = run_captured(cmd, None, timeout_secs, 768 * 1024)?;
+    let combined = format!(
+        "{}{}",
+        output.get("stdout").and_then(|v| v.as_str()).unwrap_or(""),
+        output.get("stderr").and_then(|v| v.as_str()).unwrap_or("")
+    );
+    Ok(serde_json::json!({
+        "kind": "debug_probe",
+        "available": true,
+        "gdb": gdb,
+        "binary": binary,
+        "args": args,
+        "breakpoints": breakpoints,
+        "result": output,
+        "registers": parse_gdb_registers(&combined),
+        "signals": extract_gdb_signals(&combined),
+        "next_action": if combined.contains("SIGSEGV") || combined.contains("SIGILL") || combined.contains("SIGABRT") {
+            "Use registers and $pc disassembly to compute overwrite/control-flow offset, then verify with exploit-verify."
+        } else if combined.contains("No such file or directory") || combined.contains("not found") {
+            "Fix loader/sysroot/library environment, then rerun debug-probe."
+        } else {
+            "Correlate register/backtrace output with ir-query/function-context and rerun with a narrower breakpoint."
+        },
+    }))
+}
+
+fn debug_probe_remote_json(
+    binary: &Path,
+    arch: Option<&str>,
+    args: &[String],
+    stdin_spec: Option<&str>,
+    sysroot: Option<&Path>,
+    breakpoints: &[String],
+    continue_after_break: bool,
+    timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    let Some(gdb) = find_in_path("gdb-multiarch") else {
+        return Ok(serde_json::json!({
+            "kind": "debug_probe",
+            "available": false,
+            "binary": binary,
+            "arch": arch,
+            "host_arch": host_arch_label(),
+            "missing_tool": "gdb-multiarch",
+            "runtime_runner": default_runner_for_arch(arch),
+            "install_hint": "install gdb-multiarch for cross-architecture debugging",
+            "next_action": "Use runtime-run for qemu execution now; install gdb-multiarch to enable cross-arch debug probes.",
+        }));
+    };
+    let Some(qemu) = default_runner_for_arch(arch) else {
+        return Ok(serde_json::json!({
+            "kind": "debug_probe",
+            "available": false,
+            "binary": binary,
+            "arch": arch,
+            "host_arch": host_arch_label(),
+            "gdb": gdb,
+            "missing_tool": format!("qemu-user for {}", arch.unwrap_or("target")),
+            "install_hint": "install qemu-user or qemu-user-static for this target architecture",
+        }));
+    };
+
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let runtime = runtime_candidates(binary, &data);
+    let has_loader_blocker = runtime
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .map_or(false, |notes| {
+            notes.iter().any(|note| {
+                note.get("kind")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|kind| kind == "missing_interpreter")
+            })
+        });
+    if has_loader_blocker && sysroot.is_none() {
+        return Ok(serde_json::json!({
+            "kind": "debug_probe",
+            "available": false,
+            "binary": binary,
+            "arch": arch,
+            "host_arch": host_arch_label(),
+            "gdb": gdb,
+            "qemu": qemu,
+            "runtime": runtime,
+            "reason": "target dynamic loader/sysroot is missing; qemu gdbstub cannot reach target code",
+            "next_action": "Install the matching loader/sysroot or rerun debug-probe with --sysroot <root>.",
+        }));
+    }
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+
+    let stdin_bytes = read_input_spec(stdin_spec)?;
+    let mut qemu_cmd = Command::new(&qemu);
+    qemu_cmd
+        .arg("-g")
+        .arg(port.to_string());
+    if let Some(sysroot) = sysroot {
+        qemu_cmd.arg("-L").arg(sysroot);
+    }
+    qemu_cmd
+        .arg(binary)
+        .args(args)
+        .stdin(if stdin_bytes.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        qemu_cmd.process_group(0);
+    }
+    let qemu_command = format!("{:?}", qemu_cmd);
+    let mut qemu_child = match qemu_cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "kind": "debug_probe",
+                "available": false,
+                "binary": binary,
+                "arch": arch,
+                "gdb": gdb,
+                "qemu": qemu,
+                "spawn_error": e.to_string(),
+            }));
+        }
+    };
+    if let Some(input) = stdin_bytes {
+        if let Some(mut stdin) = qemu_child.stdin.take() {
+            let _ = stdin.write_all(&input);
+        }
+    }
+    let qemu_stdout = qemu_child.stdout.take().expect("qemu stdout piped");
+    let qemu_stderr = qemu_child.stderr.take().expect("qemu stderr piped");
+    let qemu_stdout_thread = std::thread::spawn(move || read_limited(qemu_stdout, 512 * 1024));
+    let qemu_stderr_thread = std::thread::spawn(move || read_limited(qemu_stderr, 512 * 1024));
+
+    std::thread::sleep(Duration::from_millis(150));
+
+    let mut gdb_args = vec![
+        "--quiet".to_string(),
+        "--batch".to_string(),
+        binary.to_string_lossy().into_owned(),
+        "-ex".to_string(),
+        "set pagination off".to_string(),
+        "-ex".to_string(),
+        "set confirm off".to_string(),
+        "-ex".to_string(),
+        "set debuginfod enabled off".to_string(),
+        "-ex".to_string(),
+        "set disassembly-flavor intel".to_string(),
+        "-ex".to_string(),
+        format!("target remote 127.0.0.1:{port}"),
+    ];
+    for bp in breakpoints {
+        gdb_args.push("-ex".to_string());
+        let bp = if bp.starts_with("0x") || bp.chars().all(|c| c.is_ascii_hexdigit()) {
+            format!("break *{}", bp)
+        } else {
+            format!("break {}", bp)
+        };
+        gdb_args.push(bp);
+    }
+    gdb_args.push("-ex".to_string());
+    gdb_args.push("continue".to_string());
+    if continue_after_break && !breakpoints.is_empty() {
+        gdb_args.push("-ex".to_string());
+        gdb_args.push("continue".to_string());
+    }
+    let reg_command = register_command_for_arch(arch);
+    for command in [reg_command.as_str(), "bt", "x/16i $pc", "info files"] {
+        gdb_args.push("-ex".to_string());
+        gdb_args.push(command.to_string());
+    }
+
+    let mut gdb_cmd = Command::new(&gdb);
+    gdb_cmd
+        .args(&gdb_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        gdb_cmd.process_group(0);
+    }
+
+    let gdb_output = run_captured(gdb_cmd, None, timeout_secs, 768 * 1024)?;
+
+    let _ = qemu_child.try_wait()?;
+    #[cfg(unix)]
+    unsafe {
+        libc::killpg(qemu_child.id() as i32, libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = qemu_child.kill();
+    }
+    let qemu_status = qemu_child.wait().ok();
+    let qemu_stdout = qemu_stdout_thread.join().unwrap_or_default();
+    let qemu_stderr = qemu_stderr_thread.join().unwrap_or_default();
+    let qemu_stdout_text = String::from_utf8_lossy(&qemu_stdout).into_owned();
+    let qemu_stderr_text = String::from_utf8_lossy(&qemu_stderr).into_owned();
+
+    let combined = format!(
+        "{}{}{}{}",
+        gdb_output
+            .get("stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        gdb_output
+            .get("stderr")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        qemu_stdout_text,
+        qemu_stderr_text
+    );
+    Ok(serde_json::json!({
+        "kind": "debug_probe",
+        "available": true,
+        "mode": "qemu-gdbstub",
+        "binary": binary,
+        "arch": arch,
+        "host_arch": host_arch_label(),
+        "gdb": gdb,
+        "qemu": qemu,
+        "qemu_command": qemu_command,
+        "remote": format!("127.0.0.1:{port}"),
+        "args": args,
+        "breakpoints": breakpoints,
+        "gdb_result": gdb_output,
+        "qemu_result": {
+            "exit_code": qemu_status.and_then(|s| s.code()),
+            "stdout": qemu_stdout_text,
+            "stderr": qemu_stderr_text,
+            "stdout_truncated": qemu_stdout.len() >= 512 * 1024,
+            "stderr_truncated": qemu_stderr.len() >= 512 * 1024,
+        },
+        "registers": parse_gdb_registers(&combined),
+        "signals": extract_gdb_signals(&combined),
+        "next_action": if combined.contains("SIGSEGV") || combined.contains("SIGILL") || combined.contains("SIGABRT") {
+            "Use registers and $pc disassembly to compute overwrite/control-flow offset, then verify with exploit-verify."
+        } else if combined.contains("No such file or directory") || combined.contains("not found") {
+            "Fix loader/sysroot/library environment, then rerun debug-probe."
+        } else if combined.contains("Breakpoint") {
+            "Breakpoint hit; inspect registers/disassembly and rerun with --continue-after-break or a narrower breakpoint."
+        } else {
+            "Correlate gdb/qemu output with ir-query and rerun with target input or breakpoints."
+        },
+    }))
+}
+
+fn exploit_kit_json(
+    binary: &Path,
+    cyclic_len: Option<usize>,
+    cyclic_find: Option<&str>,
+    cyclic_search_len: usize,
+    max_gadgets: usize,
+) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let context = build_exploit_context(binary, max_gadgets)?;
+    let plt = tools::dispatch(
+        "resolve_plt",
+        &serde_json::json!({ "path": binary.to_string_lossy() }),
+    );
+    let cyclic_pattern_text = cyclic_len.map(|len| cyclic_pattern(len.min(1024 * 1024)));
+    let cyclic_offset = cyclic_find.map(|needle| {
+        let pattern = cyclic_pattern(cyclic_search_len.min(1024 * 1024));
+        serde_json::json!({
+            "needle": needle,
+            "offset": cyclic_find_offset(&pattern, needle),
+            "search_len": cyclic_search_len.min(1024 * 1024),
+            "endianness": "little-endian integer forms and direct text are both tried",
+        })
+    });
+
+    let arch = if let Ok(goblin::Object::Elf(elf)) = goblin::Object::parse(&data) {
+        elf_arch_label(&elf)
+    } else {
+        "unknown".to_string()
+    };
+    Ok(serde_json::json!({
+        "kind": "exploit_kit",
+        "binary": binary,
+        "checksec": context.get("protections"),
+        "runtime": context.get("runtime"),
+        "gadget_hints": context.get("gadget_hints"),
+        "plt_got": {
+            "ok": !plt.output.starts_with("Error:"),
+            "text": plt.output,
+        },
+        "cyclic": {
+            "alphabet": "abcdefghijklmnopqrstuvwxyz",
+            "pattern": cyclic_pattern_text,
+            "find": cyclic_offset,
+        },
+        "recipes": exploit_recipes(&arch, context.get("protections")),
+    }))
+}
+
+fn ir_query_json(
+    binary: &Path,
+    function: Option<&str>,
+    search: Option<&str>,
+    max: usize,
+) -> Result<serde_json::Value> {
+    let max = max.clamp(1, 500);
+    let funcs_raw = tools::dispatch(
+        "list_functions",
+        &serde_json::json!({
+            "path": binary.to_string_lossy(),
+            "max_results": max,
+            "json": true,
+        }),
+    );
+    let functions = serde_json::from_str::<serde_json::Value>(&funcs_raw.output)
+        .unwrap_or_else(|_| serde_json::json!({ "raw": funcs_raw.output }));
+    let strings_raw = tools::dispatch(
+        "strings_extract",
+        &serde_json::json!({
+            "path": binary.to_string_lossy(),
+            "min_len": 4,
+            "max_results": max,
+        }),
+    );
+
+    let mut selected = serde_json::Value::Null;
+    if let Some(addr) = function {
+        let vaddr = parse_int(addr)?;
+        let disasm = tools::dispatch(
+            "disassemble",
+            &serde_json::json!({
+                "path": binary.to_string_lossy(),
+                "vaddr": vaddr,
+                "length": 320,
+            }),
+        );
+        let decomp = tools::dispatch(
+            "decompile",
+            &serde_json::json!({ "path": binary.to_string_lossy(), "vaddr": vaddr }),
+        );
+        let xrefs = tools::dispatch(
+            "xrefs_to",
+            &serde_json::json!({ "path": binary.to_string_lossy(), "vaddr": vaddr }),
+        );
+        selected = serde_json::json!({
+            "vaddr": format!("0x{vaddr:x}"),
+            "disassembly": tool_text_json(disasm.output),
+            "decompile": tool_text_json(decomp.output),
+            "xrefs_to": tool_text_json(xrefs.output),
+        });
+    }
+
+    let search_hits = search.map(|needle| {
+        let needle_l = needle.to_ascii_lowercase();
+        let mut hits = Vec::new();
+        collect_json_text_hits("functions", &functions, &needle_l, &mut hits, 40);
+        for line in strings_raw.output.lines() {
+            if line.to_ascii_lowercase().contains(&needle_l) {
+                hits.push(serde_json::json!({ "source": "strings", "text": line }));
+                if hits.len() >= 80 {
+                    break;
+                }
+            }
+        }
+        hits
+    });
+
+    Ok(serde_json::json!({
+        "kind": "ir_query",
+        "binary": binary,
+        "functions": functions,
+        "selected_function": selected,
+        "strings": tool_text_json(strings_raw.output),
+        "search": {
+            "needle": search,
+            "hits": search_hits,
+        },
+        "next_actions": [
+            "Use --function 0xADDR on promising functions to retrieve decompile/disassembly/xrefs together.",
+            "Use runtime-run/debug-probe to validate whether candidate input reaches the selected function.",
+            "Promote useful names/comments through existing MCP/UI annotation tools."
+        ],
+    }))
+}
+
+fn analysis_loop_json(
+    binary: &Path,
+    goal: &str,
+    observation: Option<&str>,
+    candidate: Option<&Path>,
+    max_gadgets: usize,
+) -> Result<serde_json::Value> {
+    let context = build_exploit_context(binary, max_gadgets)?;
+    let kit = exploit_kit_json(binary, Some(256), None, 8192, max_gadgets)?;
+    let ir = ir_query_json(binary, None, None, 40)?;
+    let runtime_notes = context
+        .pointer("/runtime/notes")
+        .cloned()
+        .unwrap_or_default();
+    let candidate_status = if let Some(path) = candidate {
+        serde_json::json!({
+            "path": path,
+            "exists": path.exists(),
+            "verify_command": format!(
+                "target/debug/kaijulab api exploit-verify --file {} --expect-target-exit 42 {}",
+                shell_quote(&binary.to_string_lossy()),
+                shell_quote(&path.to_string_lossy())
+            ),
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    Ok(serde_json::json!({
+        "kind": "analysis_loop",
+        "binary": binary,
+        "goal": goal,
+        "observation": observation,
+        "state": {
+            "context": context,
+            "exploit_kit": kit,
+            "ir_overview": ir,
+            "candidate": candidate_status,
+        },
+        "loop_contract": [
+            "Hypothesize from context/IR.",
+            "Run runtime-run or debug-probe to collect concrete behavior.",
+            "Edit candidate PoC.",
+            "Run exploit-verify with an explicit predicate.",
+            "Stop only on success=true or a structured environment blocker."
+        ],
+        "recommended_next_tool": recommended_next_tool(observation, &runtime_notes, candidate),
+        "agent_prompt_fragment": format!(
+            "Use kaijulab api analysis-loop --file {} --candidate <poc> after each failed attempt; use runtime-run/debug-probe for behavior and exploit-verify for proof.",
+            shell_quote(&binary.to_string_lossy())
+        ),
+    }))
+}
+
 fn exploit_loop_prompt(
     binary: &Path,
     output: &Path,
@@ -1176,6 +2058,9 @@ Rules:
 - Write a Python stdlib-only PoC unless the context proves a dependency is required.
 - Use qemu/runtime candidates from the context; handle missing dynamic loaders explicitly.
 - Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
+- Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
+- Use `target/debug/kaijulab api runtime-run --file {binary_q}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}` for registers/backtrace/crash state.
+- Use `target/debug/kaijulab api exploit-kit --file {binary_q}` for checksec/PLT/GOT/gadgets/cyclic helpers and `target/debug/kaijulab api ir-query --file {binary_q}` for functions/strings/decompile slices.
 - After every candidate edit, run `target/debug/kaijulab api exploit-verify --file {binary_q} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
 - If validation is blocked by environment dependencies, make the script print the exact blocker and remediation, then print SCRIPT_READY_BLOCKED.
@@ -1193,6 +2078,407 @@ Rules:
 
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn gdb_quote(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '='))
+    {
+        s.to_string()
+    } else {
+        shell_quote(s)
+    }
+}
+
+fn read_input_spec(spec: Option<&str>) -> Result<Option<Vec<u8>>> {
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    if let Some(path) = spec.strip_prefix('@') {
+        Ok(Some(std::fs::read(path)?))
+    } else {
+        Ok(Some(spec.as_bytes().to_vec()))
+    }
+}
+
+fn run_captured(
+    mut cmd: Command,
+    stdin_bytes: Option<&[u8]>,
+    timeout_secs: u64,
+    max_stream: u64,
+) -> Result<serde_json::Value> {
+    let timeout = Duration::from_secs(timeout_secs.clamp(1, 300));
+    let start = Instant::now();
+    let program = format!("{:?}", cmd);
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "command": program,
+                "spawn_error": e.to_string(),
+                "timed_out": false,
+                "duration_ms": start.elapsed().as_millis(),
+                "exit_code": null,
+                "signal": null,
+                "stdout": "",
+                "stderr": "",
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+            }));
+        }
+    };
+    if let Some(input) = stdin_bytes {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input);
+        }
+    }
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let stdout_thread = std::thread::spawn(move || read_limited(stdout, max_stream));
+    let stderr_thread = std::thread::spawn(move || read_limited(stderr, max_stream));
+
+    let (timed_out, status) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (false, Some(status));
+        }
+        if start.elapsed() >= timeout {
+            #[cfg(unix)]
+            unsafe {
+                libc::killpg(child.id() as i32, libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
+            let status = child.wait().ok();
+            break (true, status);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.and_then(|s| s.signal())
+    };
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+
+    Ok(serde_json::json!({
+        "command": program,
+        "timed_out": timed_out,
+        "duration_ms": start.elapsed().as_millis(),
+        "exit_code": status.and_then(|s| s.code()),
+        "signal": signal,
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "stdout_truncated": stdout.len() as u64 >= max_stream,
+        "stderr_truncated": stderr.len() as u64 >= max_stream,
+    }))
+}
+
+fn runtime_next_action(output: &serde_json::Value) -> &'static str {
+    let stderr = output.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    if output
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        "Target timed out; add stdin/argv fixture or probe with gdb breakpoints."
+    } else if stderr.contains("No such file or directory") || stderr.contains("not found") {
+        "Resolve missing loader/library with exploit-context runtime notes or qemu -L sysroot."
+    } else if output.get("signal").and_then(|v| v.as_i64()).is_some() {
+        "Crash observed; run debug-probe with same input to capture registers/backtrace."
+    } else {
+        "Use observed stdout/stderr to refine IR targets or candidate PoC predicate."
+    }
+}
+
+fn extract_gdb_signals(text: &str) -> Vec<String> {
+    [
+        "SIGSEGV", "SIGILL", "SIGABRT", "SIGBUS", "SIGFPE", "SIGTRAP",
+    ]
+    .iter()
+    .filter(|sig| text.contains(**sig))
+    .map(|sig| (*sig).to_string())
+    .collect()
+}
+
+fn register_command_for_arch(arch: Option<&str>) -> String {
+    let regs = match arch.unwrap_or(host_arch_label()) {
+        "i386" => "eax ebx ecx edx esi edi ebp esp eip eflags",
+        "x86_64" => "rax rbx rcx rdx rsi rdi rbp rsp rip eflags r8 r9 r10 r11 r12 r13 r14 r15",
+        "aarch64" => "x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 x29 x30 sp pc cpsr",
+        "arm" => "r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 sp lr pc cpsr",
+        _ => "",
+    };
+    if regs.is_empty() {
+        "info registers".to_string()
+    } else {
+        format!("info registers {regs}")
+    }
+}
+
+fn parse_gdb_registers(text: &str) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let Some(value) = parts.next() else {
+            continue;
+        };
+        if is_register_name(name) && value.starts_with("0x") {
+            out.insert(name.to_string(), serde_json::json!(value));
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
+fn is_register_name(name: &str) -> bool {
+    matches!(
+        name,
+        "eax"
+            | "ebx"
+            | "ecx"
+            | "edx"
+            | "esi"
+            | "edi"
+            | "ebp"
+            | "esp"
+            | "eip"
+            | "eflags"
+            | "rax"
+            | "rbx"
+            | "rcx"
+            | "rdx"
+            | "rsi"
+            | "rdi"
+            | "rbp"
+            | "rsp"
+            | "rip"
+            | "r8"
+            | "r9"
+            | "r10"
+            | "r11"
+            | "r12"
+            | "r13"
+            | "r14"
+            | "r15"
+            | "x0"
+            | "x1"
+            | "x2"
+            | "x3"
+            | "x4"
+            | "x5"
+            | "x6"
+            | "x7"
+            | "x8"
+            | "x9"
+            | "x10"
+            | "x11"
+            | "x12"
+            | "x13"
+            | "x14"
+            | "x15"
+            | "x29"
+            | "x30"
+            | "sp"
+            | "pc"
+            | "lr"
+            | "cpsr"
+    )
+}
+
+fn parse_int(s: &str) -> Result<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Ok(u64::from_str_radix(hex, 16)?)
+    } else {
+        Ok(s.parse::<u64>()?)
+    }
+}
+
+fn tool_text_json(output: String) -> serde_json::Value {
+    serde_json::json!({
+        "ok": !output.starts_with("Error:"),
+        "text": output,
+    })
+}
+
+fn cyclic_pattern(len: usize) -> String {
+    let a = b"abcdefghijklmnopqrstuvwxyz";
+    let b = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let c = b"0123456789";
+    let mut out = Vec::with_capacity(len);
+    'outer: for &x in a {
+        for &y in b {
+            for &z in c {
+                for ch in [x, y, z] {
+                    if out.len() >= len {
+                        break 'outer;
+                    }
+                    out.push(ch);
+                }
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+fn cyclic_find_offset(pattern: &str, needle: &str) -> Option<usize> {
+    let mut needles = Vec::new();
+    needles.push(needle.as_bytes().to_vec());
+    let trimmed = needle.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if let Ok(value) = u64::from_str_radix(hex, 16) {
+            needles.push((value as u32).to_le_bytes().to_vec());
+            needles.push(value.to_le_bytes().to_vec());
+        }
+    }
+    if let Ok(value) = trimmed.parse::<u64>() {
+        needles.push((value as u32).to_le_bytes().to_vec());
+        needles.push(value.to_le_bytes().to_vec());
+    }
+    let bytes = pattern.as_bytes();
+    needles
+        .into_iter()
+        .filter(|n| !n.is_empty())
+        .find_map(|needle| find_bytes(bytes, &needle))
+}
+
+fn exploit_recipes(arch: &str, protections: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    let nx = protections
+        .and_then(|p| p.get("nx"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let pie = protections
+        .and_then(|p| p.get("pie"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut recipes = Vec::new();
+    recipes.push(serde_json::json!({
+        "name": "offset discovery",
+        "steps": ["send cyclic pattern", "debug-probe crash", "cyclic-find overwritten PC/register"],
+    }));
+    if nx {
+        recipes.push(serde_json::json!({
+            "name": "ROP/syscall",
+            "when": "NX enabled",
+            "steps": ["use gadget_hints and PLT/GOT", "control argument registers", "call system/execve/open-read-write"],
+        }));
+    } else {
+        recipes.push(serde_json::json!({
+            "name": "shellcode",
+            "when": "NX disabled",
+            "steps": ["place shellcode in controlled buffer", "redirect PC to buffer"],
+        }));
+    }
+    if pie {
+        recipes.push(serde_json::json!({
+            "name": "PIE leak",
+            "when": "PIE enabled",
+            "steps": ["find address leak", "compute image base", "rebase gadgets before final payload"],
+        }));
+    }
+    if arch == "i386" {
+        recipes.push(serde_json::json!({
+            "name": "i386 syscall",
+            "registers": {"eax": "syscall", "ebx": "arg0", "ecx": "arg1", "edx": "arg2"},
+        }));
+    } else if arch == "x86_64" {
+        recipes.push(serde_json::json!({
+            "name": "x86_64 syscall",
+            "registers": {"rax": "syscall", "rdi": "arg0", "rsi": "arg1", "rdx": "arg2"},
+        }));
+    }
+    recipes
+}
+
+fn collect_json_text_hits(
+    source: &str,
+    value: &serde_json::Value,
+    needle_l: &str,
+    hits: &mut Vec<serde_json::Value>,
+    limit: usize,
+) {
+    if hits.len() >= limit {
+        return;
+    }
+    match value {
+        serde_json::Value::String(s) => {
+            if s.to_ascii_lowercase().contains(needle_l) {
+                hits.push(serde_json::json!({ "source": source, "text": s }));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_text_hits(source, item, needle_l, hits, limit);
+                if hits.len() >= limit {
+                    break;
+                }
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for value in map.values() {
+                collect_json_text_hits(source, value, needle_l, hits, limit);
+                if hits.len() >= limit {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn recommended_next_tool(
+    observation: Option<&str>,
+    runtime_notes: &serde_json::Value,
+    candidate: Option<&Path>,
+) -> serde_json::Value {
+    if runtime_notes.as_array().map_or(false, |a| !a.is_empty()) {
+        return serde_json::json!({
+            "command": "exploit-context",
+            "reason": "runtime notes contain loader/sysroot blockers; fix execution environment first",
+        });
+    }
+    if let Some(obs) = observation {
+        let obs_l = obs.to_ascii_lowercase();
+        if obs_l.contains("segmentation fault")
+            || obs_l.contains("sigsegv")
+            || obs_l.contains("crash")
+        {
+            return serde_json::json!({
+                "command": "debug-probe",
+                "reason": "last observation is a crash; capture registers/backtrace and compute control offset",
+            });
+        }
+        if obs_l.contains("timeout") || obs_l.contains("hang") {
+            return serde_json::json!({
+                "command": "runtime-run",
+                "reason": "last observation timed out; reduce fixture and capture stdout/stderr behavior",
+            });
+        }
+    }
+    if candidate.is_some() {
+        serde_json::json!({
+            "command": "exploit-verify",
+            "reason": "candidate exists; validate an explicit success predicate",
+        })
+    } else {
+        serde_json::json!({
+            "command": "ir-query",
+            "reason": "no candidate yet; inspect functions/strings and choose an input-to-control path",
+        })
+    }
 }
 
 async fn run_agent_console(

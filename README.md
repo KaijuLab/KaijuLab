@@ -79,6 +79,11 @@ kaijulab api agent-run codex --kind triage --vaddr 0x401000 --write-policy sugge
 kaijulab api console claude
 kaijulab api console codex --prompt 'Use kaijulab MCP to summarize the active workspace.' --idle-timeout-secs 30
 kaijulab api exploit-context
+kaijulab api runtime-run --stdin 'AAAA'
+kaijulab api debug-probe --stdin @crash.input --break 0x401000
+kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
+kaijulab api ir-query --search read
+kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
 kaijulab api exploit-verify --expect-target-exit 42 /tmp/poc.py
 kaijulab api exploit-loop claude --output /tmp/poc.py
 ```
@@ -99,14 +104,21 @@ Convenience subcommands cover the common automation loop:
 - `console <claude|codex> --prompt ... --idle-timeout-secs N` sends one prompt to that terminal and exits after quiet output.
 - `wait-job <JOB_ID>` polls `/api/jobs/<JOB_ID>` until `ok`, `failed`, or `cancelled`.
 - `exploit-context [--file FILE]` emits an exploit workbench bundle: ELF protections, qemu/native runtime candidates, missing loader/sysroot notes, prompt strings, and common gadget hints.
+- `runtime-run [--file FILE] [--arg X] [--stdin TEXT|@FILE] [--runner qemu-i386 --sysroot ROOT]` runs the target with captured stdout/stderr, timeout, exit code, signal, and runtime diagnostics.
+- `debug-probe [--file FILE] [--stdin TEXT|@FILE] [--break ADDR] [--sysroot ROOT]` runs a non-interactive `gdb`/`gdb-multiarch` probe and returns parsed registers, backtrace, PC disassembly, mappings, signal hints, and next action. Foreign-architecture ELF targets are run under qemu's gdbstub automatically; dynamically linked foreign targets need a matching `--sysroot`.
+- `exploit-kit [--file FILE] [--cyclic-len N] [--cyclic-find VALUE]` emits checksec/runtime data, PLT/GOT text, gadget hints, exploit recipes, and cyclic pattern helpers.
+- `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
+- `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
 - `exploit-verify [--file FILE] [--expect-exit N|--expect-target-exit N|--expect-output TEXT] SCRIPT` runs a candidate PoC with `KAIJU_BINARY`/qemu env vars and returns structured success/failure JSON.
-- `exploit-loop <claude|codex> --output /tmp/poc.py` sends Agent Console a bounded PoC-development prompt that requires `exploit-context`/`exploit-verify` after every candidate edit.
+- `exploit-loop <claude|codex> --output /tmp/poc.py` sends Agent Console a bounded PoC-development prompt that requires `analysis-loop`, `runtime-run`, `debug-probe`, `exploit-kit`, `ir-query`, and `exploit-verify` as needed.
 
 For CTF exploit work, prefer the loop commands over ad-hoc shell probing:
 
 ```bash
 kaijulab serve samples/PwnableTW/3x17/3x17 --allow-exec
 kaijulab api exploit-context
+kaijulab api exploit-kit --cyclic-len 256
+kaijulab api runtime-run --stdin 'AAAA'
 kaijulab api exploit-loop claude --output /tmp/kaijulab-3x17-poc.py \
   --goal 'Write a stdlib Python PoC that proves code execution with target exit 42.'
 kaijulab api exploit-verify --expect-target-exit 42 /tmp/kaijulab-3x17-poc.py
