@@ -1560,3 +1560,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:54:19] OBSERVE: searched src/tools.rs for "decompile|decompile""
 [15:54:19] OBSERVE: searched tools.rs for "fn decompile|decompile"
 [15:54:19] OBSERVE: read src/core/mod.rs
+[15:54:19] OBSERVE: read src/core/analysis.rs
