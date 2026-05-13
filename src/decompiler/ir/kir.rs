@@ -40,6 +40,7 @@ pub struct KirOp {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct KirSsaFacts {
     pub available: bool,
+    pub dominance_available: bool,
     pub definition_count: usize,
     pub use_count: usize,
     pub phi_count: usize,
@@ -72,6 +73,8 @@ pub struct KirSsaUse {
 pub struct KirBlockSsa {
     pub block: String,
     pub predecessors: Vec<String>,
+    pub immediate_dominator: Option<String>,
+    pub dominance_frontier: Vec<String>,
     pub live_in: Vec<String>,
     pub defined: Vec<String>,
     pub out_versions: Vec<KirRegisterVersion>,

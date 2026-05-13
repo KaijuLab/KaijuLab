@@ -375,7 +375,7 @@ pub fn decompiler_quality_report_path(
         blockers,
         next_engine_work: vec![
             "Replace text-parse machine facts with lifted IR data-flow facts".to_string(),
-            "Build SSA over recovered CFG and insert phi nodes at dominance frontiers".to_string(),
+            "Promote KIR phi candidates into fully renamed SSA variables".to_string(),
             "Promote heuristic stack/global variable candidates into memory SSA".to_string(),
             "Infer call signatures/calling conventions before expression rendering".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
@@ -429,7 +429,7 @@ fn decompiler_score(
     // decompiler semantics. Keep the cap explicit until memory SSA and type
     // propagation are part of the scored engine.
     let cap = if variable_candidates > 0 && kir_ssa_facts > 0 {
-        75
+        78
     } else if variable_candidates > 0 && kir_facts > 0 {
         70
     } else if variable_candidates > 0 {
@@ -490,7 +490,7 @@ fn decompiler_blockers(
         );
         if kir_ssa_facts > 0 {
             blockers.push(
-                "score is capped at 75 until KIR dominance-frontier SSA/memory SSA/type inference land"
+                "score is capped at 78 until KIR phi renaming/memory SSA/type inference land"
                     .to_string(),
             );
         } else if kir_facts > 0 {
@@ -1014,9 +1014,21 @@ fn analyze_kir_ssa(
             },
         );
     }
+    let block_labels = kir_function
+        .blocks
+        .iter()
+        .map(|block| block.start.clone())
+        .collect::<Vec<_>>();
+    let successors = kir_successors(function, &block_labels, &block_ranges);
+    let dominators = kir_dominators(&block_labels, &kir_function.entry, &predecessors);
+    let immediate_dominators =
+        kir_immediate_dominators(&block_labels, &kir_function.entry, &dominators);
+    let dominance_frontiers =
+        kir_dominance_frontiers(&block_labels, &predecessors, &immediate_dominators);
 
     let mut versions = BTreeMap::<String, u32>::new();
     let mut block_out_versions = BTreeMap::<String, BTreeMap<String, u32>>::new();
+    let mut block_definitions = BTreeMap::<String, BTreeSet<String>>::new();
     let mut definitions = Vec::new();
     let mut uses = Vec::new();
 
@@ -1051,6 +1063,10 @@ fn analyze_kir_ssa(
                 state.defined.insert(reg.clone());
             }
         }
+        block_definitions
+            .entry(block.clone())
+            .or_default()
+            .extend(write_regs.iter().cloned());
 
         for reg in write_regs {
             let version = versions.get(&reg).copied().unwrap_or(0).saturating_add(1);
@@ -1077,6 +1093,13 @@ fn analyze_kir_ssa(
                 .map(|(name, version)| kir::KirRegisterVersion { name, version })
                 .collect::<Vec<_>>();
             kir::KirBlockSsa {
+                immediate_dominator: immediate_dominators.get(&block).cloned().flatten(),
+                dominance_frontier: dominance_frontiers
+                    .get(&block)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect(),
                 block,
                 predecessors: state.predecessors,
                 live_in: state.live_in.into_iter().collect(),
@@ -1088,16 +1111,14 @@ fn analyze_kir_ssa(
     block_state_facts.sort_by(|a, b| a.block.cmp(&b.block));
 
     let mut phi_nodes = Vec::new();
+    let phi_blocks = kir_phi_blocks(&block_labels, &block_definitions, &dominance_frontiers);
     for block in &block_state_facts {
         if block.predecessors.len() < 2 {
             continue;
         }
-        let mut candidates = BTreeSet::<String>::new();
-        for predecessor in &block.predecessors {
-            if let Some(out) = block_out_versions.get(predecessor) {
-                candidates.extend(out.keys().cloned());
-            }
-        }
+        let Some(candidates) = phi_blocks.get(&block.block) else {
+            continue;
+        };
         for name in candidates {
             let mut incoming_versions = block
                 .predecessors
@@ -1105,7 +1126,7 @@ fn analyze_kir_ssa(
                 .filter_map(|predecessor| {
                     block_out_versions
                         .get(predecessor)
-                        .and_then(|out| out.get(&name).copied())
+                        .and_then(|out| out.get(name).copied())
                         .map(|version| format!("{predecessor}:{name}_{version}"))
                 })
                 .collect::<Vec<_>>();
@@ -1114,10 +1135,9 @@ fn analyze_kir_ssa(
             if incoming_versions.len() >= 2 {
                 phi_nodes.push(kir::KirPhiNode {
                     block: block.block.clone(),
-                    name,
+                    name: name.clone(),
                     incoming_versions,
-                    reason: "multiple predecessor KIR register versions reach this block"
-                        .to_string(),
+                    reason: "dominance-frontier KIR register versions reach this block".to_string(),
                 });
             }
         }
@@ -1125,6 +1145,11 @@ fn analyze_kir_ssa(
 
     kir::KirSsaFacts {
         available: !definitions.is_empty() || !uses.is_empty(),
+        dominance_available: !dominators.is_empty() && successors.keys().any(|block| {
+            dominance_frontiers
+                .get(block)
+                .is_some_and(|frontier| !frontier.is_empty())
+        }),
         definition_count: definitions.len(),
         use_count: uses.len(),
         phi_count: phi_nodes.len(),
@@ -1133,10 +1158,196 @@ fn analyze_kir_ssa(
         block_states: block_state_facts,
         phi_nodes,
         diagnostics: vec![
-            "KIR SSA v0: linear rename over recovered block order; dominance-frontier phi insertion pending"
+            "KIR SSA v1: alias-aware register rename with CFG dominators and dominance-frontier phi candidates"
                 .to_string(),
         ],
     }
+}
+
+fn kir_successors(
+    function: &RecoveredFunction,
+    block_labels: &[String],
+    block_ranges: &[(u64, u64, String)],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let known_blocks = block_labels.iter().cloned().collect::<BTreeSet<_>>();
+    let mut successors = known_blocks
+        .iter()
+        .map(|block| (block.clone(), BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for edge in &function.edges {
+        let from = parse_addr(&edge.from)
+            .and_then(|addr| block_for_ip(addr, block_ranges))
+            .unwrap_or_else(|| edge.from.clone());
+        let to = parse_addr(&edge.to)
+            .and_then(|addr| block_for_ip(addr, block_ranges))
+            .unwrap_or_else(|| edge.to.clone());
+        if known_blocks.contains(&from) && known_blocks.contains(&to) {
+            successors.entry(from).or_default().insert(to);
+        }
+    }
+    successors
+}
+
+fn kir_dominators(
+    block_labels: &[String],
+    entry: &str,
+    predecessors: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let all = block_labels.iter().cloned().collect::<BTreeSet<_>>();
+    let mut dominators = block_labels
+        .iter()
+        .map(|block| {
+            let set = if block == entry {
+                BTreeSet::from([block.clone()])
+            } else {
+                all.clone()
+            };
+            (block.clone(), set)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in block_labels {
+            if block == entry {
+                continue;
+            }
+            let preds = predecessors
+                .get(block)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|pred| dominators.contains_key(pred))
+                .collect::<Vec<_>>();
+            let mut new_set = if preds.is_empty() {
+                BTreeSet::new()
+            } else {
+                let mut iter = preds.iter();
+                let first = iter
+                    .next()
+                    .and_then(|pred| dominators.get(pred))
+                    .cloned()
+                    .unwrap_or_default();
+                iter.fold(first, |acc, pred| {
+                    acc.intersection(dominators.get(pred).unwrap_or(&BTreeSet::new()))
+                        .cloned()
+                        .collect()
+                })
+            };
+            new_set.insert(block.clone());
+            if dominators.get(block) != Some(&new_set) {
+                dominators.insert(block.clone(), new_set);
+                changed = true;
+            }
+        }
+    }
+    dominators
+}
+
+fn kir_immediate_dominators(
+    block_labels: &[String],
+    entry: &str,
+    dominators: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, Option<String>> {
+    let mut out = BTreeMap::new();
+    for block in block_labels {
+        if block == entry {
+            out.insert(block.clone(), None);
+            continue;
+        }
+        let candidates = dominators
+            .get(block)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|candidate| candidate != block)
+            .collect::<Vec<_>>();
+        let idom = candidates.iter().find(|candidate| {
+            !candidates.iter().any(|other| {
+                other != *candidate
+                    && dominators
+                        .get(other)
+                        .is_some_and(|other_doms| other_doms.contains(*candidate))
+            })
+        });
+        out.insert(block.clone(), idom.cloned());
+    }
+    out
+}
+
+fn kir_dominance_frontiers(
+    block_labels: &[String],
+    predecessors: &BTreeMap<String, BTreeSet<String>>,
+    immediate_dominators: &BTreeMap<String, Option<String>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut frontiers = block_labels
+        .iter()
+        .map(|block| (block.clone(), BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for block in block_labels {
+        let preds = predecessors.get(block).cloned().unwrap_or_default();
+        if preds.len() < 2 {
+            continue;
+        }
+        let stop = immediate_dominators.get(block).cloned().flatten();
+        for predecessor in preds {
+            let mut runner = predecessor;
+            while Some(runner.clone()) != stop {
+                frontiers
+                    .entry(runner.clone())
+                    .or_default()
+                    .insert(block.clone());
+                let Some(Some(next)) = immediate_dominators.get(&runner) else {
+                    break;
+                };
+                if *next == runner {
+                    break;
+                }
+                runner = next.clone();
+            }
+        }
+    }
+    frontiers
+}
+
+fn kir_phi_blocks(
+    block_labels: &[String],
+    block_definitions: &BTreeMap<String, BTreeSet<String>>,
+    dominance_frontiers: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut def_blocks_by_reg = BTreeMap::<String, BTreeSet<String>>::new();
+    for (block, definitions) in block_definitions {
+        for reg in definitions {
+            def_blocks_by_reg
+                .entry(reg.clone())
+                .or_default()
+                .insert(block.clone());
+        }
+    }
+
+    let known_blocks = block_labels.iter().cloned().collect::<BTreeSet<_>>();
+    let mut phi_blocks = BTreeMap::<String, BTreeSet<String>>::new();
+    for (reg, def_blocks) in def_blocks_by_reg {
+        let mut work = def_blocks.iter().cloned().collect::<Vec<_>>();
+        let mut seen = def_blocks;
+        let mut placed = BTreeSet::<String>::new();
+        while let Some(block) = work.pop() {
+            for frontier in dominance_frontiers.get(&block).cloned().unwrap_or_default() {
+                if !known_blocks.contains(&frontier) || !placed.insert(frontier.clone()) {
+                    continue;
+                }
+                phi_blocks
+                    .entry(frontier.clone())
+                    .or_default()
+                    .insert(reg.clone());
+                if seen.insert(frontier.clone()) {
+                    work.push(frontier);
+                }
+            }
+        }
+    }
+    phi_blocks
 }
 
 fn kir_read_registers(op: &kir::KirOp, architecture: &str) -> BTreeSet<String> {
@@ -2627,6 +2838,18 @@ mod tests {
         );
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.phi_count > 0);
+        assert!(analysis.kir.ssa.dominance_available);
+        assert!(analysis.kir.ssa.block_states.iter().any(|block| {
+            !block.dominance_frontier.is_empty() || block.immediate_dominator.is_some()
+        }));
+        assert!(
+            analysis
+                .kir
+                .ssa
+                .phi_nodes
+                .iter()
+                .all(|phi| phi.reason.contains("dominance-frontier"))
+        );
         assert!(
             analysis
                 .dataflow
