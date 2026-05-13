@@ -2551,3 +2551,4 @@ _[Checkpoint: 6a0501b8 — edited src/main.rs; edited src/main.rs; wrote kaijula
 [23:22:42] ACT: wrote kaijulab-resolve-hacknote.py
 [23:23:24] ACT: wrote kaijulab-resolve-hacknote.py
 [23:23:49] ACT: edited kaijulab-resolve-hacknote.py
+[23:24:37] THINK: exploit-loop phase contract over open-ended analysis because re-solve runs showed Claude identifies primitives but spends timeout on free-form disassembly/verification churn before producing or converging artifact.
