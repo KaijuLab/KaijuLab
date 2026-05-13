@@ -1629,3 +1629,4 @@ _[Checkpoint: 6a049f02 — Implemented recovery-backed enhanced decompile CLI/AP
 [16:07:23] OBSERVE: listed files under ../reko/src
 [16:07:23] OBSERVE: listed files under reko
 [16:07:23] OBSERVE: searched . for "Decompiler|Ssa|DataFlow|Analysis|Scanner|Procedure|Call|Type|Domin|Transform|Structure|Code"
+[16:07:23] OBSERVE: read ../reko/src/Core/Analysis/README.md
