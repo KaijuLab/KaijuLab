@@ -2424,3 +2424,4 @@ _[Checkpoint: 6a04f8ee — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; w
 [22:20:51] OBSERVE: read src/server/agent_console.rs
 [22:20:51] OBSERVE: read src/server/agent_console.rs
 [22:20:51] OBSERVE: read src/main.rs
+[22:20:51] OBSERVE: listed files under /tmp/kaijulab-realloc-poc.py
