@@ -92,11 +92,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; wrote kaijulab-realloc-poc.py
 - [x] wrote kaijulab-realloc-poc.py
 - [x] wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py
+- [x] wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py; wrote kaijulab-seethefile-poc.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 22:31 UTC] `main`: wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py; wrote kaijulab-seethefile-poc.py
 - [2026-05-13 22:26 UTC] `main`: wrote kaijulab-realloc-poc.py; wrote kaijulab-tcache-tear-poc.py
 - [2026-05-13 22:22 UTC] `main`: wrote kaijulab-realloc-poc.py
 - [2026-05-13 22:19 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; wrote kaijulab-realloc-poc.py
