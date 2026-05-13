@@ -629,3 +629,4 @@ _[Checkpoint: 6a03b031 — edited /home/koukyosyumei/Dev/KaijuLab/src/server/pal
 [02:58:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts
 [02:58:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/hooks/useEventStream.ts
 [02:58:29] ACT: added /home/koukyosyumei/Dev/KaijuLab/web/src/components/Notices.tsx
+[02:58:29] ACT: edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.tsx
