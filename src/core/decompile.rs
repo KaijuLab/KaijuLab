@@ -155,6 +155,7 @@ pub struct DecompilerQualityReport {
     pub functions_with_kir_type_facts: usize,
     pub functions_with_kir_render_preview: usize,
     pub functions_with_kir_structured_preview: usize,
+    pub functions_with_kir_call_facts: usize,
     pub total_kir_ops: usize,
     pub total_kir_ssa_definitions: usize,
     pub total_kir_ssa_uses: usize,
@@ -166,6 +167,8 @@ pub struct DecompilerQualityReport {
     pub total_kir_memory_type_facts: usize,
     pub total_kir_render_preview_lines: usize,
     pub total_kir_structured_preview_lines: usize,
+    pub total_kir_call_sites: usize,
+    pub total_kir_syscall_sites: usize,
     pub total_phi_candidates: usize,
     pub total_memory_accesses: usize,
     pub total_variable_candidates: usize,
@@ -196,6 +199,7 @@ pub struct FunctionQuality {
     pub has_kir_type_facts: bool,
     pub has_kir_render_preview: bool,
     pub has_kir_structured_preview: bool,
+    pub has_kir_call_facts: bool,
     pub kir_ops: usize,
     pub kir_ssa_definitions: usize,
     pub kir_phi_nodes: usize,
@@ -206,6 +210,8 @@ pub struct FunctionQuality {
     pub kir_memory_type_facts: usize,
     pub kir_render_preview_lines: usize,
     pub kir_structured_preview_lines: usize,
+    pub kir_call_sites: usize,
+    pub kir_syscall_sites: usize,
     pub memory_accesses: usize,
     pub variable_candidates: usize,
     pub phi_candidates: usize,
@@ -232,6 +238,7 @@ pub fn decompiler_quality_report_path(
     let mut functions_with_kir_type_facts = 0usize;
     let mut functions_with_kir_render_preview = 0usize;
     let mut functions_with_kir_structured_preview = 0usize;
+    let mut functions_with_kir_call_facts = 0usize;
     let mut total_kir_ops = 0usize;
     let mut total_kir_ssa_definitions = 0usize;
     let mut total_kir_ssa_uses = 0usize;
@@ -243,6 +250,8 @@ pub fn decompiler_quality_report_path(
     let mut total_kir_memory_type_facts = 0usize;
     let mut total_kir_render_preview_lines = 0usize;
     let mut total_kir_structured_preview_lines = 0usize;
+    let mut total_kir_call_sites = 0usize;
+    let mut total_kir_syscall_sites = 0usize;
     let mut total_phi_candidates = 0usize;
     let mut total_memory_accesses = 0usize;
     let mut total_variable_candidates = 0usize;
@@ -281,6 +290,8 @@ pub fn decompiler_quality_report_path(
         let has_kir_render_preview = kir_render_preview_lines > 0;
         let kir_structured_preview_lines = kir_structured_preview(&kir, function, &cfg, 24).len();
         let has_kir_structured_preview = kir_structured_preview_lines > 0;
+        let has_kir_call_facts = kir.call_facts.available
+            && (kir.call_facts.call_count > 0 || kir.call_facts.syscall_count > 0);
         let legacy_ok = false;
         if legacy_ok {
             legacy_decompile_ok += 1;
@@ -315,6 +326,9 @@ pub fn decompiler_quality_report_path(
         if has_kir_structured_preview {
             functions_with_kir_structured_preview += 1;
         }
+        if has_kir_call_facts {
+            functions_with_kir_call_facts += 1;
+        }
         total_kir_ops += kir.ops.len();
         total_kir_ssa_definitions += kir.ssa.definition_count;
         total_kir_ssa_uses += kir.ssa.use_count;
@@ -326,6 +340,8 @@ pub fn decompiler_quality_report_path(
         total_kir_memory_type_facts += kir.type_facts.memory_type_count;
         total_kir_render_preview_lines += kir_render_preview_lines;
         total_kir_structured_preview_lines += kir_structured_preview_lines;
+        total_kir_call_sites += kir.call_facts.call_count;
+        total_kir_syscall_sites += kir.call_facts.syscall_count;
         total_phi_candidates += dataflow.phi_candidates.len();
         total_memory_accesses += dataflow.memory_accesses.len();
         total_variable_candidates += dataflow.variable_candidates.len();
@@ -388,6 +404,12 @@ pub fn decompiler_quality_report_path(
         if !has_kir_structured_preview {
             notes.push("KIR structured preview unavailable or empty".to_string());
         }
+        if !has_kir_call_facts {
+            notes.push("KIR call facts unavailable or empty".to_string());
+        }
+        if !kir.call_facts.diagnostics.is_empty() {
+            notes.extend(kir.call_facts.diagnostics.clone());
+        }
         function_reports.push(FunctionQuality {
             vaddr: function.start.clone(),
             name: function.name.clone(),
@@ -405,6 +427,7 @@ pub fn decompiler_quality_report_path(
             has_kir_type_facts,
             has_kir_render_preview,
             has_kir_structured_preview,
+            has_kir_call_facts,
             kir_ops: kir.ops.len(),
             kir_ssa_definitions: kir.ssa.definition_count,
             kir_phi_nodes: kir.ssa.phi_count,
@@ -415,6 +438,8 @@ pub fn decompiler_quality_report_path(
             kir_memory_type_facts: kir.type_facts.memory_type_count,
             kir_render_preview_lines,
             kir_structured_preview_lines,
+            kir_call_sites: kir.call_facts.call_count,
+            kir_syscall_sites: kir.call_facts.syscall_count,
             memory_accesses: dataflow.memory_accesses.len(),
             variable_candidates: dataflow.variable_candidates.len(),
             phi_candidates: dataflow.phi_candidates.len(),
@@ -438,6 +463,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_type_facts,
         functions_with_kir_render_preview,
         functions_with_kir_structured_preview,
+        functions_with_kir_call_facts,
         total_variable_candidates,
         total_irreducible_sccs,
         total_goto_pressure,
@@ -456,6 +482,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_type_facts,
         functions_with_kir_render_preview,
         functions_with_kir_structured_preview,
+        functions_with_kir_call_facts,
         total_variable_candidates,
         total_irreducible_sccs,
     );
@@ -478,6 +505,7 @@ pub fn decompiler_quality_report_path(
         functions_with_kir_type_facts,
         functions_with_kir_render_preview,
         functions_with_kir_structured_preview,
+        functions_with_kir_call_facts,
         total_kir_ops,
         total_kir_ssa_definitions,
         total_kir_ssa_uses,
@@ -489,6 +517,8 @@ pub fn decompiler_quality_report_path(
         total_kir_memory_type_facts,
         total_kir_render_preview_lines,
         total_kir_structured_preview_lines,
+        total_kir_call_sites,
+        total_kir_syscall_sites,
         total_phi_candidates,
         total_memory_accesses,
         total_variable_candidates,
@@ -503,7 +533,7 @@ pub fn decompiler_quality_report_path(
             "Promote KIR memory SSA into alias-aware memory partitions".to_string(),
             "Promote KIR structured preview into full if/while pseudo-C rendering".to_string(),
             "Promote KIR type facts into constraint-solved type propagation".to_string(),
-            "Infer call signatures/calling conventions before final expression rendering".to_string(),
+            "Promote KIR call facts into interprocedural signature recovery".to_string(),
             "Implement semantics-preserving structuring with node splitting for irreducible SCCs"
                 .to_string(),
             "Add source-known regression corpus with expected CFG/AST/type facts".to_string(),
@@ -525,6 +555,7 @@ fn decompiler_score(
     kir_type_facts: usize,
     kir_render_preview_facts: usize,
     kir_structured_preview_facts: usize,
+    kir_call_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
     goto_pressure: usize,
@@ -544,6 +575,7 @@ fn decompiler_score(
     let kir_type_score = 4.0 * kir_type_facts as f64 / analyzed;
     let kir_render_score = 4.0 * kir_render_preview_facts as f64 / analyzed;
     let kir_structured_score = 3.0 * kir_structured_preview_facts as f64 / analyzed;
+    let kir_call_score = 3.0 * kir_call_facts as f64 / analyzed;
     let dataflow_score = 10.0 * dataflow_facts as f64 / analyzed;
     let variable_score = 10.0 * (variable_candidates.min(analyzed_functions) as f64) / analyzed;
     let structuring_penalty =
@@ -560,6 +592,7 @@ fn decompiler_score(
         + kir_type_score
         + kir_render_score
         + kir_structured_score
+        + kir_call_score
         + dataflow_score
         + variable_score
         + foundation_score
@@ -573,6 +606,7 @@ fn decompiler_score(
         && kir_type_facts > 0
         && kir_render_preview_facts > 0
         && kir_structured_preview_facts > 0
+        && kir_call_facts > 0
         && kir_memory_ssa_facts > 0
         && kir_expression_facts > 0
     {
@@ -622,6 +656,7 @@ fn decompiler_blockers(
     kir_type_facts: usize,
     kir_render_preview_facts: usize,
     kir_structured_preview_facts: usize,
+    kir_call_facts: usize,
     variable_candidates: usize,
     irreducible_sccs: usize,
 ) -> Vec<String> {
@@ -660,6 +695,9 @@ fn decompiler_blockers(
     if kir_structured_preview_facts < analyzed_functions {
         blockers.push("KIR structured preview coverage is incomplete".to_string());
     }
+    if kir_call_facts < analyzed_functions {
+        blockers.push("KIR call-signature coverage is incomplete".to_string());
+    }
     if dataflow_facts == 0 {
         blockers.push("no data-flow quality gate yet".to_string());
         blockers.push("score is capped at 45 until SSA/data-flow/type inference land".to_string());
@@ -684,6 +722,7 @@ fn decompiler_blockers(
         if kir_render_preview_facts > 0
             && kir_type_facts > 0
             && kir_structured_preview_facts > 0
+            && kir_call_facts > 0
             && kir_memory_ssa_facts > 0
             && kir_expression_facts > 0
         {
@@ -1170,6 +1209,7 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
         memory_ssa: kir::KirMemorySsaFacts::default(),
         expressions: kir::KirExpressionFacts::default(),
         type_facts: kir::KirTypeFacts::default(),
+        call_facts: kir::KirCallFacts::default(),
         diagnostics: vec![
             "KIR v0: iced-x86 semantic skeleton; flags and precise operand sizes are partial"
                 .to_string(),
@@ -1179,6 +1219,7 @@ fn lift_kir(path: &Path, function: &RecoveredFunction) -> Result<kir::KirFunctio
     function_kir.memory_ssa = analyze_kir_memory_ssa(&function_kir);
     function_kir.expressions = build_kir_expressions(&function_kir);
     function_kir.type_facts = infer_kir_type_facts(&function_kir);
+    function_kir.call_facts = infer_kir_call_facts(&function_kir);
     Ok(function_kir)
 }
 
@@ -1458,6 +1499,136 @@ fn infer_kir_type_facts(kir_function: &kir::KirFunction) -> kir::KirTypeFacts {
                 .to_string(),
         ],
     }
+}
+
+fn infer_kir_call_facts(kir_function: &kir::KirFunction) -> kir::KirCallFacts {
+    if kir_function.ops.is_empty() {
+        return kir::KirCallFacts {
+            diagnostics: vec!["KIR call facts unavailable: no KIR ops".to_string()],
+            ..Default::default()
+        };
+    }
+    let type_by_name = kir_function
+        .type_facts
+        .register_types
+        .iter()
+        .map(|fact| (fact.name.clone(), fact.type_name.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let uses_by_op = kir_function.ssa.uses.iter().fold(
+        BTreeMap::<usize, Vec<&kir::KirSsaUse>>::new(),
+        |mut acc, use_| {
+            acc.entry(use_.op_id).or_default().push(use_);
+            acc
+        },
+    );
+    let mut calls = Vec::new();
+    for op in &kir_function.ops {
+        let kind = match op.opcode {
+            kir::KirOpcode::Call => "call",
+            kir::KirOpcode::Syscall => "syscall",
+            _ => continue,
+        };
+        let convention = kir_call_convention(kind, &kir_function.architecture);
+        let argument_names = kir_call_argument_names(kind, &kir_function.architecture);
+        let uses = uses_by_op.get(&op.id).cloned().unwrap_or_default();
+        let arguments = argument_names
+            .into_iter()
+            .filter_map(|name| {
+                let value = uses
+                    .iter()
+                    .find(|use_| use_.name == name)
+                    .map(|use_| kir_ssa_name(&use_.name, use_.version))
+                    .or_else(|| kir_latest_definition_before(&kir_function.ssa, name, op.id))?;
+                let type_name = type_by_name
+                    .get(&value)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                Some(kir::KirCallArgument {
+                    name: name.to_string(),
+                    value,
+                    type_name,
+                })
+            })
+            .collect::<Vec<_>>();
+        calls.push(kir::KirCallSite {
+            op_id: op.id,
+            vaddr: op.vaddr.clone(),
+            kind: kind.to_string(),
+            target: kir_call_target(op),
+            convention: convention.to_string(),
+            arguments,
+            return_value: kir_call_return_register(&kir_function.architecture)
+                .map(str::to_string),
+            source: op.instruction.clone(),
+        });
+    }
+    let call_count = calls.iter().filter(|call| call.kind == "call").count();
+    let syscall_count = calls.iter().filter(|call| call.kind == "syscall").count();
+    kir::KirCallFacts {
+        available: !calls.is_empty(),
+        call_count,
+        syscall_count,
+        calls,
+        diagnostics: vec![
+            "KIR call facts v0: ABI register arguments and return registers; stack args and callee signatures pending"
+                .to_string(),
+        ],
+    }
+}
+
+fn kir_latest_definition_before(
+    ssa: &kir::KirSsaFacts,
+    name: &str,
+    op_id: usize,
+) -> Option<String> {
+    ssa.definitions
+        .iter()
+        .filter(|def| def.name == name && def.op_id < op_id)
+        .max_by_key(|def| def.op_id)
+        .map(|def| kir_ssa_name(&def.name, Some(def.version)))
+}
+
+fn kir_call_convention(kind: &str, architecture: &str) -> &'static str {
+    if kind == "syscall" {
+        if architecture.contains("64") {
+            "linux_x86_64_syscall"
+        } else {
+            "linux_i386_int80"
+        }
+    } else if architecture.contains("64") {
+        "sysv_x86_64"
+    } else {
+        "cdecl_i386"
+    }
+}
+
+fn kir_call_argument_names(kind: &str, architecture: &str) -> Vec<&'static str> {
+    if kind == "syscall" {
+        if architecture.contains("64") {
+            vec!["rax", "rdi", "rsi", "rdx", "r10", "r8", "r9"]
+        } else {
+            vec!["eax", "ebx", "ecx", "edx", "esi", "edi"]
+        }
+    } else if architecture.contains("64") {
+        vec!["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+    } else {
+        Vec::new()
+    }
+}
+
+fn kir_call_return_register(architecture: &str) -> Option<&'static str> {
+    Some(if architecture.contains("64") { "rax" } else { "eax" })
+}
+
+fn kir_call_target(op: &kir::KirOp) -> String {
+    op.inputs
+        .iter()
+        .find_map(|value| match value {
+            kir::KirValue::BranchTarget { target } => Some(target.clone()),
+            kir::KirValue::Immediate { value, .. } => Some(value.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "?".to_string())
 }
 
 #[derive(Default)]
@@ -3161,6 +3332,26 @@ fn render_enhanced(
         }
         out.push('\n');
     }
+    if analysis.kir.call_facts.available {
+        out.push_str("/* KIR call facts */\n");
+        for call in analysis.kir.call_facts.calls.iter().take(16) {
+            let args = call
+                .arguments
+                .iter()
+                .map(|arg| format!("{}:{}={}", arg.name, arg.type_name, arg.value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "{} {} {}({}) -> {}\n",
+                call.vaddr,
+                call.convention,
+                call.target,
+                args,
+                call.return_value.as_deref().unwrap_or("void")
+            ));
+        }
+        out.push('\n');
+    }
     out.push_str(legacy_text);
     out
 }
@@ -3689,6 +3880,8 @@ mod tests {
         assert!(text.contains("dataflow: available=true"));
         assert!(text.contains("KIR typed expression preview"));
         assert!(text.contains("KIR structured block preview"));
+        assert!(text.contains("KIR call facts"));
+        assert!(text.contains("linux_i386_int80"));
         assert!(text.contains("block_8048060:"));
         assert!(text.contains("eax_"));
 
@@ -3712,6 +3905,17 @@ mod tests {
         assert!(analysis.kir.expressions.assignment_count > 0);
         assert!(!kir_render_preview(&analysis.kir, 8).is_empty());
         assert!(!kir_structured_preview(&analysis.kir, &analysis.function, &analysis.cfg, 16).is_empty());
+        assert!(analysis.kir.call_facts.available);
+        assert_eq!(analysis.kir.call_facts.syscall_count, 2);
+        assert!(
+            analysis
+                .kir
+                .call_facts
+                .calls
+                .iter()
+                .any(|call| call.convention == "linux_i386_int80"
+                    && call.arguments.iter().any(|arg| arg.name == "eax"))
+        );
         assert!(
             analysis
                 .kir

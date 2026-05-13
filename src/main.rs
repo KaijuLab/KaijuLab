@@ -1898,6 +1898,7 @@ fn decompiler_benchmark_json(
     let mut kir_type_facts = 0usize;
     let mut kir_render_preview_facts = 0usize;
     let mut kir_structured_preview_facts = 0usize;
+    let mut kir_call_facts = 0usize;
     let mut kir_ops = 0usize;
     let mut kir_ssa_definitions = 0usize;
     let mut kir_ssa_uses = 0usize;
@@ -1909,6 +1910,8 @@ fn decompiler_benchmark_json(
     let mut kir_memory_type_facts = 0usize;
     let mut kir_render_preview_lines = 0usize;
     let mut kir_structured_preview_lines = 0usize;
+    let mut kir_call_sites = 0usize;
+    let mut kir_syscall_sites = 0usize;
     let mut phi_candidates = 0usize;
     let mut memory_accesses = 0usize;
     let mut variable_candidates = 0usize;
@@ -1931,6 +1934,7 @@ fn decompiler_benchmark_json(
                 kir_type_facts += report.functions_with_kir_type_facts;
                 kir_render_preview_facts += report.functions_with_kir_render_preview;
                 kir_structured_preview_facts += report.functions_with_kir_structured_preview;
+                kir_call_facts += report.functions_with_kir_call_facts;
                 kir_ops += report.total_kir_ops;
                 kir_ssa_definitions += report.total_kir_ssa_definitions;
                 kir_ssa_uses += report.total_kir_ssa_uses;
@@ -1942,6 +1946,8 @@ fn decompiler_benchmark_json(
                 kir_memory_type_facts += report.total_kir_memory_type_facts;
                 kir_render_preview_lines += report.total_kir_render_preview_lines;
                 kir_structured_preview_lines += report.total_kir_structured_preview_lines;
+                kir_call_sites += report.total_kir_call_sites;
+                kir_syscall_sites += report.total_kir_syscall_sites;
                 phi_candidates += report.total_phi_candidates;
                 memory_accesses += report.total_memory_accesses;
                 variable_candidates += report.total_variable_candidates;
@@ -1989,6 +1995,7 @@ fn decompiler_benchmark_json(
             "functions_with_kir_type_facts": kir_type_facts,
             "functions_with_kir_render_preview": kir_render_preview_facts,
             "functions_with_kir_structured_preview": kir_structured_preview_facts,
+            "functions_with_kir_call_facts": kir_call_facts,
             "total_kir_ops": kir_ops,
             "total_kir_ssa_definitions": kir_ssa_definitions,
             "total_kir_ssa_uses": kir_ssa_uses,
@@ -2000,6 +2007,8 @@ fn decompiler_benchmark_json(
             "total_kir_memory_type_facts": kir_memory_type_facts,
             "total_kir_render_preview_lines": kir_render_preview_lines,
             "total_kir_structured_preview_lines": kir_structured_preview_lines,
+            "total_kir_call_sites": kir_call_sites,
+            "total_kir_syscall_sites": kir_syscall_sites,
             "total_phi_candidates": phi_candidates,
             "total_memory_accesses": memory_accesses,
             "total_variable_candidates": variable_candidates,

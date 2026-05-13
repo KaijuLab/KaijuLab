@@ -20,6 +20,7 @@ pub struct KirFunction {
     pub memory_ssa: KirMemorySsaFacts,
     pub expressions: KirExpressionFacts,
     pub type_facts: KirTypeFacts,
+    pub call_facts: KirCallFacts,
     pub diagnostics: Vec<String>,
 }
 
@@ -174,6 +175,34 @@ pub struct KirTypeFact {
     pub type_name: String,
     pub confidence: String,
     pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KirCallFacts {
+    pub available: bool,
+    pub call_count: usize,
+    pub syscall_count: usize,
+    pub calls: Vec<KirCallSite>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirCallSite {
+    pub op_id: usize,
+    pub vaddr: String,
+    pub kind: String,
+    pub target: String,
+    pub convention: String,
+    pub arguments: Vec<KirCallArgument>,
+    pub return_value: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KirCallArgument {
+    pub name: String,
+    pub value: String,
+    pub type_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
