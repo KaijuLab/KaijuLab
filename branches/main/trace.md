@@ -804,3 +804,4 @@ _[Checkpoint: 6a03f641 — edited web/src/components/AgentConsole.tsx; deleted w
 [03:57:47] NOTE: Agent console overlap fix: bottom panels use shrink-0/overflow-hidden; xterm grid cell uses minmax rows and clipped host so terminal cannot paint into findings/timeline.
 [03:57:47] OBSERVE: read web/src/App.tsx
 [03:57:47] OBSERVE: read web/src/components/AgentConsole.tsx
+[03:57:47] OBSERVE: read web/src/App.tsx
