@@ -1653,3 +1653,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 
 [16:23:16] NOTE: Decompiler 10/10 path: added benchmark gate first. Current cap 45 until SSA/data-flow/type inference; PwnableTW benchmark reports aggregate 45 with blockers legacy renderer unsafe, heuristic machine facts, no SSA/type gate.
 [16:23:16] OBSERVE: searched src/core for "Decompile|FunctionInsights|ir_query_json|Benchmark""
+[16:23:16] OBSERVE: listed files under samples/PwnableTW
