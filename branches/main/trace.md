@@ -933,3 +933,9 @@ _[Checkpoint: 6a03fadb — Fixed Agent Console response rendering for bare carri
 [04:26:50] OBSERVE: read web/src/state.ts
 [04:26:50] ACT: edited src/ipc/socket.rs
 [04:26:50] ACT: edited web/src/state.ts
+
+
+---
+_[Checkpoint: 6a03fd9c — Reflected MCP function read calls into UI navigation; cargo test server and npm build passed.]_
+---
+
