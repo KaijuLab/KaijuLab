@@ -1196,3 +1196,4 @@ _[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploi
 [13:29:39] OBSERVE: read src/main.rs
 [13:29:39] OBSERVE: read src/core/analysis.rs
 [13:29:39] OBSERVE: read src/main.rs
+[13:29:39] OBSERVE: read src/main.rs
