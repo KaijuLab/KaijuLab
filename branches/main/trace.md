@@ -1327,3 +1327,9 @@ _[Checkpoint: 6a04804f — Committed prior CLI primitive work, then added produc
 [14:33:19] OBSERVE: read README.md
 [14:33:19] OBSERVE: read README.md
 [14:33:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+
+
+---
+_[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.]_
+---
+

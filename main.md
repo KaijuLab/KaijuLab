@@ -55,11 +55,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.
 - [x] Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
 - [x] Committed prior CLI primitive work, then added production workstation foundation commands and core workstation manifests for seven roadmap areas.
+- [x] Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 14:33 UTC] `main`: Implemented first maturation slice: immutable evidence store, save-evidence flags, evidence/profile/debug-session/benchmark-smoke CLI commands, REST endpoints, and docs.
 - [2026-05-13 13:44 UTC] `main`: Committed prior CLI primitive work, then added production workstation foundation commands and core workstation manifests for seven roadmap areas.
 - [2026-05-13 13:36 UTC] `main`: Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
 - [2026-05-13 13:29 UTC] `main`: Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.
