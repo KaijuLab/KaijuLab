@@ -34,11 +34,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
 - [x] Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.
 - [x] Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
+- [x] Restored raw xterm return input for Agent Console after LF normalization broke Claude prompt submit; npm build passed.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 04:07 UTC] `main`: Restored raw xterm return input for Agent Console after LF normalization broke Claude prompt submit; npm build passed.
 - [2026-05-13 04:04 UTC] `main`: Normalized Agent Console return input from CR to LF and rebuilt web bundle; npm build passed.
 - [2026-05-13 04:00 UTC] `main`: Fixed Agent Console xterm layout overlap and backend panic from Unicode transcript trimming; cargo test server and web build passed.
 - [2026-05-13 03:55 UTC] `main`: edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
