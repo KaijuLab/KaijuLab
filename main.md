@@ -31,11 +31,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Fixed embedded agent console typing: focusable terminal pane sends raw PTY keys, arrows, Ctrl combos, paste, keeps command box fallback, and web build passed.
 - [x] Fixed garbled Claude Code terminal output in Agent Console with dependency-free VT screen renderer and rebuilt web bundle.
 - [x] Replaced Agent Console pre/custom renderer with xterm.js and fit addon, restoring real Claude/Codex terminal input and full-screen rendering; npm build passed.
+- [x] edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 03:55 UTC] `main`: edited web/src/components/AgentConsole.tsx; deleted web/src/components/AgentConsole.tsx; added web/src/components/AgentC…
 - [2026-05-13 03:52 UTC] `main`: Replaced Agent Console pre/custom renderer with xterm.js and fit addon, restoring real Claude/Codex terminal input and full-screen rendering; npm build passed.
 - [2026-05-13 03:47 UTC] `main`: Fixed garbled Claude Code terminal output in Agent Console with dependency-free VT screen renderer and rebuilt web bundle.
 - [2026-05-13 03:43 UTC] `main`: Fixed embedded agent console typing: focusable terminal pane sends raw PTY keys, arrows, Ctrl combos, paste, keeps command box fallback, and web build passed.
