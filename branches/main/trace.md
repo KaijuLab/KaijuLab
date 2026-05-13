@@ -781,3 +781,4 @@ _[Checkpoint: 6a03f43d — Fixed garbled Claude Code terminal output in Agent Co
 
 [03:52:39] NOTE: Agent console real terminal fix: replaced pre/custom parser with @xterm/xterm + fit addon; xterm onData writes raw PTY input and server output writes directly to terminal.
 [03:52:39] OBSERVE: listed files under web
+[03:52:39] OBSERVE: listed files under web
