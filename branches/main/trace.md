@@ -1726,3 +1726,4 @@ _[Checkpoint: 6a04a22b — Used local papers and Reko as references, then added 
 _[Checkpoint: 6a04ab02 — Added first-pass decompiler register SSA/data-flow facts, exposed them in decompile-analysis/enhanced output, scored coverage in decompiler benchmark, and verified build/tests/PwnableTW benchmark.]_
 ---
 
+[16:53:08] OBSERVE: searched DataFlowFacts|fn for "struct"
