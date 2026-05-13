@@ -1581,3 +1581,4 @@ _[Checkpoint: 6a049bb0 — Persisted recovery DB + analyst correction API + CFG 
 [15:54:19] OBSERVE: searched src for "enum Architecture|Architecture::"
 [15:54:19] OBSERVE: searched Cargo.toml
 [15:54:19] OBSERVE: searched src/main.rs for "command|ApiCommands::""
+[15:54:19] OBSERVE: read src/main.rs
