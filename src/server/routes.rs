@@ -23,6 +23,7 @@ use crate::{
     },
     core::{
         analysis,
+        evidence,
         events::Source,
         findings::{
             self, CreateFinding, CreatedBy, Evidence, Finding, FindingKind, Severity, UpdateFinding,
@@ -58,6 +59,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/functions/:vaddr/xrefs", get(xrefs))
         .route("/api/graph/callgraph", get(callgraph))
         .route("/api/graph/cfg/:vaddr", get(cfg))
+        .route("/api/evidence", get(list_evidence))
+        .route("/api/execution-profiles", get(execution_profiles))
+        .route("/api/debug/session-contract", get(debug_session_contract))
+        .route("/api/benchmarks/smoke", get(benchmark_smoke))
         .route("/api/project", get(project_snapshot))
         .route("/api/project/renames", post(post_rename))
         .route("/api/project/comments", post(post_comment))
@@ -336,6 +341,47 @@ async fn cfg(
     Ok(Json(TextResponse {
         text: analysis::cfg_view(&ws, v).map_err(ApiError::from)?,
     }))
+}
+
+// ─── Dynamic evidence and execution contracts ───────────────────────────────
+
+#[derive(Deserialize)]
+struct EvidenceQuery {
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn list_evidence(
+    State(s): State<AppState>,
+    Query(q): Query<EvidenceQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    let records = evidence::list(ws.binary_path(), q.kind.as_deref(), q.limit.unwrap_or(50))
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({
+        "kind": "evidence_list",
+        "binary": ws.binary_path(),
+        "evidence_path": evidence::evidence_path(ws.binary_path()),
+        "records": records,
+    })))
+}
+
+async fn execution_profiles(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    Ok(Json(evidence::execution_profiles(
+        ws.binary_path(),
+        crate::core::workstation::sysroot_doctor(Some(ws.binary_path())).map_err(ApiError::from)?,
+    )))
+}
+
+async fn debug_session_contract(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    Ok(Json(evidence::debug_session_contract(ws.binary_path())))
+}
+
+async fn benchmark_smoke(State(s): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let ws = active(&s)?;
+    Ok(Json(evidence::benchmark_smoke_plan(ws.binary_path())))
 }
 
 // ─── Project annotations ─────────────────────────────────────────────────────

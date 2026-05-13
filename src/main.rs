@@ -283,6 +283,14 @@ enum ApiCommands {
         #[arg(long)]
         expect_output: Option<String>,
 
+        /// Append verifier output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+
         /// Arguments passed to the script after `--`.
         #[arg(last = true)]
         args: Vec<String>,
@@ -354,6 +362,14 @@ enum ApiCommands {
         /// Wall-clock timeout.
         #[arg(long, default_value_t = 10)]
         timeout_secs: u64,
+
+        /// Append runtime output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
 
     /// Run a non-interactive gdb probe and return registers/backtrace/disassembly.
@@ -385,6 +401,14 @@ enum ApiCommands {
         /// GDB wall-clock timeout.
         #[arg(long, default_value_t = 20)]
         timeout_secs: u64,
+
+        /// Append debug output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
 
     /// Emit exploit helper data: checksec, PLT/GOT, gadgets, cyclic patterns.
@@ -515,6 +539,42 @@ enum ApiCommands {
         /// Maximum candidate binaries to inspect.
         #[arg(long, default_value_t = 64)]
         max_files: usize,
+    },
+
+    /// List immutable runtime/debug/verification evidence records for a target.
+    EvidenceList {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Filter by evidence kind, e.g. runtime_run, debug_probe, exploit_verify.
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Maximum records to return.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
+    /// Emit reusable execution profiles for the target.
+    ExecutionProfiles {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Emit the planned persistent debugger session contract for the target.
+    DebugSessionContract {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Emit smoke-test checks for benchmark regression harnesses.
+    BenchmarkSmoke {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
     },
 }
 
@@ -777,10 +837,12 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             expect_exit,
             expect_target_exit,
             expect_output,
+            save_evidence,
+            tags,
             args,
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
-            verify_exploit_script(
+            let value = verify_exploit_script(
                 &script,
                 &path,
                 timeout_secs,
@@ -788,6 +850,14 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 expect_target_exit,
                 expect_output.as_deref(),
                 &args,
+            )?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "exploit_verify",
+                verify_summary(&value),
+                tags,
+                value,
             )?
         }
         ApiCommands::ExploitLoop {
@@ -827,9 +897,11 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             runner,
             sysroot,
             timeout_secs,
+            save_evidence,
+            tags,
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
-            runtime_run_json(
+            let value = runtime_run_json(
                 &path,
                 &args,
                 &envs,
@@ -838,6 +910,14 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 runner.as_deref(),
                 sysroot.as_deref(),
                 timeout_secs,
+            )?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "runtime_run",
+                runtime_summary(&value),
+                tags,
+                value,
             )?
         }
         ApiCommands::DebugProbe {
@@ -848,9 +928,11 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             breakpoints,
             continue_after_break,
             timeout_secs,
+            save_evidence,
+            tags,
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
-            debug_probe_json(
+            let value = debug_probe_json(
                 &path,
                 &args,
                 stdin.as_deref(),
@@ -858,6 +940,14 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 &breakpoints,
                 continue_after_break,
                 timeout_secs,
+            )?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "debug_probe",
+                debug_summary(&value),
+                tags,
+                value,
             )?
         }
         ApiCommands::ExploitKit {
@@ -937,6 +1027,28 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         ApiCommands::WorkbenchManifest => core::workstation::workbench_manifest(),
         ApiCommands::BenchmarkPlan { root, max_files } => {
             core::workstation::benchmark_plan(&root, max_files)?
+        }
+        ApiCommands::EvidenceList { file, kind, limit } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            serde_json::json!({
+                "kind": "evidence_list",
+                "binary": path,
+                "evidence_path": core::evidence::evidence_path(&path),
+                "records": core::evidence::list(&path, kind.as_deref(), limit)?,
+            })
+        }
+        ApiCommands::ExecutionProfiles { file } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let data = std::fs::read(&path)?;
+            core::evidence::execution_profiles(&path, runtime_candidates(&path, &data))
+        }
+        ApiCommands::DebugSessionContract { file } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            core::evidence::debug_session_contract(&path)
+        }
+        ApiCommands::BenchmarkSmoke { file } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            core::evidence::benchmark_smoke_plan(&path)
         }
     };
     print_api_value(&value)?;
@@ -1094,6 +1206,73 @@ fn write_json_artifact(path: &Path, value: &serde_json::Value) -> Result<()> {
     }
     std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(value)?))?;
     Ok(())
+}
+
+fn maybe_append_evidence(
+    save: bool,
+    binary: &Path,
+    kind: &str,
+    summary: String,
+    tags: Vec<String>,
+    value: serde_json::Value,
+) -> Result<serde_json::Value> {
+    if !save {
+        return Ok(value);
+    }
+    let record = core::evidence::append(binary, kind, summary, tags, value.clone())?;
+    Ok(serde_json::json!({
+        "evidence": record,
+        "result": value,
+    }))
+}
+
+fn runtime_summary(value: &serde_json::Value) -> String {
+    let result = value.get("result").unwrap_or(value);
+    if let Some(err) = result.get("spawn_error").and_then(|v| v.as_str()) {
+        return format!("runtime spawn error: {err}");
+    }
+    let exit = result.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
+    let signal = result.get("signal").cloned().unwrap_or(serde_json::Value::Null);
+    let timed_out = result
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    format!("runtime-run exit={exit} signal={signal} timed_out={timed_out}")
+}
+
+fn debug_summary(value: &serde_json::Value) -> String {
+    if value
+        .get("available")
+        .and_then(|v| v.as_bool())
+        .is_some_and(|available| !available)
+    {
+        return value
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("debug probe unavailable")
+            .to_string();
+    }
+    let mode = value.get("mode").and_then(|v| v.as_str()).unwrap_or("native");
+    let signals = value
+        .get("signals")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let pc = value
+        .get("registers")
+        .and_then(|r| r.get("rip").or_else(|| r.get("eip")).or_else(|| r.get("pc")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    format!("debug-probe mode={mode} pc={pc} signals={signals}")
+}
+
+fn verify_summary(value: &serde_json::Value) -> String {
+    let success = value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let exit = value.get("exit_code").cloned().unwrap_or(serde_json::Value::Null);
+    format!("exploit-verify success={success} exit={exit}")
 }
 
 fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::Value> {

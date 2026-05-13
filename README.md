@@ -79,11 +79,15 @@ kaijulab api agent-run codex --kind triage --vaddr 0x401000 --write-policy sugge
 kaijulab api console claude
 kaijulab api console codex --prompt 'Use kaijulab MCP to summarize the active workspace.' --idle-timeout-secs 30
 kaijulab api exploit-context
-kaijulab api runtime-run --stdin 'AAAA'
-kaijulab api debug-probe --stdin @crash.input --break 0x401000
+kaijulab api runtime-run --stdin 'AAAA' --save-evidence --tag smoke
+kaijulab api debug-probe --stdin @crash.input --break 0x401000 --save-evidence --tag crash
 kaijulab api exploit-kit --cyclic-len 256 --cyclic-find 0x61413161
 kaijulab api ir-query --search read
 kaijulab api analysis-loop --candidate /tmp/poc.py --observation 'SIGSEGV at EIP'
+kaijulab api evidence-list --limit 10
+kaijulab api execution-profiles
+kaijulab api debug-session-contract
+kaijulab api benchmark-smoke
 kaijulab api workstation-status --file ./foo.bin
 kaijulab api index-build --file ./foo.bin --output .kaiju/index/foo.json
 kaijulab api sysroot-doctor --file ./foo.bin
@@ -109,11 +113,15 @@ Convenience subcommands cover the common automation loop:
 - `console <claude|codex> --prompt ... --idle-timeout-secs N` sends one prompt to that terminal and exits after quiet output.
 - `wait-job <JOB_ID>` polls `/api/jobs/<JOB_ID>` until `ok`, `failed`, or `cancelled`.
 - `exploit-context [--file FILE]` emits an exploit workbench bundle: ELF protections, qemu/native runtime candidates, missing loader/sysroot notes, prompt strings, and common gadget hints.
-- `runtime-run [--file FILE] [--arg X] [--stdin TEXT|@FILE] [--runner qemu-i386 --sysroot ROOT]` runs the target with captured stdout/stderr, timeout, exit code, signal, and runtime diagnostics.
-- `debug-probe [--file FILE] [--stdin TEXT|@FILE] [--break ADDR] [--sysroot ROOT]` runs a non-interactive `gdb`/`gdb-multiarch` probe and returns parsed registers, backtrace, PC disassembly, mappings, signal hints, and next action. Foreign-architecture ELF targets are run under qemu's gdbstub automatically; dynamically linked foreign targets need a matching `--sysroot`.
+- `runtime-run [--file FILE] [--arg X] [--stdin TEXT|@FILE] [--runner qemu-i386 --sysroot ROOT] [--save-evidence]` runs the target with captured stdout/stderr, timeout, exit code, signal, and runtime diagnostics.
+- `debug-probe [--file FILE] [--stdin TEXT|@FILE] [--break ADDR] [--sysroot ROOT] [--save-evidence]` runs a non-interactive `gdb`/`gdb-multiarch` probe and returns parsed registers, backtrace, PC disassembly, mappings, signal hints, and next action. Foreign-architecture ELF targets are run under qemu's gdbstub automatically; dynamically linked foreign targets need a matching `--sysroot`.
 - `exploit-kit [--file FILE] [--cyclic-len N] [--cyclic-find VALUE]` emits checksec/runtime data, PLT/GOT text, gadget hints, exploit recipes, and cyclic pattern helpers.
 - `ir-query [--file FILE] [--function 0xADDR] [--search TEXT]` returns structured function lists, strings, and combined decompile/disassembly/xrefs for a selected function.
 - `analysis-loop [--file FILE] [--candidate SCRIPT] [--observation TEXT]` builds a state bundle for hypothesize/run/debug/edit/verify loops and recommends the next CLI primitive.
+- `evidence-list [--file FILE] [--kind KIND]` lists immutable JSONL evidence records saved by runtime/debug/verification commands.
+- `execution-profiles [--file FILE]` emits native/qemu/hostile-sample execution profiles and their safety policies.
+- `debug-session-contract [--file FILE]` emits the planned persistent debugger API contract: start, breakpoints, continue, step, registers, memory, snapshot, stop.
+- `benchmark-smoke [--file FILE]` emits per-target smoke checks for index/runtime/debug/evidence regression tests.
 - `workstation-status [--file FILE]` reports production-readiness across the seven core areas: dynamic/debug, binary database, exploit automation, agent jobs, sysroots/containers, workbench UI, and benchmarks.
 - `index-build [--file FILE] [--output OUT]` emits a normalized binary index with hash, sections, functions, strings, ELF protections, imports, and contracts for UI/agent consumers.
 - `sysroot-doctor [--file FILE]` inventories qemu/gdb/container tooling and reports loader/sysroot blockers.
@@ -121,7 +129,7 @@ Convenience subcommands cover the common automation loop:
 - `agent-job-plan [--file FILE] --goal TEXT` emits a resumable job contract with phases, artifacts, safety rules, and stop criteria.
 - `workbench-manifest` emits the dense UI pane/navigation/hotkey/evidence contract for the web workbench.
 - `benchmark-plan --root DIR` inventories binary corpus cases and expected grading artifacts for regression work.
-- `exploit-verify [--file FILE] [--expect-exit N|--expect-target-exit N|--expect-output TEXT] SCRIPT` runs a candidate PoC with `KAIJU_BINARY`/qemu env vars and returns structured success/failure JSON.
+- `exploit-verify [--file FILE] [--expect-exit N|--expect-target-exit N|--expect-output TEXT] [--save-evidence] SCRIPT` runs a candidate PoC with `KAIJU_BINARY`/qemu env vars and returns structured success/failure JSON.
 - `exploit-loop <claude|codex> --output /tmp/poc.py` sends Agent Console a bounded PoC-development prompt that requires `analysis-loop`, `runtime-run`, `debug-probe`, `exploit-kit`, `ir-query`, and `exploit-verify` as needed.
 
 For CTF exploit work, prefer the loop commands over ad-hoc shell probing:
