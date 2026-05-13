@@ -2052,3 +2052,4 @@ _[Checkpoint: 6a04c463 — Added KIR type facts over register SSA and memory SSA
 _[Checkpoint: 6a04c46a — edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.…]_
 ---
 
+[18:41:02] THINK: Typed KIR preview over replacing legacy renderer because it exposes SSA/expression/type facts to agents immediately while keeping legacy pseudo-C stable.
