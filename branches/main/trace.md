@@ -1027,3 +1027,4 @@ _[Checkpoint: 6a046a3b — edited /home/koukyosyumei/Dev/KaijuLab/README.md; edi
 [12:11:19] OBSERVE: read src/agent_bridge/codex.rs
 [12:11:19] OBSERVE: read src/agent_bridge/codex.rs
 [12:11:19] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/claude.rs
+[12:11:22] NOTE: Verified Start via /tmp copy: deterministic playbook weak on prologue-less _start; Claude triage after --verbose adapter fix creates high finding for stack leak + 0x3c read overflow + ret control.
