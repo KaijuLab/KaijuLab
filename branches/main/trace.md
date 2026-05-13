@@ -1262,3 +1262,9 @@ _[Checkpoint: 6a047ccb — Implemented agent-facing reversing primitives: runtim
 [13:36:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [13:36:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [13:36:25] ACT: edited /home/koukyosyumei/Dev/KaijuLab/README.md
+
+
+---
+_[Checkpoint: 6a047e5e — Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.]_
+---
+

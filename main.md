@@ -53,11 +53,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Ran Claude+KaijuLab over remaining PwnableTW samples; produced and validated stdlib PoCs for calc and 3x17; generated ORW PoC but local validation blocked by missing i386 dynamic loader.
 - [x] Implemented exploit analysis-loop CLI support: exploit-context, exploit-verify, exploit-loop with runtime, gadget, protection, environment hints, and Agent Console prompt.
 - [x] Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.
+- [x] Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 13:36 UTC] `main`: Extended debug-probe after gdb-multiarch install: foreign ELF qemu gdbstub debugging, parsed registers, --sysroot support, fast missing-loader reporting.
 - [2026-05-13 13:29 UTC] `main`: Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.
 - [2026-05-13 13:15 UTC] `main`: Implemented exploit analysis-loop CLI support: exploit-context, exploit-verify, exploit-loop with runtime, gadget, protection, environment hints, and Agent Console prompt.
 - [2026-05-13 12:59 UTC] `main`: Ran Claude+KaijuLab over remaining PwnableTW samples; produced and validated stdlib PoCs for calc and 3x17; generated ORW PoC but local validation blocked by missing i386 dynamic loader.
