@@ -1072,3 +1072,4 @@ _[Checkpoint: 6a046ff1 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [12:35:52] OBSERVE: read samples/PwnableTW/Start/start.kaiju_scripts/exploit_ok.py
 [12:35:52] OBSERVE: read samples/PwnableTW/Start/start.kaiju_scripts/exploit_ok.py
 [12:35:52] OBSERVE: read 12000
+[12:35:52] OBSERVE: read /home/koukyosyumei/.kaiju/agent-console/claude-1778674873.log
