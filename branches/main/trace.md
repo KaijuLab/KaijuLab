@@ -738,3 +738,9 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 [03:36:10] OBSERVE: read src/server/agent_console.rs
 [03:36:10] ACT: edited src/server/agent_console.rs
 [03:36:10] ACT: edited src/server/agent_console.rs
+
+
+---
+_[Checkpoint: 6a03f1bb — Hardened embedded Claude/Codex agent console with session listing/reattach metadata, bounded transcripts and clear endpoint, idle/runtime guard, PTY child reap, UI clear-log/session/permission controls, env overrides, PTY smoke test, and production web rebuild.]_
+---
+

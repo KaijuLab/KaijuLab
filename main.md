@@ -27,11 +27,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Implemented serve --token enforcement for REST and WebSocket routes with web UI token prompt/storage and docs update.
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/server/palette.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_a…
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.tsx; edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts; edited /h…
+- [x] Hardened embedded Claude/Codex agent console with session listing/reattach metadata, bounded transcripts and clear endpoint, idle/runtime guard, PTY child reap, UI clear-log/session/permission controls, env overrides, PTY smoke test, and production web rebuild.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 03:36 UTC] `main`: Hardened embedded Claude/Codex agent console with session listing/reattach metadata, bounded transcripts and clear endpoint, idle/runtime guard, PTY child reap, UI clear-log/session/permission controls, env overrides, PTY smoke test, and production web rebuild.
 - [2026-05-13 03:05 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.tsx; edited /home/koukyosyumei/Dev/KaijuLab/web/src/api.ts; edited /h…
 - [2026-05-12 22:56 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/server/palette.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/server/static_a…
 - [2026-05-12 22:53 UTC] `main`: Implemented serve --token enforcement for REST and WebSocket routes with web UI token prompt/storage and docs update.
