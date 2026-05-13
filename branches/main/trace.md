@@ -1236,3 +1236,9 @@ _[Checkpoint: 6a047968 — Implemented exploit analysis-loop CLI support: exploi
 [13:29:39] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [13:29:39] OBSERVE: searched src/main.rs for "program""
 [13:29:39] OBSERVE: searched main.rs for "let program"
+
+
+---
+_[Checkpoint: 6a047ccb — Implemented agent-facing reversing primitives: runtime-run, debug-probe, exploit-kit, ir-query, and analysis-loop API commands with qemu runtime selection and docs.]_
+---
+
