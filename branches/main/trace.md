@@ -1763,3 +1763,4 @@ _[Checkpoint: 6a04acba — Committed register data-flow slice, then added heuris
 [17:41:07] OBSERVE: listed files under decompiler
 [17:41:07] OBSERVE: listed files under ghidra
 [17:41:07] OBSERVE: searched . for "Decompiler|decompile|pcode|Pcode|Sleigh|sleigh|HighFunction|Varnode|Symbol|DataType"
+[17:41:07] OBSERVE: read src/decompiler/ir/mod.rs
