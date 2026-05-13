@@ -2015,3 +2015,4 @@ _[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/u
 
 [18:34:54] THINK: KIR type facts before structured renderer because register and memory type hints make expression rendering auditable while deferring constraint-solving complexity.
 [18:34:54] OBSERVE: searched src/decompiler/ir/kir.rs for "src/core/decompile.rs"
+[18:34:54] OBSERVE: searched decompile.rs for "type|Type|memory_ssa|expressions|decompiler_score|KirFunction"
