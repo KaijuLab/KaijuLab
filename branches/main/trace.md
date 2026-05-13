@@ -2186,3 +2186,4 @@ _[Checkpoint: 6a04ca28 — Added agent-decompile-loop CLI integration for Agent 
 ---
 
 [19:04:16] NOTE: White page root cause: web/dist/index.html referenced stale hashed bundle names; rebuilt frontend and rebuilt Rust binary so include_dir embeds matching assets.
+[19:04:20] OBSERVE: searched web/src for "src/server"
