@@ -2007,3 +2007,9 @@ _[Checkpoint: 6a04c116 — Added KIR expression facts with SSA assignment DAG, p
 [18:28:27] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:28:27] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
 [18:28:27] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/core/decompile.rs
+
+
+---
+_[Checkpoint: 6a04c2cb — Added KIR memory SSA facts with linear stack/global/unknown memory versions, benchmark counters/gate, signed memory displacement normalization, and tests. cargo test passed; PwnableTW benchmark aggregate 78.]_
+---
+
