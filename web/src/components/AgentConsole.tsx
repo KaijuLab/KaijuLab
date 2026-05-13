@@ -97,6 +97,7 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
     ws.onopen = () => {
       if (wsRef.current !== ws) return;
       setStatus('live');
+      terminalRef.current?.writeln(`\r\n[kaijulab] connected to ${agent} console`);
       setTimeout(() => {
         sendResize();
         terminalRef.current?.focus();
@@ -104,6 +105,7 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
     };
     ws.onclose = () => {
       if (wsRef.current !== ws) return;
+      terminalRef.current?.writeln(`\r\n[kaijulab] ${agent} console detached`);
       setStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
       refreshSessions();
     };
@@ -119,13 +121,16 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
         if (parsed.type === 'status') {
           setCurrentSession(parsed.data);
           if (parsed.data.running && ws.readyState === WebSocket.OPEN) setStatus('live');
+          terminalRef.current?.writeln(
+            `\r\n[kaijulab] ${parsed.data.agent} ${parsed.data.running ? 'running' : 'stopped'}: ${parsed.data.command}`,
+          );
           refreshSessions();
           return;
         }
         if (parsed.type === 'error') notify('error', parsed.data);
-        terminalRef.current?.write(normalizeTerminalOutput(parsed.data));
+        terminalRef.current?.write(parsed.data);
       } catch {
-        terminalRef.current?.write(normalizeTerminalOutput(String(msg.data)));
+        terminalRef.current?.write(String(msg.data));
       }
     };
   };
@@ -351,8 +356,4 @@ function statusClass(status: ConsoleStatus): string {
     default:
       return 'text-kaiju-muted';
   }
-}
-
-function normalizeTerminalOutput(data: string): string {
-  return data.replace(/\r(?!\n)/g, '\r\x1b[K');
 }
