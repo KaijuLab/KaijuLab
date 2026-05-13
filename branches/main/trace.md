@@ -975,3 +975,9 @@ _[Checkpoint: 6a03feec — Fixed stale Agent Console attach/restart and gray com
 _[Checkpoint: 6a03ffbd — Made Agent Console visibly report attach/status and restored raw xterm output rendering; npm build passed.]_
 ---
 
+
+
+---
+_[Checkpoint: 6a040012 — edited web/src/api.ts; edited web/src/components/AgentConsole.tsx; edited web/src/components/AgentConsole.tsx]_
+---
+
