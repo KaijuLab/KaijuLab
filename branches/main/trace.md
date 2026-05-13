@@ -1362,3 +1362,4 @@ _[Checkpoint: 6a048bb5 — Implemented first maturation slice: immutable evidenc
 _[Checkpoint: 6a049050 — Implemented live debug session foundation: daemon-owned gdb/gdb-multiarch sessions, qemu gdbstub support, session REST routes, CLI wrappers, structured action snapshots, and evidence append.]_
 ---
 
+[15:01:13] OBSERVE: listed files under web/src
