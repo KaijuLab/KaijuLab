@@ -119,9 +119,9 @@ export function AgentConsole({ className = 'h-80' }: { className?: string }) {
           return;
         }
         if (parsed.type === 'error') notify('error', parsed.data);
-        terminalRef.current?.write(parsed.data);
+        terminalRef.current?.write(normalizeTerminalOutput(parsed.data));
       } catch {
-        terminalRef.current?.write(String(msg.data));
+        terminalRef.current?.write(normalizeTerminalOutput(String(msg.data)));
       }
     };
   };
@@ -319,4 +319,8 @@ function statusClass(status: ConsoleStatus): string {
     default:
       return 'text-kaiju-muted';
   }
+}
+
+function normalizeTerminalOutput(data: string): string {
+  return data.replace(/\r(?!\n)/g, '\r\x1b[K');
 }
