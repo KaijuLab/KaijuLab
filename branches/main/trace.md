@@ -744,3 +744,4 @@ _[Checkpoint: 6a03ea95 — edited /home/koukyosyumei/Dev/KaijuLab/web/src/App.ts
 _[Checkpoint: 6a03f1bb — Hardened embedded Claude/Codex agent console with session listing/reattach metadata, bounded transcripts and clear endpoint, idle/runtime guard, PTY child reap, UI clear-log/session/permission controls, env overrides, PTY smoke test, and production web rebuild.]_
 ---
 
+[03:43:14] NOTE: Agent console input fix: terminal pane now focusable keyboard surface sends raw PTY chars/control sequences/paste; command input remains fallback; error frames no longer disable live input.
