@@ -104,11 +104,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 - [x] wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 - [x] edited kaijulab-batch-hacknote.py; wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-realloc.py
+- [x] wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-tcache-tear.py
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 23:58 UTC] `main`: wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-tcache-tear.py
 - [2026-05-13 23:56 UTC] `main`: edited kaijulab-batch-hacknote.py; wrote kaijulab-batch-realloc.py; wrote kaijulab-batch-realloc.py
 - [2026-05-13 23:52 UTC] `main`: wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
 - [2026-05-13 23:48 UTC] `main`: wrote kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py; edited kaijulab-batch-hacknote.py
