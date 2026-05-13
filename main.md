@@ -99,11 +99,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
 - [x] Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.
 - [x] edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py
+- [x] Re-solve smoke: realloc failed with best-effort non-ready candidate; tcache-tear/silver-bullet timed out; hacknote wrote failing candidate. Hardened generic exploit-loop prompt around bounded triage/early candidate/verify cadence and raw output caps; decompiler now returns structured no-IR error instead of HighFunction panic.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-13 23:30 UTC] `main`: Re-solve smoke: realloc failed with best-effort non-ready candidate; tcache-tear/silver-bullet timed out; hacknote wrote failing candidate. Hardened generic exploit-loop prompt around bounded triage/early candidate/verify cadence and raw output caps; decompiler now returns structured no-IR error instead of HighFunction panic.
 - [2026-05-13 22:56 UTC] `main`: edited src/main.rs; edited src/main.rs; wrote kaijulab-resolve-realloc.py
 - [2026-05-13 22:53 UTC] `main`: Removed overfit PwnableTW filename recipes. exploit-recipe now emits generic feature-derived exploit_strategy; prompt treats ranked families as hypotheses, while strict verifier behavior remains.
 - [2026-05-13 22:47 UTC] `main`: Improved exploit loop for PwnableTW samples: added known exploit recipes/libc offsets to context and kit, added exploit-recipe command, tightened exploit-verify against blocked/no-predicate scripts, and updated agent prompt with exact CLI syntax and stricter stop conditions.
