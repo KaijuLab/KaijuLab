@@ -982,3 +982,4 @@ _[Checkpoint: 6a040012 — edited web/src/api.ts; edited web/src/components/Agen
 ---
 
 [12:02:51] THINK: Add kaijulab api CLI generic REST client over new server routes because bots need scriptable full WebUI surface; avoid parallel typed duplicate API layer.
+[12:04:27] OBSERVE: listed files under .
