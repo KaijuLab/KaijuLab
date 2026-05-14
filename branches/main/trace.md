@@ -2823,3 +2823,4 @@ _[Checkpoint: 6a051f20 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 ---
 
 [01:07:46] NOTE: Exploit batch canary: console mode idled without writing; claude-exec with dontAsk reported tool/write denial; adapter switched default permission-mode to bypassPermissions; canary still timed out at 240s, no PoC.
+[01:07:47] OBSERVE: searched analysis_loop|fn for "crash_offset|fn"
