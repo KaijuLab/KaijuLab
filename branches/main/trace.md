@@ -3526,3 +3526,4 @@ _[Checkpoint: 6a054fd8 — Removed challenge-specific auto-pwn recipes from main
 [05:00:37] NOTE: Interactive Claude benchmark stopped after 5/7 targets; verified generated candidates: silver-bullet false exit1, realloc timeout, seethefile false exit0, dubblesort false sigsegv. Codex TUI blocked on update prompt/npm EACCES.
 [05:00:37] OBSERVE: listed files under /tmp/kaijulab-agent-batch-claude-high-bypass
 [05:00:37] OBSERVE: searched /tmp/kaijulab-agent-batch-claude-high-bypass
+[05:00:37] OBSERVE: listed files under kaijulab-agent-batch-claude-high-bypass
