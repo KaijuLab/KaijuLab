@@ -2756,3 +2756,9 @@ _[Checkpoint: 6a0511d5 — Ran KaijuLab+Claude bounded solve loops for hacknote,
 [00:24:04] OBSERVE: searched drive_summary|fn for "interaction_summary|fn"
 [00:24:04] OBSERVE: searched main.rs for "fn interaction_summary|fn drive_summary|fn leak_probe_summary|fn exploit_drive_json|fn leak_probe_json|fn run_stepwise_drive"
 [00:24:06] THINK: Implemented Priority 2 as leak-probe atop exploit-drive so menu synchronization and repeated leak harvesting share one runner/qemu/sysroot path.
+
+
+---
+_[Checkpoint: 6a051631 — Implemented Priority 1 exploit-drive and Priority 2 leak-probe APIs; verified cargo check/build plus x86 hacknote/seethefile smoke probes.]_
+---
+
