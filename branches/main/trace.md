@@ -3019,3 +3019,4 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 _[Checkpoint: 6a052b15 — Added adjacent libc version/loader detection; auto-pwn now reports tcache-tear glibc 2.27 missing ld-2.27.so and realloc glibc 2.29 missing ld-2.29.so.]_
 ---
 
+[01:58:14] OBSERVE: listed files under /tmp/x86_64sysroot
