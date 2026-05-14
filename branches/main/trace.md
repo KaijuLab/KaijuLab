@@ -3410,3 +3410,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:55:06] OBSERVE: searched argv\(\):" for "dubblesort|def"
 [03:55:06] OBSERVE: searched main.rs for "0xaaaa0000|fn dubblesort|def argv\(\):"
 [03:55:06] OBSERVE: searched /tmp/kaijulab-autopwn-dubblesort-base/kaijulab-dubblesort-autopwn.py for "argv""
+[03:55:06] OBSERVE: searched kaijulab-dubblesort-autopwn.py for "0xaaaa|def argv"
