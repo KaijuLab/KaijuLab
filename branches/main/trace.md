@@ -3522,3 +3522,4 @@ _[Checkpoint: 6a054fd8 — Removed challenge-specific auto-pwn recipes from main
 ---
 
 [04:49:00] OBSERVE: read kaijulab-re-alloc-poc.py
+[04:50:53] OBSERVE: read kaijulab-seethefile-poc.py
