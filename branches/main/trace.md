@@ -2678,3 +2678,9 @@ _[Checkpoint: 6a051129 — wrote kaijulab-batch-seethefile.py; edited kaijulab-b
 ---
 
 [00:04:05] ACT: wrote kaijulab-batch-applestore.py
+
+
+---
+_[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py]_
+---
+
