@@ -3255,3 +3255,4 @@ _[Checkpoint: 6a0536bb — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 _[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.]_
 ---
 
+[03:00:38] NOTE: realloc-menu primitive synthesis: src/main.rs detects generic index/size/data realloc menus, emits targeted heap-probe-plan, plt/got map, direct loader runtime command, and poc-synthesize helper with consuming Tube buffer + aligned tcache target.
