@@ -2826,3 +2826,4 @@ _[Checkpoint: 6a051f20 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [01:07:47] OBSERVE: searched analysis_loop|fn for "crash_offset|fn"
 [01:07:47] OBSERVE: searched main.rs for "HeapModel|LibcResolve|ExploitPlan|PocRepair|CrashOffset|ExploitStack|AnalysisLoop|BenchmarkRun|fn crash_offset|fn analysis_loop|fn exploit_stack|fn verify_exploit_script"
 [01:07:47] OBSERVE: read src/main.rs
+[01:07:47] OBSERVE: read src/main.rs
