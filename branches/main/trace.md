@@ -3368,3 +3368,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:14:16] OBSERVE: read src/main.rs
 [03:14:16] OBSERVE: read src/main.rs
 [03:14:16] ACT: edited src/main.rs
+[03:24:52] NOTE: tcache-tear progress: loader selector now prefers sysroot libc allocator marker matching adjacent libc; tcache finalizer reaches libc leak under /tmp/x86_64sysroot-2.27 but final __free_hook/system trigger still missing uid output.
