@@ -3485,3 +3485,4 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 [04:30:10] OBSERVE: read src/main.rs
 [04:30:10] OBSERVE: read src/main.rs
 [04:30:10] OBSERVE: searched hacknote|fn for "silver_bullet|fn"
+[04:30:10] OBSERVE: searched main.rs for "fn silver_bullet|fn hacknote|fn tcache|fn poc_template|fn default_pwnable"
