@@ -3051,3 +3051,4 @@ _[Checkpoint: 6a052d7d — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a052f47 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; wrote kaijulab-r…]_
 ---
 
+[02:12:24] NOTE: Claude console retest after loader sysroots: tcache-tear timed out 300s with no PoC; realloc wrote best-effort PoC but verify failed SIGABRT double-free, no target exit 42.
