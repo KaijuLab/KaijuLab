@@ -3453,3 +3453,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [04:21:37] OBSERVE: read src/main.rs
 [04:21:37] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [04:21:44] NOTE: auto-pwn variants added; dubblesort ret-slot variants and applestore direct-GOT variants still fail. Current solved 4/7: silver-bullet,hacknote,realloc,seethefile. Remaining tcache-tear,dubblesort,applestore need debugger-guided finalizer synthesis.
+[04:21:51] OBSERVE: searched \(idx, for "auto_pwn_candidate_variants|for"
