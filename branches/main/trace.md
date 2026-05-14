@@ -2801,3 +2801,4 @@ _[Checkpoint: 6a051867 — Implemented generic exploit mechanics APIs: heap-mode
 _[Checkpoint: 6a0519f5 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…]_
 ---
 
+[00:43:48] OBSERVE: read samples/PwnableTW/silver-bullet/silver_bullet.kaiju.evidence.jsonl
