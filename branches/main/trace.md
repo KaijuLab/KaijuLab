@@ -2850,3 +2850,4 @@ _[Checkpoint: 6a051f20 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [01:07:47] OBSERVE: listed files under /tmp/kaijulab-batch-new
 [01:07:47] OBSERVE: listed files under kaijulab-batch-new
 [01:07:47] OBSERVE: listed files under src/agent_bridge
+[01:07:47] OBSERVE: listed files under agent_bridge
