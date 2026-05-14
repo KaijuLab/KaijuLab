@@ -2952,3 +2952,9 @@ _[Checkpoint: 6a05239e — Removed default claude -p usage from batch automation
 [01:34:01] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [01:34:01] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [01:34:01] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a0526a3 — Added no-claude-p offline auto-pwn path; verified auto-pwn solves silver-bullet via exit@plt(42) and hacknote via system id output; remaining five report explicit finalizer gaps.]_
+---
+

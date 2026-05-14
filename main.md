@@ -116,11 +116,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 - [x] Added PoC synthesis, constrained-write planning, and batch exploit loop; validated new commands/build; tested Claude canary and found remaining timeout/no-PoC blocker.
 - [x] Removed default claude -p usage from batch automation; added prompt-pack flow, disabled claude-exec, fixed realloc default target path, verified all seven prompt packs.
+- [x] Added no-claude-p offline auto-pwn path; verified auto-pwn solves silver-bullet via exit@plt(42) and hacknote via system id output; remaining five report explicit finalizer gaps.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 01:34 UTC] `main`: Added no-claude-p offline auto-pwn path; verified auto-pwn solves silver-bullet via exit@plt(42) and hacknote via system id output; remaining five report explicit finalizer gaps.
 - [2026-05-14 01:21 UTC] `main`: Removed default claude -p usage from batch automation; added prompt-pack flow, disabled claude-exec, fixed realloc default target path, verified all seven prompt packs.
 - [2026-05-14 01:07 UTC] `main`: Added PoC synthesis, constrained-write planning, and batch exploit loop; validated new commands/build; tested Claude canary and found remaining timeout/no-PoC blocker.
 - [2026-05-14 01:02 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
