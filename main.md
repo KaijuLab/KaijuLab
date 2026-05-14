@@ -126,11 +126,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+- [x] Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 02:45 UTC] `main`: Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.
 - [2026-05-14 02:43 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 - [2026-05-14 02:39 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 - [2026-05-14 02:33 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs

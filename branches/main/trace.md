@@ -3249,3 +3249,9 @@ _[Checkpoint: 6a0536bb — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 [02:45:06] OBSERVE: read /home/koukyosyumei/.kaiju/run/active.json
 [02:45:06] OBSERVE: read /home/koukyosyumei/.kaiju/run/active.json
 [02:45:06] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.]_
+---
+
