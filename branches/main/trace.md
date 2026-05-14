@@ -3338,3 +3338,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:14:15] OBSERVE: searched kaijulab-batch-exec* for "SCRIPT_READY|SCRIPT_READY_BLOCKED|success|exploit-verify|returncode|exit_code|timed_out|solves|solved|failed"
 [03:14:15] OBSERVE: listed files under samples/PwnableTW
 [03:14:15] OBSERVE: listed files under PwnableTW
+[03:14:15] OBSERVE: searched src/main.rs for "finalizer|silver|hacknote|seethefile|dubblesort|applestore|tcache|realloc|Known""
