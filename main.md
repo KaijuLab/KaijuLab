@@ -130,11 +130,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.
 - [x] Implemented offline auto-pwn variant execution and added dubblesort/applestore finalizer variants; release build passes, focused verification still leaves tcache-tear,dubblesort,applestore unsolved.
 - [x] Removed challenge-specific auto-pwn recipes from main.rs, switched default batch discovery to generic ELF scan, kept auto-pwn as scaffold/facts handoff, and added Claude console effort env knob.
+- [x] Tried kaijulab interactive Claude/Codex on PwnableTW set; Claude produced unverified candidates and Codex TUI blocked on update prompt.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 05:00 UTC] `main`: Tried kaijulab interactive Claude/Codex on PwnableTW set; Claude produced unverified candidates and Codex TUI blocked on update prompt.
 - [2026-05-14 04:30 UTC] `main`: Removed challenge-specific auto-pwn recipes from main.rs, switched default batch discovery to generic ELF scan, kept auto-pwn as scaffold/facts handoff, and added Claude console effort env knob.
 - [2026-05-14 04:21 UTC] `main`: Implemented offline auto-pwn variant execution and added dubblesort/applestore finalizer variants; release build passes, focused verification still leaves tcache-tear,dubblesort,applestore unsolved.
 - [2026-05-14 03:00 UTC] `main`: Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.
