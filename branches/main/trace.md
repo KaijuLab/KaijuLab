@@ -3086,3 +3086,4 @@ _[Checkpoint: 6a052f47 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [02:12:24] OBSERVE: read /tmp/kaijulab-claude-realloc-after-pastefix/kaijulab-re-alloc-poc.py
 [02:12:24] OBSERVE: listed files under kaijulab-claude-tcache-after-pastefix
 [02:18:11] THINK: Fresh Agent Console per automated target over reused PTY because prior Claude transcript contaminated realloc with tcache context.
+[02:20:40] THINK: Agent-facing KaijuLab CLI prefers target/release via KAIJULAB_AGENT_CLI override or release current exe; release avoids slow decompile/recovery in Claude loops.
