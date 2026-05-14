@@ -2762,4 +2762,4 @@ _[Checkpoint: 6a0511d5 — Ran KaijuLab+Claude bounded solve loops for hacknote,
 _[Checkpoint: 6a051631 — Implemented Priority 1 exploit-drive and Priority 2 leak-probe APIs; verified cargo check/build plus x86 hacknote/seethefile smoke probes.]_
 ---
 
-[00:33:34] THINK: Added heap-model/libc-resolve/exploit-plan/poc-repair over challenge-specific recipes because agents need reusable exploit mechanics: lifecycle signals, base arithmetic, chain ranking, and failed-PoC repair.
+[00:33:34] OBSERVE: searched src/main.rs for "shared_object_symbol_offsets|libc_symbol""
