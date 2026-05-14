@@ -15,6 +15,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -22,6 +23,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use object::{Object, ObjectSection};
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -256,6 +258,175 @@ enum ApiCommands {
         /// Maximum matches per gadget pattern.
         #[arg(long, default_value_t = 8)]
         max_gadgets: usize,
+    },
+
+    /// Emit an inferred exploit strategy profile from binary features.
+    ExploitRecipe {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Emit compact exploit-facing binary facts from normalized KaijuLab APIs.
+    BinaryFacts {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Maximum functions/prompts to include.
+        #[arg(long, default_value_t = 40)]
+        max: usize,
+    },
+
+    /// Emit a stdlib Python PoC scaffold with qemu/sysroot/menu helpers.
+    ExploitScaffold {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Write scaffold to this path. If omitted, only JSON text is emitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// qemu -L sysroot baked into the default, still overridable by env.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+    },
+
+    /// Run a structured menu/input transcript under the target with hard caps.
+    ExploitInteract {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// JSON action list or @path. Actions: send_choice, send_line, send_text, send_hex, sleep_ms, expect.
+        #[arg(long)]
+        actions: String,
+
+        /// Expected substring in stdout/stderr. Can be repeated.
+        #[arg(long = "expect")]
+        expects: Vec<String>,
+
+        /// qemu -L sysroot when using qemu-user.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Wall-clock timeout.
+        #[arg(long, default_value_t = 10)]
+        timeout_secs: u64,
+
+        /// Append interaction output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+
+    /// Drive a target interactively with stepwise recv/send actions.
+    ExploitDrive {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// JSON action list or @path. Supports recv_until, sendline_after, send_after, send_line, send_text, send_hex, read_for_ms.
+        #[arg(long)]
+        actions: String,
+
+        /// Expected substring in the collected transcript. Can be repeated.
+        #[arg(long = "expect")]
+        expects: Vec<String>,
+
+        /// Override runner, otherwise inferred from the ELF architecture.
+        #[arg(long)]
+        runner: Option<String>,
+
+        /// qemu -L sysroot when using qemu-user.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Whole-session wall-clock timeout.
+        #[arg(long, default_value_t = 15)]
+        timeout_secs: u64,
+
+        /// Default per recv/send-after wait timeout.
+        #[arg(long, default_value_t = 1500)]
+        step_timeout_ms: u64,
+
+        /// Maximum transcript bytes retained.
+        #[arg(long, default_value_t = 262144)]
+        max_output: usize,
+
+        /// Append driver output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+
+    /// Drive repeated leak cycles and harvest maps/pointer candidates.
+    LeakProbe {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Optional JSON setup action list or @path, run before cycles.
+        #[arg(long)]
+        setup: Option<String>,
+
+        /// JSON action list or @path repeated for leak attempts.
+        #[arg(long)]
+        cycle: String,
+
+        /// Required transcript substring. Can be repeated.
+        #[arg(long = "contains")]
+        contains: Vec<String>,
+
+        /// Leak class to require: maps, pointer, libc, heap, stack, binary. Can be repeated.
+        #[arg(long = "want")]
+        want: Vec<String>,
+
+        /// Override runner, otherwise inferred from the ELF architecture.
+        #[arg(long)]
+        runner: Option<String>,
+
+        /// qemu -L sysroot when using qemu-user.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Whole-session wall-clock timeout.
+        #[arg(long, default_value_t = 20)]
+        timeout_secs: u64,
+
+        /// Default per recv/send-after wait timeout.
+        #[arg(long, default_value_t = 1500)]
+        step_timeout_ms: u64,
+
+        /// Number of leak cycles to run.
+        #[arg(long, default_value_t = 6)]
+        max_rounds: u32,
+
+        /// Maximum transcript bytes retained.
+        #[arg(long, default_value_t = 524288)]
+        max_output: usize,
+
+        /// Append leak output to the target evidence log.
+        #[arg(long)]
+        save_evidence: bool,
+
+        /// Evidence tag. Can be repeated.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+
+    /// Emit generic heap/menu primitive probes to try next.
+    HeapProbePlan {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
     },
 
     /// Execute a candidate PoC script and evaluate simple success predicates.
@@ -1149,6 +1320,117 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             build_exploit_context(&path, max_gadgets)?
         }
+        ApiCommands::ExploitRecipe { file } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            inferred_exploit_strategy(&path)?
+        }
+        ApiCommands::BinaryFacts { file, max } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            binary_facts_json(&path, max)?
+        }
+        ApiCommands::ExploitScaffold {
+            file,
+            output,
+            sysroot,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            exploit_scaffold_json(&path, output.as_deref(), sysroot.as_deref())?
+        }
+        ApiCommands::ExploitInteract {
+            file,
+            actions,
+            expects,
+            sysroot,
+            timeout_secs,
+            save_evidence,
+            tags,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value =
+                exploit_interact_json(&path, &actions, &expects, sysroot.as_deref(), timeout_secs)?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "exploit_interact",
+                interaction_summary(&value),
+                tags,
+                value,
+            )?
+        }
+        ApiCommands::ExploitDrive {
+            file,
+            actions,
+            expects,
+            runner,
+            sysroot,
+            timeout_secs,
+            step_timeout_ms,
+            max_output,
+            save_evidence,
+            tags,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value = exploit_drive_json(
+                &path,
+                &actions,
+                &expects,
+                runner.as_deref(),
+                sysroot.as_deref(),
+                timeout_secs,
+                step_timeout_ms,
+                max_output,
+            )?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "exploit_drive",
+                drive_summary(&value),
+                tags,
+                value,
+            )?
+        }
+        ApiCommands::LeakProbe {
+            file,
+            setup,
+            cycle,
+            contains,
+            want,
+            runner,
+            sysroot,
+            timeout_secs,
+            step_timeout_ms,
+            max_rounds,
+            max_output,
+            save_evidence,
+            tags,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            let value = leak_probe_json(
+                &path,
+                setup.as_deref(),
+                &cycle,
+                &contains,
+                &want,
+                runner.as_deref(),
+                sysroot.as_deref(),
+                timeout_secs,
+                step_timeout_ms,
+                max_rounds,
+                max_output,
+            )?;
+            maybe_append_evidence(
+                save_evidence,
+                &path,
+                "leak_probe",
+                leak_probe_summary(&value),
+                tags,
+                value,
+            )?
+        }
+        ApiCommands::HeapProbePlan { file } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            heap_probe_plan_json(&path)?
+        }
         ApiCommands::ExploitVerify {
             script,
             file,
@@ -1193,8 +1475,21 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
         } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             let context = build_exploit_context(&path, 8)?;
-            let prompt =
-                exploit_loop_prompt(&path, &output, &goal, attempts, sysroot.as_deref(), &context)?;
+            let effective_sysroot = effective_sysroot(
+                sysroot.as_deref(),
+                context.get("arch").and_then(|v| v.as_str()),
+                context
+                    .pointer("/runtime/interpreter")
+                    .and_then(|v| v.as_str()),
+            );
+            let prompt = exploit_loop_prompt(
+                &path,
+                &output,
+                &goal,
+                attempts,
+                effective_sysroot.as_deref(),
+                &context,
+            )?;
             run_agent_console(
                 &base_url,
                 token.as_deref(),
@@ -1886,6 +2181,62 @@ fn verify_summary(value: &serde_json::Value) -> String {
     format!("exploit-verify success={success} exit={exit}")
 }
 
+fn interaction_summary(value: &serde_json::Value) -> String {
+    let success = value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let actions = value
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let exit = value
+        .pointer("/runtime/result/exit_code")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    format!("exploit-interact success={success} actions={actions} exit={exit}")
+}
+
+fn drive_summary(value: &serde_json::Value) -> String {
+    let success = value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let steps = value
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let exit = value
+        .get("exit_code")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let timed_out = value
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    format!("exploit-drive success={success} steps={steps} exit={exit} timed_out={timed_out}")
+}
+
+fn leak_probe_summary(value: &serde_json::Value) -> String {
+    let success = value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mappings = value
+        .get("mappings")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let pointers = value
+        .get("pointer_candidates")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    format!("leak-probe success={success} mappings={mappings} pointers={pointers}")
+}
+
 fn crash_offset_summary(value: &serde_json::Value) -> String {
     let count = value
         .get("candidate_offsets")
@@ -2140,6 +2491,13 @@ fn looks_like_supported_binary(path: &Path) -> bool {
     {
         return false;
     }
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(false, |name| name.contains(".so"))
+    {
+        return false;
+    }
     if matches!(
         path.extension().and_then(|ext| ext.to_str()),
         Some("db" | "json" | "md" | "py" | "txt")
@@ -2208,6 +2566,7 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
         "binary_path": path,
         "size": data.len(),
         "runtime": runtime_candidates(path, &data),
+        "adjacent_shared_objects": adjacent_shared_objects(path),
         "strings_of_interest": interesting_strings(&data, 40),
     });
 
@@ -2230,6 +2589,7 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
                 .take(40)
                 .collect::<Vec<_>>());
             out["gadget_hints"] = serde_json::json!(gadget_hints(path, &data, &arch, max_gadgets)?);
+            out["inferred_exploit_strategy"] = inferred_exploit_strategy(path)?;
             out["analysis_loop"] = serde_json::json!({
                 "recommended_order": [
                     "1. Inspect protections/runtime and fix missing loader/sysroot before dynamic validation.",
@@ -2242,6 +2602,10 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
                     "target/debug/kaijulab api exploit-verify --file {} --expect-target-exit 42 /tmp/poc.py",
                     shell_quote(&path.to_string_lossy())
                 ),
+                "strategy_command": format!(
+                    "target/debug/kaijulab api exploit-recipe --file {}",
+                    shell_quote(&path.to_string_lossy())
+                ),
             });
         }
         other => {
@@ -2251,6 +2615,278 @@ fn build_exploit_context(path: &Path, max_gadgets: usize) -> Result<serde_json::
         }
     }
     Ok(out)
+}
+
+fn adjacent_shared_objects(path: &Path) -> Vec<serde_json::Value> {
+    let Some(parent) = path.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut out = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|candidate| {
+            candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".so"))
+        })
+        .filter_map(|candidate| {
+            let data = std::fs::read(&candidate).ok()?;
+            let sha256 = sha256_hex(&data);
+            Some(serde_json::json!({
+                "path": candidate,
+                "size": data.len(),
+                "sha256": sha256,
+                "arch": binary_arch_from_data(&data),
+            }))
+        })
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| {
+        a.get("path")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("path").and_then(|v| v.as_str()))
+    });
+    out
+}
+
+fn inferred_exploit_strategy(path: &Path) -> Result<serde_json::Value> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut imports = Vec::new();
+    let mut protections = serde_json::Value::Null;
+    let mut arch = "unknown".to_string();
+    if let goblin::Object::Elf(elf) = goblin::Object::parse(&data)? {
+        arch = elf_arch_label(&elf);
+        protections = elf_protections(&elf);
+        imports = elf
+            .dynsyms
+            .iter()
+            .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        imports.sort();
+        imports.dedup();
+    }
+
+    let strings = interesting_strings(&data, 120);
+    let string_text = strings
+        .iter()
+        .filter_map(|v| v.get("text").and_then(|v| v.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+    let has_import = |name: &str| imports.iter().any(|import| import == name);
+    let has_any_import = |names: &[&str]| names.iter().any(|name| has_import(name));
+    let text_has = |needle: &str| string_text.contains(needle);
+
+    let adjacent_libc = adjacent_shared_objects(path);
+    let libc_symbols = adjacent_libc
+        .iter()
+        .filter_map(|obj| obj.get("path").and_then(|v| v.as_str()))
+        .find_map(|p| shared_object_symbol_offsets(Path::new(p)).ok());
+
+    let mut families = Vec::new();
+
+    if has_import("realloc") {
+        push_strategy_family(
+            &mut families,
+            "realloc lifetime bug / tcache poisoning",
+            "high",
+            vec!["imports realloc", "allocator state can often be desynchronized by realloc(ptr, 0) or realloc size changes"],
+            vec![
+                "Map allocation menu states and find whether realloc(ptr, 0) leaves stale pointers or indexes.",
+                "If a stale pointer remains reachable, build tcache dup/poisoning and first target a leak primitive.",
+                "After libc base is known, prefer __free_hook or __malloc_hook overwrite only if the bundled libc exports it.",
+                "Verify with a deterministic command or target exit predicate; do not stop at heap corruption alone.",
+            ],
+        );
+    }
+    if has_any_import(&["malloc", "calloc", "free"]) {
+        push_strategy_family(
+            &mut families,
+            "heap lifecycle corruption",
+            if text_has("delete") || text_has("free") || text_has("remove") {
+                "high"
+            } else {
+                "medium"
+            },
+            vec!["imports malloc/free/calloc", "menu strings may expose add/delete/show lifecycle"],
+            vec![
+                "Drive add/free/show/edit actions with small transcripts and record pointer reuse behavior.",
+                "Look for UAF, double-free, stale indexes, size confusion, or function-pointer/content-pointer overlap.",
+                "Use the first primitive to leak GOT/libc or heap metadata; compute libc base from adjacent shared-object offsets.",
+                "Use the second primitive for control data such as hooks, GOT in partial RELRO, vtables, callbacks, or saved returns.",
+            ],
+        );
+    }
+    if has_any_import(&["fopen", "open", "read", "fread", "fgets"]) || text_has("file") {
+        push_strategy_family(
+            &mut families,
+            "file read leak to libc/control-data overwrite",
+            if text_has("/proc") || text_has("filename") || text_has("file") {
+                "high"
+            } else {
+                "medium"
+            },
+            vec!["file/read imports or file-oriented strings"],
+            vec![
+                "Try controlled reads of /proc/self/maps, /proc/self/mem only when menu constraints allow it.",
+                "Use maps output to compute libc base and validate it against adjacent libc offsets.",
+                "Inspect exit/close/name paths for late-use buffers, FILE-like structs, callbacks, or function pointers.",
+                "Trigger the late-use path with a deterministic command or exit predicate.",
+            ],
+        );
+    }
+    if has_any_import(&["scanf", "__isoc99_scanf"]) {
+        push_strategy_family(
+            &mut families,
+            "numeric input stack/index corruption",
+            "medium",
+            vec!["imports scanf-family numeric parser"],
+            vec![
+                "Find count/index bounds and whether parser failures leave previous stack values unchanged.",
+                "Probe for stack leaks in greeting/echo paths before numeric input starts.",
+                "If sorted or constrained writes exist, encode the final ROP values so they satisfy that ordering constraint.",
+                "When canaries exist, first establish a leak or parser-preservation trick before writing return state.",
+            ],
+        );
+    }
+    if text_has("delete") && (text_has("list") || text_has("cart") || text_has("checkout")) {
+        push_strategy_family(
+            &mut families,
+            "linked-structure unlink/write-what-where",
+            "medium",
+            vec!["delete plus list-like strings suggest mutable linked structures"],
+            vec![
+                "Recover the node layout around add/list/delete paths and identify next/prev or owner pointers.",
+                "Test whether a crafted node can enter delete/unlink after normal menu transitions.",
+                "Use the write primitive first for an information leak when ASLR matters, then for a final control target.",
+                "Prefer stack/GOT targets only after RELRO/PIE/protections confirm they are reachable.",
+            ],
+        );
+    }
+    if has_any_import(&["puts", "printf", "write"])
+        && has_any_import(&["read", "gets", "fgets", "scanf", "__isoc99_scanf"])
+    {
+        push_strategy_family(
+            &mut families,
+            "leak then ret2libc/ROP",
+            "medium",
+            vec!["both output and attacker-input imports are present"],
+            vec![
+                "Build a stage-1 leak using PLT/GOT or an existing print primitive.",
+                "Return or loop back to a stable input state after the leak.",
+                "Compute libc base from bundled libc offsets and construct a final system/execve/exit chain.",
+                "Use crash-offset/debug-probe for stack control only after a concrete overflow path is proven.",
+            ],
+        );
+    }
+    if families.is_empty() {
+        push_strategy_family(
+            &mut families,
+            "generic input-to-control discovery",
+            "low",
+            vec!["no high-confidence exploit family inferred from imports/strings"],
+            vec![
+                "Use ir-query --search for prompts and menu text, then decompile handlers by address.",
+                "Collect one runtime transcript per menu action and compare state transitions.",
+                "Use crash-offset only after confirming an input reaches memory corruption.",
+                "Define a concrete verifier predicate before spending exploit-loop attempts.",
+            ],
+        );
+    }
+
+    Ok(serde_json::json!({
+        "kind": "exploit_strategy",
+        "binary": path,
+        "arch": arch,
+        "protections": protections,
+        "imports": imports,
+        "strings_of_interest": strings,
+        "adjacent_libc": adjacent_libc,
+        "libc_symbol_offsets": libc_symbols,
+        "ranked_families": families,
+        "automation_contract": {
+            "success_predicates": [
+                "Preferred: exploit starts target, proves code execution by making target child exit 42 and prints returncode=42.",
+                "Alternate: exploit runs a deterministic command and exploit-verify uses --expect-output with that exact marker."
+            ],
+            "blocked_is_not_success": "Do not emit SCRIPT_READY_BLOCKED for exploit-complexity or attempt-budget failures; only use it for missing binaries/loaders/qemu/sysroots."
+        },
+        "poc_requirements": [
+            "Use Python stdlib only: subprocess, struct, re, os, select/timeouts.",
+            "Read KAIJU_BINARY/KAIJULAB_BINARY and KAIJU_SYSROOT/KAIJULAB_SYSROOT.",
+            "For foreign arch, spawn qemu-$arch -L $KAIJU_SYSROOT $KAIJU_BINARY.",
+            "Parse leaks as bytes, compute libc base from bundled libc offsets, then run final stage."
+        ]
+    }))
+}
+
+fn push_strategy_family(
+    families: &mut Vec<serde_json::Value>,
+    name: &str,
+    confidence: &str,
+    evidence: Vec<&str>,
+    plan: Vec<&str>,
+) {
+    families.push(serde_json::json!({
+        "name": name,
+        "confidence": confidence,
+        "evidence": evidence,
+        "plan": plan,
+    }));
+}
+
+fn shared_object_symbol_offsets(path: &Path) -> Result<serde_json::Value> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let goblin::Object::Elf(elf) = goblin::Object::parse(&data)? else {
+        anyhow::bail!("not an ELF shared object: {}", path.display());
+    };
+    let wanted = [
+        "system",
+        "exit",
+        "_exit",
+        "puts",
+        "read",
+        "write",
+        "printf",
+        "__free_hook",
+        "__malloc_hook",
+        "environ",
+        "_IO_2_1_stdout_",
+        "_IO_2_1_stdin_",
+    ];
+    let mut symbols = serde_json::Map::new();
+    for sym in elf.dynsyms.iter() {
+        let Some(name) = elf.dynstrtab.get_at(sym.st_name) else {
+            continue;
+        };
+        if wanted.contains(&name) {
+            symbols.insert(
+                name.to_string(),
+                serde_json::json!(format!("0x{:x}", sym.st_value)),
+            );
+        }
+    }
+    if let Some(pos) = find_bytes(&data, b"/bin/sh\0") {
+        symbols.insert(
+            "str_bin_sh".to_string(),
+            serde_json::json!(format!("0x{pos:x}")),
+        );
+    }
+    Ok(serde_json::json!({
+        "path": path,
+        "symbols": symbols,
+        "note": "Offsets are file/ELF virtual offsets from the adjacent shared object; compute libc_base from a leak before use."
+    }))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
 }
 
 fn elf_arch_label(elf: &goblin::elf::Elf<'_>) -> String {
@@ -2322,9 +2958,20 @@ fn runtime_candidates(path: &Path, data: &[u8]) -> serde_json::Value {
     };
     for qemu in qemu_names {
         if let Some(found) = find_in_path(qemu) {
+            let argv = default_sysroot_for_arch(&arch)
+                .filter(|_| interpreter.is_some())
+                .map(|sysroot| {
+                    vec![
+                        found.clone(),
+                        "-L".to_string(),
+                        sysroot.to_string_lossy().into_owned(),
+                        path.to_string_lossy().to_string(),
+                    ]
+                })
+                .unwrap_or_else(|| vec![found.clone(), path.to_string_lossy().to_string()]);
             candidates.push(serde_json::json!({
                 "label": qemu,
-                "argv": [found, path.to_string_lossy().to_string()],
+                "argv": argv,
                 "available": true,
             }));
         } else {
@@ -2366,6 +3013,13 @@ fn binary_arch_from_data(data: &[u8]) -> Option<String> {
     }
 }
 
+fn binary_interpreter_from_data(data: &[u8]) -> Option<String> {
+    match goblin::Object::parse(data).ok()? {
+        goblin::Object::Elf(elf) => elf.interpreter.map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
 fn host_arch_label() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "x86_64",
@@ -2389,6 +3043,35 @@ fn default_runner_for_arch(arch: Option<&str>) -> Option<String> {
         _ => &[],
     };
     candidates.iter().find_map(|name| find_in_path(name))
+}
+
+fn default_sysroot_for_arch(arch: &str) -> Option<PathBuf> {
+    let candidates: &[&str] = match arch {
+        "i386" => &["/opt/sysroots/i386", "/usr/i386-linux-gnu"],
+        "x86_64" => &["/opt/sysroots/x86_64", "/usr/x86_64-linux-gnu"],
+        "aarch64" => &["/opt/sysroots/aarch64", "/usr/aarch64-linux-gnu"],
+        "arm" => &["/opt/sysroots/arm", "/usr/arm-linux-gnueabihf"],
+        _ => &[],
+    };
+    candidates
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_dir())
+}
+
+fn effective_sysroot<'a>(
+    explicit: Option<&'a Path>,
+    arch: Option<&str>,
+    interpreter: Option<&str>,
+) -> Option<std::borrow::Cow<'a, Path>> {
+    if let Some(path) = explicit {
+        return Some(std::borrow::Cow::Borrowed(path));
+    }
+    if interpreter.is_none() {
+        return None;
+    }
+    arch.and_then(default_sysroot_for_arch)
+        .map(std::borrow::Cow::Owned)
 }
 
 fn find_in_path(name: &str) -> Option<String> {
@@ -2544,6 +3227,10 @@ fn verify_exploit_script(
     let binary = binary
         .canonicalize()
         .unwrap_or_else(|_| binary.to_path_buf());
+    let binary_data = std::fs::read(&binary).unwrap_or_default();
+    let arch = binary_arch_from_data(&binary_data);
+    let interpreter = binary_interpreter_from_data(&binary_data);
+    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
     let timeout = Duration::from_secs(timeout_secs.clamp(1, 300));
     let mut cmd = Command::new("python3");
     cmd.arg(&script)
@@ -2559,7 +3246,7 @@ fn verify_exploit_script(
     if let Some(qemu) = find_in_path("qemu-x86_64-static").or_else(|| find_in_path("qemu-x86_64")) {
         cmd.env("QEMU_X86_64", qemu);
     }
-    if let Some(sysroot) = sysroot {
+    if let Some(sysroot) = effective_sysroot.as_deref() {
         cmd.env("KAIJU_SYSROOT", sysroot)
             .env("KAIJULAB_SYSROOT", sysroot);
     }
@@ -2619,6 +3306,9 @@ fn verify_exploit_script(
     let exit_code = status.and_then(|s| s.code());
     let combined = format!("{}{}", stdout_text, stderr_text);
 
+    let has_predicate =
+        expect_exit.is_some() || expect_target_exit.is_some() || expect_output.is_some();
+    let blocked_marker = combined.contains("SCRIPT_READY_BLOCKED");
     let exit_ok = expect_exit.map_or(true, |code| exit_code == Some(code));
     let target_exit_ok = expect_target_exit.map_or(true, |code| {
         combined.contains(&format!("returncode={code}"))
@@ -2629,9 +3319,12 @@ fn verify_exploit_script(
             || combined.contains(&format!("Exit code: {code}"))
     });
     let output_ok = expect_output.map_or(true, |needle| combined.contains(needle));
-    let success = !timed_out && exit_ok && target_exit_ok && output_ok;
+    let success =
+        has_predicate && !blocked_marker && !timed_out && exit_ok && target_exit_ok && output_ok;
     Ok(serde_json::json!({
         "success": success,
+        "has_predicate": has_predicate,
+        "blocked_marker": blocked_marker,
         "timed_out": timed_out,
         "exit_code": exit_code,
         "expected_exit": expect_exit,
@@ -2641,7 +3334,11 @@ fn verify_exploit_script(
         "stderr": stderr_text,
         "script": script,
         "binary": binary,
-        "next_action": if success {
+        "next_action": if blocked_marker {
+            "SCRIPT_READY_BLOCKED is an environment-blocker marker, not exploit proof; fix the blocker or continue exploit development."
+        } else if !has_predicate {
+            "No explicit success predicate was provided; rerun exploit-verify with --expect-target-exit, --expect-exit, or --expect-output."
+        } else if success {
             "Stop. Preserve the PoC and summarize why the predicate proves execution."
         } else if timed_out {
             "Add tighter process timeouts and avoid interactive loops; rerun exploit-verify."
@@ -2652,6 +3349,1214 @@ fn verify_exploit_script(
         } else {
             "Predicate output missing; inspect stdout/stderr and rerun exploit-verify."
         },
+    }))
+}
+
+fn binary_facts_json(binary: &Path, max: usize) -> Result<serde_json::Value> {
+    let context = build_exploit_context(binary, 12)?;
+    let kit = exploit_kit_json(binary, None, None, 8192, 12)?;
+    let ir = ir_query_json(binary, None, None, max)?;
+    let strategy = inferred_exploit_strategy(binary)?;
+    let strings = ir
+        .get("strings")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let prompt_strings: Vec<_> = strings
+        .iter()
+        .filter(|value| {
+            value
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(|text| {
+                    let lower = text.to_ascii_lowercase();
+                    text.contains(':')
+                        || text.contains('?')
+                        || lower.contains("choice")
+                        || lower.contains("size")
+                        || lower.contains("index")
+                        || lower.contains("content")
+                })
+                .unwrap_or(false)
+        })
+        .take(max)
+        .cloned()
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "binary_facts",
+        "binary": binary,
+        "arch": context.get("arch"),
+        "format": context.get("format"),
+        "protections": context.get("protections"),
+        "runtime": context.get("runtime"),
+        "adjacent_shared_objects": context.get("adjacent_shared_objects"),
+        "imports_sample": context.get("imports_sample"),
+        "prompt_strings": prompt_strings,
+        "functions": ir.get("functions"),
+        "plt": kit.get("plt"),
+        "got": kit.get("got"),
+        "gadgets": kit.get("gadgets"),
+        "libc_offsets": strategy.get("libc_symbol_offsets"),
+        "ranked_exploit_families": strategy.get("ranked_families"),
+        "recommended_next_tools": [
+            "exploit-scaffold --output /tmp/poc.py",
+            "exploit-drive --actions @actions.json --expect <prompt-or-marker>",
+            "leak-probe --setup @setup.json --cycle @cycle.json --want libc",
+            "heap-probe-plan",
+            "runtime-run/debug-probe/exploit-verify with --save-evidence for meaningful observations"
+        ],
+    }))
+}
+
+fn exploit_scaffold_json(
+    binary: &Path,
+    output: Option<&Path>,
+    sysroot: Option<&Path>,
+) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let arch = binary_arch_from_data(&data);
+    let interpreter = binary_interpreter_from_data(&data);
+    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
+    let runner = default_runner_for_arch(arch.as_deref());
+    let text = exploit_scaffold_text(binary, runner.as_deref(), effective_sysroot.as_deref());
+    if let Some(output) = output {
+        std::fs::write(output, &text).with_context(|| format!("write {}", output.display()))?;
+    }
+    Ok(serde_json::json!({
+        "kind": "exploit_scaffold",
+        "binary": binary,
+        "output": output,
+        "arch": arch,
+        "runner": runner,
+        "sysroot": effective_sysroot.as_deref(),
+        "text": text,
+        "next_action": "Fill exploit actions, then run exploit-verify with --expect-target-exit 42 or --expect-output MARKER.",
+    }))
+}
+
+fn exploit_scaffold_text(binary: &Path, runner: Option<&str>, sysroot: Option<&Path>) -> String {
+    let qemu_default = runner.unwrap_or("");
+    let sysroot_default = sysroot
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!(
+        r#"#!/usr/bin/env python3
+import os
+import struct
+import subprocess
+import sys
+
+BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {binary:?}
+SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot_default:?}
+RUNNER = os.environ.get("KAIJU_RUNNER") or {qemu_default:?}
+
+def p32(x): return struct.pack("<I", x & 0xffffffff)
+def p64(x): return struct.pack("<Q", x & 0xffffffffffffffff)
+
+def argv():
+    if RUNNER:
+        out = [RUNNER]
+        if SYSROOT:
+            out += ["-L", SYSROOT]
+        out.append(BIN)
+        return out
+    return [BIN]
+
+class Tube:
+    def __init__(self):
+        self.p = subprocess.Popen(argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def send(self, data):
+        if isinstance(data, str):
+            data = data.encode()
+        self.p.stdin.write(data)
+        self.p.stdin.flush()
+
+    def line(self, data=b""):
+        if isinstance(data, str):
+            data = data.encode()
+        self.send(data + b"\n")
+
+    def choice(self, n):
+        self.line(str(n).encode())
+
+    def finish(self, tail=b"", timeout=5):
+        if tail:
+            self.send(tail)
+        try:
+            out, err = self.p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            out, err = self.p.communicate()
+        sys.stdout.buffer.write(out)
+        sys.stderr.buffer.write(err)
+        print("returncode=%d" % self.p.returncode)
+        return self.p.returncode
+
+def main():
+    t = Tube()
+    # TODO: replace this transcript with exploit actions.
+    # t.choice(1); t.line(b"32"); t.line(b"A" * 32)
+    rc = t.finish(timeout=5)
+    return 0 if rc == 42 else 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#,
+        binary = binary.to_string_lossy()
+    )
+}
+
+fn exploit_interact_json(
+    binary: &Path,
+    actions_spec: &str,
+    expects: &[String],
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    let actions_value = read_json_or_inline(actions_spec)?;
+    let actions = actions_value
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .or_else(|| actions_value.as_array())
+        .ok_or_else(|| {
+            anyhow::anyhow!("--actions must be a JSON array or object with actions[]")
+        })?;
+    let (stdin_bytes, action_log, inline_expects) = compile_interaction_actions(actions)?;
+    let mut stdin_file = tempfile::NamedTempFile::new()?;
+    stdin_file.write_all(&stdin_bytes)?;
+    let stdin_arg = format!("@{}", stdin_file.path().display());
+    let runtime = runtime_run_json(
+        binary,
+        &[],
+        &[],
+        Some(&stdin_arg),
+        None,
+        None,
+        sysroot,
+        timeout_secs,
+    )?;
+    let combined = format!(
+        "{}{}",
+        runtime
+            .pointer("/result/stdout")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        runtime
+            .pointer("/result/stderr")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    );
+    let all_expects: Vec<String> = expects.iter().cloned().chain(inline_expects).collect();
+    let expectation_results: Vec<_> = all_expects
+        .iter()
+        .map(|needle| {
+            serde_json::json!({
+                "needle": needle,
+                "present": combined.contains(needle),
+            })
+        })
+        .collect();
+    let success = expectation_results
+        .iter()
+        .all(|v| v.get("present").and_then(|p| p.as_bool()).unwrap_or(false));
+    Ok(serde_json::json!({
+        "kind": "exploit_interact",
+        "binary": binary,
+        "actions": action_log,
+        "stdin_len": stdin_bytes.len(),
+        "expectations": expectation_results,
+        "success": success,
+        "runtime": runtime,
+        "next_action": if success {
+            "Transcript matched expectations; convert the same actions into a PoC scaffold or add a stronger exploit predicate."
+        } else {
+            "Expectation missing; inspect runtime stdout/stderr and adjust prompt synchronization or action sequence."
+        },
+    }))
+}
+
+fn read_json_or_inline(spec: &str) -> Result<serde_json::Value> {
+    let text = if let Some(path) = spec.strip_prefix('@') {
+        std::fs::read_to_string(path).with_context(|| format!("read {path}"))?
+    } else {
+        spec.to_string()
+    };
+    serde_json::from_str(&text).with_context(|| "parse JSON action spec")
+}
+
+fn compile_interaction_actions(
+    actions: &[serde_json::Value],
+) -> Result<(Vec<u8>, Vec<serde_json::Value>, Vec<String>)> {
+    let mut stdin = Vec::new();
+    let mut log = Vec::new();
+    let mut expects = Vec::new();
+    for (idx, action) in actions.iter().enumerate() {
+        let obj = action
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("action {idx} must be an object"))?;
+        if let Some(value) = obj.get("send_choice") {
+            let text = if let Some(n) = value.as_i64() {
+                n.to_string()
+            } else if let Some(s) = value.as_str() {
+                s.to_string()
+            } else {
+                anyhow::bail!("action {idx} send_choice must be string or integer");
+            };
+            stdin.extend_from_slice(text.as_bytes());
+            stdin.push(b'\n');
+            log.push(serde_json::json!({"send_choice": text}));
+        } else if let Some(value) = obj.get("send_line") {
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("action {idx} send_line must be string"))?;
+            stdin.extend_from_slice(text.as_bytes());
+            stdin.push(b'\n');
+            log.push(serde_json::json!({"send_line": text}));
+        } else if let Some(value) = obj.get("send_text") {
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("action {idx} send_text must be string"))?;
+            stdin.extend_from_slice(text.as_bytes());
+            log.push(serde_json::json!({"send_text_len": text.len()}));
+        } else if let Some(value) = obj.get("send_hex").or_else(|| obj.get("send_bytes_hex")) {
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("action {idx} send_hex must be string"))?;
+            let compact: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+            let bytes = hex::decode(&compact)
+                .with_context(|| format!("action {idx} send_hex invalid hex"))?;
+            stdin.extend_from_slice(&bytes);
+            log.push(serde_json::json!({"send_hex_len": bytes.len()}));
+        } else if let Some(value) = obj.get("sleep_ms") {
+            log.push(serde_json::json!({"sleep_ms": value}));
+        } else if let Some(value) = obj.get("expect") {
+            let text = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("action {idx} expect must be string"))?;
+            expects.push(text.to_string());
+            log.push(serde_json::json!({"expect": text}));
+        } else {
+            anyhow::bail!("action {idx} has no known key");
+        }
+    }
+    Ok((stdin, log, expects))
+}
+
+struct DriveRun {
+    value: serde_json::Value,
+    combined: Vec<u8>,
+}
+
+fn exploit_drive_json(
+    binary: &Path,
+    actions_spec: &str,
+    expects: &[String],
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    step_timeout_ms: u64,
+    max_output: usize,
+) -> Result<serde_json::Value> {
+    let actions = action_list_from_spec(actions_spec)?;
+    let run = run_stepwise_drive(
+        binary,
+        &actions,
+        runner,
+        sysroot,
+        timeout_secs,
+        step_timeout_ms,
+        max_output,
+    )?;
+    let text = String::from_utf8_lossy(&run.combined);
+    let expectation_results: Vec<_> = expects
+        .iter()
+        .map(|needle| {
+            serde_json::json!({
+                "needle": needle,
+                "present": text.contains(needle),
+            })
+        })
+        .collect();
+    let expectations_ok = expectation_results
+        .iter()
+        .all(|v| v.get("present").and_then(|p| p.as_bool()).unwrap_or(false));
+    let steps_ok = run
+        .value
+        .get("steps_ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let timed_out = run
+        .value
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut value = run.value;
+    value["expectations"] = serde_json::json!(expectation_results);
+    value["success"] = serde_json::json!(steps_ok && expectations_ok && !timed_out);
+    value["next_action"] = serde_json::json!(if value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        "Driver synchronized successfully; move this transcript into a PoC or add a stronger leak/control predicate."
+    } else if timed_out {
+        "A receive/send-after step timed out; inspect steps[].tail_text and split the transcript at the last matched prompt."
+    } else {
+        "One or more expectations failed; inspect transcript tails and adjust recv_until/sendline_after prompts."
+    });
+    Ok(value)
+}
+
+fn leak_probe_json(
+    binary: &Path,
+    setup_spec: Option<&str>,
+    cycle_spec: &str,
+    contains: &[String],
+    wants: &[String],
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    step_timeout_ms: u64,
+    max_rounds: u32,
+    max_output: usize,
+) -> Result<serde_json::Value> {
+    let mut actions = Vec::new();
+    if let Some(setup) = setup_spec {
+        actions.extend(action_list_from_spec(setup)?);
+    }
+    let cycle = action_list_from_spec(cycle_spec)?;
+    for _ in 0..max_rounds.clamp(1, 64) {
+        actions.extend(cycle.iter().cloned());
+    }
+    let run = run_stepwise_drive(
+        binary,
+        &actions,
+        runner,
+        sysroot,
+        timeout_secs,
+        step_timeout_ms,
+        max_output,
+    )?;
+    let data = std::fs::read(binary).unwrap_or_default();
+    let arch = binary_arch_from_data(&data);
+    let mappings = parse_proc_maps(&run.combined);
+    let pointers = extract_pointer_candidates(&run.combined, &mappings, arch.as_deref(), 96);
+    let text = String::from_utf8_lossy(&run.combined);
+    let contains_results: Vec<_> = contains
+        .iter()
+        .map(|needle| {
+            serde_json::json!({
+                "needle": needle,
+                "present": text.contains(needle),
+            })
+        })
+        .collect();
+    let contains_ok = contains_results
+        .iter()
+        .all(|v| v.get("present").and_then(|p| p.as_bool()).unwrap_or(false));
+    let want_results: Vec<_> = wants
+        .iter()
+        .map(|want| serde_json::json!({"want": want, "present": leak_want_present(want, &mappings, &pointers)}))
+        .collect();
+    let wants_ok = if wants.is_empty() {
+        !mappings.is_empty() || !pointers.is_empty()
+    } else {
+        want_results
+            .iter()
+            .all(|v| v.get("present").and_then(|p| p.as_bool()).unwrap_or(false))
+    };
+    let timed_out = run
+        .value
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "kind": "leak_probe",
+        "binary": binary,
+        "arch": arch,
+        "rounds": max_rounds.clamp(1, 64),
+        "success": contains_ok && wants_ok && !timed_out,
+        "contains": contains_results,
+        "wants": want_results,
+        "mappings": mappings,
+        "pointer_candidates": pointers,
+        "drive": run.value,
+        "next_action": if contains_ok && wants_ok && !timed_out {
+            "Use the harvested mapping/pointer class to compute the target base or libc base, then verify the exploit predicate."
+        } else if timed_out {
+            "Leak transcript timed out; shorten each cycle or add recv_until prompts before sends."
+        } else {
+            "No requested leak class was harvested; adjust setup/cycle actions or increase --max-rounds with bounded output."
+        },
+    }))
+}
+
+fn action_list_from_spec(spec: &str) -> Result<Vec<serde_json::Value>> {
+    let value = read_json_or_inline(spec)?;
+    let actions = value
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array())
+        .ok_or_else(|| {
+            anyhow::anyhow!("action spec must be a JSON array or object with actions[]")
+        })?;
+    Ok(actions.clone())
+}
+
+fn run_stepwise_drive(
+    binary: &Path,
+    actions: &[serde_json::Value],
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    step_timeout_ms: u64,
+    max_output: usize,
+) -> Result<DriveRun> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let arch = binary_arch_from_data(&data);
+    let interpreter = binary_interpreter_from_data(&data);
+    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
+    let effective_runner = runner
+        .map(|r| r.to_string())
+        .or_else(|| default_runner_for_arch(arch.as_deref()));
+    let mut cmdline = Vec::new();
+    if let Some(runner) = &effective_runner {
+        cmdline.push(runner.to_string());
+        if let Some(sysroot) = effective_sysroot.as_deref() {
+            cmdline.push("-L".to_string());
+            cmdline.push(sysroot.to_string_lossy().into_owned());
+        }
+    }
+    cmdline.push(binary.to_string_lossy().into_owned());
+
+    let mut cmd = Command::new(&cmdline[0]);
+    cmd.args(&cmdline[1..])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let start = Instant::now();
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return Ok(DriveRun {
+                value: serde_json::json!({
+                    "kind": "exploit_drive",
+                    "binary": binary,
+                    "cmd": cmdline,
+                    "spawn_error": e.to_string(),
+                    "success": false,
+                    "steps_ok": false,
+                    "timed_out": false,
+                    "exit_code": null,
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "combined_hex_tail": "",
+                    "steps": [],
+                }),
+                combined: Vec::new(),
+            });
+        }
+    };
+    let mut stdin = child.stdin.take().context("child stdin unavailable")?;
+    let stdout = child.stdout.take().context("child stdout unavailable")?;
+    let stderr = child.stderr.take().context("child stderr unavailable")?;
+    let (tx, rx) = mpsc::channel();
+    spawn_drive_reader("stdout", stdout, tx.clone());
+    spawn_drive_reader("stderr", stderr, tx);
+
+    let total_deadline = start + Duration::from_secs(timeout_secs.clamp(1, 300));
+    let mut combined = Vec::new();
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+    let mut steps = Vec::new();
+    let mut steps_ok = true;
+    let mut timed_out = false;
+    let retain = max_output.clamp(4096, 4 * 1024 * 1024);
+
+    for (idx, action) in actions.iter().enumerate() {
+        if Instant::now() >= total_deadline {
+            timed_out = true;
+            steps_ok = false;
+            break;
+        }
+        let step = perform_drive_action(
+            idx,
+            action,
+            &mut stdin,
+            &rx,
+            &mut combined,
+            &mut stdout_buf,
+            &mut stderr_buf,
+            retain,
+            total_deadline,
+            step_timeout_ms,
+        )?;
+        let ok = step.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !ok {
+            steps_ok = false;
+            timed_out |= step
+                .get("timed_out")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            steps.push(step);
+            break;
+        }
+        steps.push(step);
+        if child.try_wait()?.is_some() {
+            break;
+        }
+    }
+    drain_drive_output(
+        &rx,
+        &mut combined,
+        &mut stdout_buf,
+        &mut stderr_buf,
+        retain,
+        Instant::now() + Duration::from_millis(150),
+    );
+    let mut left_running = false;
+    if child.try_wait()?.is_none() {
+        left_running = !timed_out;
+        #[cfg(unix)]
+        unsafe {
+            libc::killpg(child.id() as i32, libc::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
+        }
+    }
+    let status = child.wait().ok();
+    drain_drive_output(
+        &rx,
+        &mut combined,
+        &mut stdout_buf,
+        &mut stderr_buf,
+        retain,
+        Instant::now() + Duration::from_millis(150),
+    );
+    let exit_code = status.and_then(|s| s.code());
+    Ok(DriveRun {
+        value: serde_json::json!({
+            "kind": "exploit_drive",
+            "binary": binary,
+            "cmd": cmdline,
+            "runner_selected": effective_runner,
+            "sysroot_selected": effective_sysroot.as_deref(),
+            "timeout_secs": timeout_secs.clamp(1, 300),
+            "step_timeout_ms": step_timeout_ms,
+            "success": steps_ok && !timed_out,
+            "steps_ok": steps_ok,
+            "timed_out": timed_out,
+            "left_running": left_running,
+            "exit_code": exit_code,
+            "duration_ms": start.elapsed().as_millis(),
+            "steps": steps,
+            "stdout_tail": lossy_tail(&stdout_buf, 4096),
+            "stderr_tail": lossy_tail(&stderr_buf, 4096),
+            "combined_tail": lossy_tail(&combined, 8192),
+            "combined_hex_tail": hex_tail(&combined, 512),
+        }),
+        combined,
+    })
+}
+
+fn spawn_drive_reader<R: Read + Send + 'static>(
+    stream: &'static str,
+    mut reader: R,
+    tx: mpsc::Sender<(&'static str, Vec<u8>)>,
+) {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send((stream, buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+fn perform_drive_action(
+    idx: usize,
+    action: &serde_json::Value,
+    stdin: &mut dyn Write,
+    rx: &mpsc::Receiver<(&'static str, Vec<u8>)>,
+    combined: &mut Vec<u8>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+    retain: usize,
+    total_deadline: Instant,
+    default_step_timeout_ms: u64,
+) -> Result<serde_json::Value> {
+    let before = combined.len();
+    let obj = action
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("action {idx} must be an object"))?;
+    let step_start = Instant::now();
+    let mut ok = true;
+    let mut timed_out = false;
+    let mut detail = serde_json::Map::new();
+
+    if let Some(value) = obj.get("recv_until") {
+        let (needle, timeout_ms) = recv_action_spec(value, default_step_timeout_ms, idx)?;
+        let deadline = step_deadline(total_deadline, timeout_ms);
+        ok = wait_for_bytes(rx, combined, stdout, stderr, retain, &needle, deadline);
+        timed_out = !ok;
+        detail.insert(
+            "recv_until".to_string(),
+            serde_json::json!(String::from_utf8_lossy(&needle)),
+        );
+    } else if let Some(value) = obj
+        .get("sendline_after")
+        .or_else(|| obj.get("send_line_after"))
+    {
+        let (needle, bytes, timeout_ms) = send_after_spec(value, default_step_timeout_ms, idx)?;
+        let deadline = step_deadline(total_deadline, timeout_ms);
+        ok = wait_for_bytes(rx, combined, stdout, stderr, retain, &needle, deadline);
+        timed_out = !ok;
+        if ok {
+            stdin.write_all(&bytes)?;
+            stdin.write_all(b"\n")?;
+            stdin.flush()?;
+        }
+        detail.insert(
+            "sendline_after".to_string(),
+            serde_json::json!({
+                "expect": String::from_utf8_lossy(&needle),
+                "bytes_len": bytes.len(),
+            }),
+        );
+    } else if let Some(value) = obj.get("send_after") {
+        let (needle, bytes, timeout_ms) = send_after_spec(value, default_step_timeout_ms, idx)?;
+        let deadline = step_deadline(total_deadline, timeout_ms);
+        ok = wait_for_bytes(rx, combined, stdout, stderr, retain, &needle, deadline);
+        timed_out = !ok;
+        if ok {
+            stdin.write_all(&bytes)?;
+            stdin.flush()?;
+        }
+        detail.insert(
+            "send_after".to_string(),
+            serde_json::json!({
+                "expect": String::from_utf8_lossy(&needle),
+                "bytes_len": bytes.len(),
+            }),
+        );
+    } else if let Some(value) = obj.get("send_choice") {
+        let text = scalar_to_string(value, idx, "send_choice")?;
+        stdin.write_all(text.as_bytes())?;
+        stdin.write_all(b"\n")?;
+        stdin.flush()?;
+        detail.insert("send_choice".to_string(), serde_json::json!(text));
+    } else if let Some(value) = obj.get("send_line") {
+        let bytes = bytes_from_value(value, idx, "send_line")?;
+        stdin.write_all(&bytes)?;
+        stdin.write_all(b"\n")?;
+        stdin.flush()?;
+        detail.insert("send_line_len".to_string(), serde_json::json!(bytes.len()));
+    } else if let Some(value) = obj.get("send_text") {
+        let bytes = bytes_from_value(value, idx, "send_text")?;
+        stdin.write_all(&bytes)?;
+        stdin.flush()?;
+        detail.insert("send_text_len".to_string(), serde_json::json!(bytes.len()));
+    } else if let Some(value) = obj.get("send_hex").or_else(|| obj.get("send_bytes_hex")) {
+        let bytes = hex_bytes_from_value(value, idx, "send_hex")?;
+        stdin.write_all(&bytes)?;
+        stdin.flush()?;
+        detail.insert("send_hex_len".to_string(), serde_json::json!(bytes.len()));
+    } else if let Some(value) = obj.get("expect") {
+        let needle = bytes_from_value(value, idx, "expect")?;
+        ok = find_bytes(combined, &needle).is_some()
+            || wait_for_bytes(
+                rx,
+                combined,
+                stdout,
+                stderr,
+                retain,
+                &needle,
+                step_deadline(total_deadline, default_step_timeout_ms),
+            );
+        timed_out = !ok;
+        detail.insert(
+            "expect".to_string(),
+            serde_json::json!(String::from_utf8_lossy(&needle)),
+        );
+    } else if let Some(value) = obj.get("read_for_ms").or_else(|| obj.get("sleep_ms")) {
+        let ms = value
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("action {idx} read_for_ms/sleep_ms must be integer"))?;
+        drain_drive_output(
+            rx,
+            combined,
+            stdout,
+            stderr,
+            retain,
+            step_deadline(total_deadline, ms),
+        );
+        detail.insert("read_for_ms".to_string(), serde_json::json!(ms));
+    } else {
+        anyhow::bail!("action {idx} has no known key");
+    }
+    drain_drive_output(
+        rx,
+        combined,
+        stdout,
+        stderr,
+        retain,
+        Instant::now() + Duration::from_millis(25),
+    );
+    Ok(serde_json::json!({
+        "index": idx,
+        "ok": ok,
+        "timed_out": timed_out,
+        "duration_ms": step_start.elapsed().as_millis(),
+        "received_delta": combined.len().saturating_sub(before),
+        "tail_text": lossy_tail(combined, 1024),
+        "tail_hex": hex_tail(combined, 128),
+        "action": detail,
+    }))
+}
+
+fn recv_action_spec(
+    value: &serde_json::Value,
+    default_timeout_ms: u64,
+    idx: usize,
+) -> Result<(Vec<u8>, u64)> {
+    if value.is_string() || value.is_number() {
+        return Ok((
+            bytes_from_value(value, idx, "recv_until")?,
+            default_timeout_ms,
+        ));
+    }
+    let obj = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("action {idx} recv_until must be string or object"))?;
+    let needle = obj
+        .get("text")
+        .or_else(|| obj.get("expect"))
+        .or_else(|| obj.get("prompt"))
+        .or_else(|| obj.get("hex"))
+        .ok_or_else(|| {
+            anyhow::anyhow!("action {idx} recv_until object needs text/expect/prompt/hex")
+        })?;
+    let timeout = obj
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout_ms);
+    if obj.contains_key("hex") {
+        Ok((
+            hex_bytes_from_value(needle, idx, "recv_until.hex")?,
+            timeout,
+        ))
+    } else {
+        Ok((bytes_from_value(needle, idx, "recv_until")?, timeout))
+    }
+}
+
+fn send_after_spec(
+    value: &serde_json::Value,
+    default_timeout_ms: u64,
+    idx: usize,
+) -> Result<(Vec<u8>, Vec<u8>, u64)> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("action {idx} send_after/sendline_after must be object"))?;
+    let needle_value = obj
+        .get("expect")
+        .or_else(|| obj.get("prompt"))
+        .or_else(|| obj.get("until"))
+        .ok_or_else(|| anyhow::anyhow!("action {idx} send_after needs expect/prompt/until"))?;
+    let data_value = obj
+        .get("line")
+        .or_else(|| obj.get("data"))
+        .or_else(|| obj.get("text"))
+        .or_else(|| obj.get("hex"))
+        .ok_or_else(|| anyhow::anyhow!("action {idx} send_after needs line/data/text/hex"))?;
+    let data = if obj.contains_key("hex") {
+        hex_bytes_from_value(data_value, idx, "send_after.hex")?
+    } else {
+        bytes_from_value(data_value, idx, "send_after")?
+    };
+    let timeout = obj
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout_ms);
+    Ok((
+        bytes_from_value(needle_value, idx, "send_after.expect")?,
+        data,
+        timeout,
+    ))
+}
+
+fn scalar_to_string(value: &serde_json::Value, idx: usize, field: &str) -> Result<String> {
+    if let Some(s) = value.as_str() {
+        Ok(s.to_string())
+    } else if let Some(n) = value.as_i64() {
+        Ok(n.to_string())
+    } else if let Some(n) = value.as_u64() {
+        Ok(n.to_string())
+    } else {
+        anyhow::bail!("action {idx} {field} must be string or integer")
+    }
+}
+
+fn bytes_from_value(value: &serde_json::Value, idx: usize, field: &str) -> Result<Vec<u8>> {
+    Ok(scalar_to_string(value, idx, field)?.into_bytes())
+}
+
+fn hex_bytes_from_value(value: &serde_json::Value, idx: usize, field: &str) -> Result<Vec<u8>> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("action {idx} {field} must be hex string"))?;
+    let compact: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    hex::decode(&compact).with_context(|| format!("action {idx} {field} invalid hex"))
+}
+
+fn step_deadline(total_deadline: Instant, timeout_ms: u64) -> Instant {
+    let step = Instant::now() + Duration::from_millis(timeout_ms.clamp(1, 120_000));
+    if step < total_deadline {
+        step
+    } else {
+        total_deadline
+    }
+}
+
+fn wait_for_bytes(
+    rx: &mpsc::Receiver<(&'static str, Vec<u8>)>,
+    combined: &mut Vec<u8>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+    retain: usize,
+    needle: &[u8],
+    deadline: Instant,
+) -> bool {
+    if needle.is_empty() || find_bytes(combined, needle).is_some() {
+        return true;
+    }
+    while Instant::now() < deadline {
+        let now = Instant::now();
+        let wait = (deadline - now).min(Duration::from_millis(25));
+        match rx.recv_timeout(wait) {
+            Ok((stream, chunk)) => {
+                append_drive_chunk(stream, &chunk, combined, stdout, stderr, retain);
+                if find_bytes(combined, needle).is_some() {
+                    return true;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    false
+}
+
+fn drain_drive_output(
+    rx: &mpsc::Receiver<(&'static str, Vec<u8>)>,
+    combined: &mut Vec<u8>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+    retain: usize,
+    deadline: Instant,
+) {
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(10)) {
+            Ok((stream, chunk)) => {
+                append_drive_chunk(stream, &chunk, combined, stdout, stderr, retain)
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn append_drive_chunk(
+    stream: &str,
+    chunk: &[u8],
+    combined: &mut Vec<u8>,
+    stdout: &mut Vec<u8>,
+    stderr: &mut Vec<u8>,
+    retain: usize,
+) {
+    append_capped(combined, chunk, retain);
+    if stream == "stdout" {
+        append_capped(stdout, chunk, retain);
+    } else {
+        append_capped(stderr, chunk, retain);
+    }
+}
+
+fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], retain: usize) {
+    buf.extend_from_slice(chunk);
+    if buf.len() > retain {
+        let excess = buf.len() - retain;
+        buf.drain(..excess);
+    }
+}
+
+fn lossy_tail(bytes: &[u8], max: usize) -> String {
+    let start = bytes.len().saturating_sub(max);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
+}
+
+fn hex_tail(bytes: &[u8], max: usize) -> String {
+    let start = bytes.len().saturating_sub(max);
+    hex::encode(&bytes[start..])
+}
+
+fn parse_proc_maps(bytes: &[u8]) -> Vec<serde_json::Value> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        let Some((range, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some((start_s, end_s)) = range.split_once('-') else {
+            continue;
+        };
+        let (Ok(start), Ok(end)) = (
+            u64::from_str_radix(start_s, 16),
+            u64::from_str_radix(end_s, 16),
+        ) else {
+            continue;
+        };
+        if start >= end || !seen.insert((start, end)) {
+            continue;
+        }
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        let perms = fields.first().copied().unwrap_or("");
+        let path = fields.get(4..).map(|v| v.join(" ")).unwrap_or_default();
+        out.push(serde_json::json!({
+            "start": format!("0x{start:x}"),
+            "end": format!("0x{end:x}"),
+            "perms": perms,
+            "path": path,
+            "kind": mapping_kind(&path),
+        }));
+        if out.len() >= 256 {
+            break;
+        }
+    }
+    out
+}
+
+fn mapping_kind(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.contains("libc") {
+        "libc"
+    } else if lower.contains("[heap]") {
+        "heap"
+    } else if lower.contains("[stack]") {
+        "stack"
+    } else if lower.contains("ld-") || lower.contains("ld-linux") {
+        "loader"
+    } else if path.starts_with('/') {
+        "file"
+    } else {
+        "anonymous"
+    }
+}
+
+fn extract_pointer_candidates(
+    bytes: &[u8],
+    mappings: &[serde_json::Value],
+    arch: Option<&str>,
+    limit: usize,
+) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for value in ascii_hex_values(bytes) {
+        push_pointer_candidate(value, "ascii_hex", mappings, &mut seen, &mut out, limit);
+        if out.len() >= limit {
+            return out;
+        }
+    }
+    let width = if arch == Some("x86_64") { 8 } else { 4 };
+    if bytes.len() >= width {
+        for offset in 0..=bytes.len() - width {
+            let value = if width == 8 {
+                u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+            } else {
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as u64
+            };
+            if plausible_pointer(value, width) {
+                push_pointer_candidate(
+                    value,
+                    "raw_little_endian",
+                    mappings,
+                    &mut seen,
+                    &mut out,
+                    limit,
+                );
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn ascii_hex_values(bytes: &[u8]) -> Vec<u64> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = Vec::new();
+    for token in text.split(|c: char| !(c.is_ascii_hexdigit() || c == 'x' || c == 'X')) {
+        let Some(hex) = token
+            .strip_prefix("0x")
+            .or_else(|| token.strip_prefix("0X"))
+        else {
+            continue;
+        };
+        if (6..=16).contains(&hex.len()) {
+            if let Ok(value) = u64::from_str_radix(hex, 16) {
+                out.push(value);
+            }
+        }
+    }
+    out
+}
+
+fn plausible_pointer(value: u64, width: usize) -> bool {
+    if width == 8 {
+        (0x0000_4000_0000..=0x0000_7fff_ffff_ffff).contains(&value)
+            || (0x7f00_0000_0000..=0x7fff_ffff_ffff).contains(&value)
+    } else {
+        (0x0804_0000..=0xffff_ffff).contains(&value)
+    }
+}
+
+fn push_pointer_candidate(
+    value: u64,
+    source: &str,
+    mappings: &[serde_json::Value],
+    seen: &mut std::collections::BTreeSet<u64>,
+    out: &mut Vec<serde_json::Value>,
+    limit: usize,
+) {
+    if out.len() >= limit || !seen.insert(value) {
+        return;
+    }
+    let class = classify_pointer(value, mappings);
+    if class == "unknown" && source == "raw_little_endian" {
+        return;
+    }
+    out.push(serde_json::json!({
+        "value": format!("0x{value:x}"),
+        "source": source,
+        "class": class,
+    }));
+}
+
+fn classify_pointer(value: u64, mappings: &[serde_json::Value]) -> String {
+    for mapping in mappings {
+        let Some(start) = mapping
+            .get("start")
+            .and_then(|v| v.as_str())
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        else {
+            continue;
+        };
+        let Some(end) = mapping
+            .get("end")
+            .and_then(|v| v.as_str())
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        else {
+            continue;
+        };
+        if (start..end).contains(&value) {
+            return mapping
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("mapped")
+                .to_string();
+        }
+    }
+    "unknown".to_string()
+}
+
+fn leak_want_present(
+    want: &str,
+    mappings: &[serde_json::Value],
+    pointers: &[serde_json::Value],
+) -> bool {
+    let want = want.to_ascii_lowercase();
+    match want.as_str() {
+        "maps" => !mappings.is_empty(),
+        "pointer" | "pointers" => !pointers.is_empty(),
+        "libc" | "heap" | "stack" | "binary" | "file" | "loader" => {
+            mappings.iter().any(|m| {
+                m.get("kind")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|kind| kind == want)
+            }) || pointers.iter().any(|p| {
+                p.get("class")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|class| class == want)
+            })
+        }
+        _ => false,
+    }
+}
+
+fn heap_probe_plan_json(binary: &Path) -> Result<serde_json::Value> {
+    let facts = binary_facts_json(binary, 30)?;
+    Ok(serde_json::json!({
+        "kind": "heap_probe_plan",
+        "binary": binary,
+        "strategy_families": facts.get("ranked_exploit_families"),
+        "generic_probes": [
+            {
+                "name": "menu transcript map",
+                "goal": "Build one exploit-interact JSON transcript for each menu action and record prompts/state changes.",
+                "actions_template": [{"send_choice": 1}, {"expect": "choice"}],
+                "success_signal": "Each action has bounded stdout and returns to a known prompt or exits predictably."
+            },
+            {
+                "name": "uaf function-pointer reuse",
+                "goal": "Allocate two same-sized objects, free one, reallocate with pointer-sized controlled bytes, then trigger stale show/call path.",
+                "primitive_signal": "Triggered path dereferences bytes from replacement allocation; debug-probe shows pc/eip/rip near controlled value or target exits via chosen PLT."
+            },
+            {
+                "name": "double-free/tcache-fastbin duplicate",
+                "goal": "Free A/B/A or equivalent size-class sequence, then allocate controlled chunks until the same address is returned twice.",
+                "primitive_signal": "Two logical objects alias the same chunk; editing one changes the other or verifier observes controlled write target."
+            },
+            {
+                "name": "chunk overlap",
+                "goal": "Use off-by-one/size overwrite/realloc behavior to make two live objects overlap.",
+                "primitive_signal": "runtime transcript proves object B contents change after editing object A without using B's edit path."
+            },
+            {
+                "name": "unsorted-bin/libc leak",
+                "goal": "Free a large chunk, print or copy freed metadata, parse arena pointer, then compute libc base from adjacent libc offsets.",
+                "primitive_signal": "Leak pointer falls in libc mapping or matches bundled libc offset arithmetic."
+            },
+            {
+                "name": "arbitrary write finalization",
+                "goal": "After proving write primitive, target GOT/hook/vtable/function pointer only if protections and call path support it.",
+                "primitive_signal": "exploit-verify sees returncode=42 or expected command marker."
+            }
+        ],
+        "recommended_order": [
+            "binary-facts",
+            "exploit-scaffold --output /tmp/poc.py",
+            "exploit-drive with recv_until/sendline_after synchronized transcripts",
+            "leak-probe for repeated maps/pointer harvesting",
+            "debug-probe only after a concrete primitive signal",
+            "exploit-verify after each candidate edit"
+        ],
     }))
 }
 
@@ -2677,13 +4582,15 @@ fn runtime_run_json(
     let mut cmdline = Vec::new();
 
     let arch = binary_arch_from_data(&data);
+    let interpreter = binary_interpreter_from_data(&data);
+    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
     let effective_runner = runner
         .map(|r| r.to_string())
         .or_else(|| default_runner_for_arch(arch.as_deref()));
 
     if let Some(runner) = &effective_runner {
         cmdline.push(runner.to_string());
-        if let Some(sysroot) = sysroot {
+        if let Some(sysroot) = effective_sysroot.as_deref() {
             cmdline.push("-L".to_string());
             cmdline.push(sysroot.to_string_lossy().into_owned());
         }
@@ -2723,6 +4630,7 @@ fn runtime_run_json(
         "binary": binary,
         "cmd": cmdline,
         "runner_selected": effective_runner,
+        "sysroot_selected": effective_sysroot.as_deref(),
         "cwd": cwd,
         "timeout_secs": timeout_secs.clamp(1, 300),
         "elf_runtime": runtime_candidates(binary, &data),
@@ -2748,13 +4656,15 @@ fn debug_probe_json(
 ) -> Result<serde_json::Value> {
     let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
     let arch = binary_arch_from_data(&data);
+    let interpreter = binary_interpreter_from_data(&data);
+    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
     if arch.as_deref().is_some_and(|a| a != host_arch_label()) {
         return debug_probe_remote_json(
             binary,
             arch.as_deref(),
             args,
             stdin_spec,
-            sysroot,
+            effective_sysroot.as_deref(),
             breakpoints,
             continue_after_break,
             timeout_secs,
@@ -2916,7 +4826,12 @@ fn debug_probe_remote_json(
                         .is_some_and(|kind| kind == "missing_interpreter")
                 })
             });
-    if has_loader_blocker && sysroot.is_none() {
+    let effective_sysroot = effective_sysroot(
+        sysroot,
+        arch,
+        runtime.get("interpreter").and_then(|v| v.as_str()),
+    );
+    if has_loader_blocker && effective_sysroot.is_none() {
         return Ok(serde_json::json!({
             "kind": "debug_probe",
             "available": false,
@@ -2938,7 +4853,7 @@ fn debug_probe_remote_json(
     let stdin_bytes = read_input_spec(stdin_spec)?;
     let mut qemu_cmd = Command::new(&qemu);
     qemu_cmd.arg("-g").arg(port.to_string());
-    if let Some(sysroot) = sysroot {
+    if let Some(sysroot) = effective_sysroot.as_deref() {
         qemu_cmd.arg("-L").arg(sysroot);
     }
     qemu_cmd
@@ -3070,6 +4985,7 @@ fn debug_probe_remote_json(
         "host_arch": host_arch_label(),
         "gdb": gdb,
         "qemu": qemu,
+        "sysroot_selected": effective_sysroot.as_deref(),
         "qemu_command": qemu_command,
         "remote": format!("127.0.0.1:{port}"),
         "args": args,
@@ -3141,6 +5057,7 @@ fn exploit_kit_json(
             "find": cyclic_offset,
         },
         "recipes": exploit_recipes(&arch, context.get("protections")),
+        "inferred_exploit_strategy": context.get("inferred_exploit_strategy"),
     }))
 }
 
@@ -3356,18 +5273,34 @@ Workbench context:
 
 Rules:
 - Write a Python stdlib-only PoC unless the context proves a dependency is required.
+- Follow this loop shape strictly:
+  1. Spend at most 3 tool calls on triage (`binary-facts`, `exploit-scaffold`, `heap-probe-plan`, `exploit-drive`, `leak-probe`, `exploit-interact`, `exploit-kit`, `runtime-run`, `ir-query`, or `decompile-enhanced`).
+  2. Write a runnable candidate to {output_q} before doing deep manual disassembly.
+  3. Run `exploit-verify` immediately after writing the candidate.
+  4. For each remaining attempt, change exactly one exploit hypothesis, rerun `exploit-verify`, then either stop on success or leave the best failing candidate in place.
+- Do not continue free-form analysis once a candidate exists unless the last `exploit-verify` result identifies a specific missing fact needed for the next edit.
 - Use qemu/runtime candidates from the context; handle missing dynamic loaders explicitly.
+- Check `adjacent_shared_objects` before claiming a challenge libc is unavailable; use bundled libc paths for offsets/leaks when present.
+- Use `inferred_exploit_strategy.ranked_families` to choose the first probes. Treat it as a hypothesis from imports/strings/protections, not as ground truth.
+- Use `target/debug/kaijulab api binary-facts --file {binary_q}` first when you need a compact, agent-sized summary of protections, imports, strings, libc offsets, gadgets, and ranked exploit families.
+- Use `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}` before writing a PoC from scratch; then edit the generated candidate instead of rebuilding process/qemu plumbing.
+- For heap/menu targets, use `target/debug/kaijulab api heap-probe-plan --file {binary_q}` before guessing primitives, then run synchronized probes with `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"4"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`.
+- For leaks, prefer `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --setup @setup.json --cycle @cycle.json --want libc --max-rounds 8` over manual transcript scraping; use it for `/proc/self/maps`, repeated show/read cycles, and raw pointer candidate harvesting.
 - Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
+- Use `target/debug/kaijulab api exploit-recipe --file {binary_q}` to retrieve only the inferred strategy profile.
 - Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
 - Use `target/debug/kaijulab api runtime-run --file {binary_q}{sysroot_arg}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}{sysroot_arg}` for registers/backtrace/crash state.
+- Prefer KaijuLab analysis output over raw binutils. Do not use raw `objdump`, `readelf`, `strings`, `ROPgadget`, or `checksec` as the first source of facts when `exploit-kit`, `ir-query`, `decompile-enhanced`, or `exploit-context` already provide the needed data.
+- Prefer KaijuLab runtime/debug/verify commands over raw target execution. If you must run the target or helper scripts directly, every command must include a hard timeout and an output cap (`timeout 10s ... | head -c 20000` or equivalent) so menu loops cannot flood the console.
+- Do not redirect raw target output to unbounded files. Use `runtime-run --timeout-secs N` or cap file output with `head -c`/`dd count=` before inspection.
 - When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
 - If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}{sysroot_arg}` before hand-computing offsets.
-- Use `target/debug/kaijulab api exploit-kit --file {binary_q}` for checksec/PLT/GOT/gadgets/cyclic helpers and `target/debug/kaijulab api ir-query --file {binary_q}` for functions/strings/decompile slices.
+- Use exact tool syntax: `target/debug/kaijulab api binary-facts --file {binary_q}`; `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}`; `target/debug/kaijulab api heap-probe-plan --file {binary_q}`; `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`; `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`; `target/debug/kaijulab api exploit-kit --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q} --function 0xADDR`; `target/debug/kaijulab api ir-query --file {binary_q} --search TEXT`; `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0xADDR`.
 - Save important observations with `--save-evidence`, inspect them with `target/debug/kaijulab api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
 - After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q}{sysroot_arg} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
-- If validation is blocked by environment dependencies, make the script print the exact blocker and remediation, then print SCRIPT_READY_BLOCKED.
-- Do not spin after the attempt budget; report the last structured failure.
+- Do not print SCRIPT_READY_BLOCKED for exploit complexity, missing offsets, failed hypotheses, or attempt budget. Use it only for true missing environment dependencies such as absent binary/qemu/sysroot/loader, and expect exploit-verify to mark it success=false.
+- Do not spin after the attempt budget; leave the best candidate PoC in place, report the last structured failure, and do not claim SCRIPT_READY.
 "#,
         binary = binary.display(),
         goal = goal,
@@ -3573,6 +5506,16 @@ fn runtime_next_action(output: &serde_json::Value) -> &'static str {
         "Target timed out; add stdin/argv fixture or probe with gdb breakpoints."
     } else if stderr.contains("No such file or directory") || stderr.contains("not found") {
         "Resolve missing loader/library with exploit-context runtime notes or qemu -L sysroot."
+    } else if output
+        .get("stdout_truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || output
+            .get("stderr_truncated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        "Output hit the capture limit; rerun with terminating stdin/argv or a shorter timeout before treating any signal as target-controlled."
     } else if output.get("signal").and_then(|v| v.as_i64()).is_some() {
         "Crash observed; run debug-probe with same input to capture registers/backtrace."
     } else {
