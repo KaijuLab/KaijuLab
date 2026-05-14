@@ -3478,3 +3478,4 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 [04:30:10] OBSERVE: read src/main.rs
 [04:30:10] OBSERVE: read src/main.rs
 [04:30:10] OBSERVE: read src/main.rs
+[04:30:10] OBSERVE: searched default_pwnabletw_batch_files" for "poc_template_script|fn"
