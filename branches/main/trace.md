@@ -3154,3 +3154,4 @@ _[Checkpoint: 6a0536bb — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 [02:45:05] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [02:45:05] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [02:45:05] OBSERVE: searched src/main.rs for "Print""
+[02:45:05] OBSERVE: searched main.rs for "target/debug/kaijulab|5\. Print"
