@@ -2999,3 +2999,4 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 [01:53:11] OBSERVE: listed files under samples/PwnableTW/tcache-tear
 [01:53:11] OBSERVE: listed files under tcache-tear
 [01:53:11] OBSERVE: listed files under /home/koukyosyumei
+[01:53:11] OBSERVE: listed files under /opt/sysroots
