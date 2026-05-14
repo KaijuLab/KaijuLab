@@ -110,11 +110,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py
 - [x] Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.
 - [x] Implemented Priority 1 exploit-drive and Priority 2 leak-probe APIs; verified cargo check/build plus x86 hacknote/seethefile smoke probes.
+- [x] Implemented generic exploit mechanics APIs: heap-model, libc-resolve, exploit-plan, poc-repair; updated agent prompt and verified with cargo plus smoke commands.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 00:33 UTC] `main`: Implemented generic exploit mechanics APIs: heap-model, libc-resolve, exploit-plan, poc-repair; updated agent prompt and verified with cargo plus smoke commands.
 - [2026-05-14 00:24 UTC] `main`: Implemented Priority 1 exploit-drive and Priority 2 leak-probe APIs; verified cargo check/build plus x86 hacknote/seethefile smoke probes.
 - [2026-05-14 00:05 UTC] `main`: Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.
 - [2026-05-14 00:04 UTC] `main`: edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py

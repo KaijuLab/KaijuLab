@@ -2789,3 +2789,9 @@ _[Checkpoint: 6a051631 — Implemented Priority 1 exploit-drive and Priority 2 l
 [00:33:34] OBSERVE: listed files under /tmp/kaijulab-batch-hacknote.py
 [00:33:34] OBSERVE: listed files under kaijulab-batch-hacknote.py
 [00:33:34] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a051867 — Implemented generic exploit mechanics APIs: heap-model, libc-resolve, exploit-plan, poc-repair; updated agent prompt and verified with cargo plus smoke commands.]_
+---
+
