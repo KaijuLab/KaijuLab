@@ -2915,3 +2915,4 @@ _[Checkpoint: 6a05239e — Removed default claude -p usage from batch automation
 [01:34:00] OBSERVE: read /tmp/kaijulab-batch-realloc.py
 [01:34:01] OBSERVE: read /tmp/kaijulab-batch-tcache-tear.py
 [01:34:01] OBSERVE: read /tmp/kaijulab-batch-applestore.py
+[01:34:01] OBSERVE: read /tmp/kaijulab-batch-applestore.py
