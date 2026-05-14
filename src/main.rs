@@ -3035,6 +3035,12 @@ fn matching_glibc_loaders(data: &[u8], arch: Option<&str>) -> Vec<String> {
             PathBuf::from(format!(
                 "/tmp/x86_64sysroot/root/usr/lib/x86_64-linux-gnu/ld-{version}.so"
             )),
+            PathBuf::from(format!(
+                "/tmp/x86_64sysroot-{version}/root/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/tmp/x86_64sysroot-{version}/root/usr/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
         ],
         Some("i386") => vec![
             PathBuf::from(format!("/lib/i386-linux-gnu/ld-{version}.so")),
