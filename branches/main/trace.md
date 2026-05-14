@@ -2958,3 +2958,4 @@ _[Checkpoint: 6a05239e — Removed default claude -p usage from batch automation
 _[Checkpoint: 6a0526a3 — Added no-claude-p offline auto-pwn path; verified auto-pwn solves silver-bullet via exit@plt(42) and hacknote via system id output; remaining five report explicit finalizer gaps.]_
 ---
 
+[01:47:38] ACT: added /tmp/kaijulab-test-dubblesort.py
