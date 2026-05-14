@@ -3100,3 +3100,4 @@ _[Checkpoint: 6a053423 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 _[Checkpoint: 6a053466 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 ---
 
+[02:35:50] THINK: Generated PoC invokes matching ld-*.so directly under qemu over qemu -L only because bundled old libc samples still failed resolving /lib64/ld-linux-x86-64.so.2.
