@@ -3530,3 +3530,4 @@ _[Checkpoint: 6a054fd8 — Removed challenge-specific auto-pwn recipes from main
 [05:00:37] OBSERVE: searched kaijulab-agent-batch-claude-high-bypass for "\"solved\"|SCRIPT_READY|returncode|verification|error|failed|uid=|tcache|silver|re-alloc"
 [05:00:37] OBSERVE: listed files under /tmp/kaijulab-agent-batch-claude-high-bypass
 [05:00:37] OBSERVE: searched /tmp/kaijulab-agent-batch-claude-high-bypass for "true|exploit-verify|returncode|blocked|missing|failed|error""
+[05:00:37] OBSERVE: listed files under kaijulab-agent-batch-claude-high-bypass
