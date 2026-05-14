@@ -2869,3 +2869,4 @@ _[Checkpoint: 6a05206f — Added PoC synthesis, constrained-write planning, and 
 ---
 
 [01:21:26] THINK: Avoid claude -p inside KaijuLab: disabled ClaudeAdapter by default, exploit-batch-loop claude-exec returns unsupported, prompt-pack writes compact solve prompts; interactive claude/codex console remains available.
+[01:21:26] OBSERVE: read src/agent_bridge/codex.rs
