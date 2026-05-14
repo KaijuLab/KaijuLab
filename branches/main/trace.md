@@ -2990,3 +2990,9 @@ _[Checkpoint: 6a0526a3 — Added no-claude-p offline auto-pwn path; verified aut
 [01:47:38] OBSERVE: read src/main.rs
 [01:47:38] OBSERVE: read src/main.rs
 [01:47:38] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current auto-pwn still solves 2/7 and explains libc/loader blockers for remaining five.]_
+---
+
