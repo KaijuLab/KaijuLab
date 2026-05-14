@@ -3494,3 +3494,4 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 [04:30:10] OBSERVE: searched main.rs for "PwnableTW|silver_bullet|hacknote_uaf|tcache_tear|seethefile|realloc_fmt|dubblesort|applestore|what your name|apple store|tcache tear|silver bullet|hacknote"
 [04:30:10] OBSERVE: read src/main.rs
 [04:30:10] OBSERVE: read src/main.rs
+[04:30:10] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
