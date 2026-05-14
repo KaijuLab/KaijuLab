@@ -3042,3 +3042,4 @@ _[Checkpoint: 6a052c45 — Downloaded/extracted Ubuntu glibc loaders: 2.27 and 2
 _[Checkpoint: 6a052d7d — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…]_
 ---
 
+[02:04:06] THINK: Scale Agent Console submit delay with prompt length because Claude Code drops Enter while large paste still rendering.
