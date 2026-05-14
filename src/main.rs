@@ -1825,6 +1825,8 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
                 effective_sysroot.as_deref(),
                 &context,
             )?;
+            open_api_workspace(&client, &base_url, token.as_deref(), &path).await?;
+            reset_agent_console(&client, &base_url, token.as_deref(), &agent).await;
             run_agent_console(
                 &base_url,
                 token.as_deref(),
@@ -1957,6 +1959,8 @@ async fn run_api(base_url: String, token: Option<String>, command: ApiCommands) 
             let function = parse_int(&function)?;
             let prompt =
                 agent_decompile_loop_prompt(&path, function, &goal, attempts, max_functions)?;
+            open_api_workspace(&client, &base_url, token.as_deref(), &path).await?;
+            reset_agent_console(&client, &base_url, token.as_deref(), &agent).await;
             run_agent_console(
                 &base_url,
                 token.as_deref(),
@@ -2399,6 +2403,24 @@ async fn resolve_api_binary_path(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow::anyhow!("no active workspace; pass --file or open a binary"))?;
     Ok(PathBuf::from(path))
+}
+
+async fn open_api_workspace(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    path: &Path,
+) -> Result<()> {
+    api_request(
+        client,
+        base_url,
+        token,
+        "POST",
+        "/api/workspaces/open",
+        Some(serde_json::json!({ "path": path.to_string_lossy() })),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn resolve_optional_api_binary_path(
@@ -5479,6 +5501,7 @@ fn poc_synthesize_json(
     let effective_sysroot = effective_sysroot(sysroot, Some(&arch), interpreter.as_deref());
     let runner = default_runner_for_arch(Some(&arch));
     let libc = select_libc_path(binary, None).ok();
+    let loader = select_matching_libc_loader(binary, effective_sysroot.as_deref());
     let symbols = libc
         .as_deref()
         .and_then(|path| shared_object_symbol_offsets(path).ok())
@@ -5491,6 +5514,7 @@ fn poc_synthesize_json(
         &arch,
         runner.as_deref(),
         effective_sysroot.as_deref(),
+        loader.as_deref(),
         offset,
         libc_base,
         heap_base,
@@ -5507,11 +5531,38 @@ fn poc_synthesize_json(
         "arch": arch,
         "runner": runner,
         "sysroot": effective_sysroot.as_deref(),
+        "loader": loader,
         "adjacent_libc": libc,
         "output": output,
         "text": text,
         "next_action": "Fill only the transcript/primitive-specific TODOs, then run exploit-verify with an explicit predicate and feed failures to poc-repair."
     }))
+}
+
+fn select_matching_libc_loader(binary: &Path, sysroot: Option<&Path>) -> Option<PathBuf> {
+    let mut loaders = Vec::new();
+    for obj in adjacent_shared_objects(binary) {
+        let Some(name) = obj
+            .get("path")
+            .and_then(|v| v.as_str())
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|v| v.to_str())
+        else {
+            continue;
+        };
+        if !name.to_ascii_lowercase().contains("libc") {
+            continue;
+        }
+        if let Some(values) = obj.get("matching_loaders").and_then(|v| v.as_array()) {
+            loaders.extend(values.iter().filter_map(|v| v.as_str()).map(PathBuf::from));
+        }
+    }
+    if let Some(root) = sysroot {
+        if let Some(path) = loaders.iter().find(|path| path.starts_with(root)) {
+            return Some(path.clone());
+        }
+    }
+    loaders.into_iter().next()
 }
 
 fn poc_skeleton_text(
@@ -5521,6 +5572,7 @@ fn poc_skeleton_text(
     arch: &str,
     runner: Option<&str>,
     sysroot: Option<&Path>,
+    loader: Option<&Path>,
     offset: Option<usize>,
     libc_base: Option<&str>,
     heap_base: Option<&str>,
@@ -5531,6 +5583,13 @@ fn poc_skeleton_text(
     let offset = offset.unwrap_or(0);
     let qemu_default = runner.unwrap_or("");
     let sysroot_default = sysroot
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let loader_default = loader
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let libdir_default = loader
+        .and_then(|p| p.parent())
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let base = libc_base.unwrap_or("0");
@@ -5606,6 +5665,7 @@ fn poc_skeleton_text(
     Ok(format!(
         r#"#!/usr/bin/env python3
 import os
+import select
 import struct
 import subprocess
 import sys
@@ -5615,6 +5675,8 @@ BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bi
 # Proven primitives supplied to poc-synthesize: {primitive_note}
 SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot_default:?}
 RUNNER = os.environ.get("KAIJU_RUNNER") or {qemu_default:?}
+LOADER = os.environ.get("KAIJU_LOADER") or os.environ.get("KAIJULAB_LOADER") or {loader_default:?}
+LIBDIR = os.environ.get("KAIJU_LIBDIR") or os.environ.get("KAIJULAB_LIBDIR") or {libdir_default:?}
 WORD = {width}
 OFFSET = {offset}
 LIBC_BASE = int(os.environ.get("KAIJU_LIBC_BASE", {base:?}), 0)
@@ -5630,6 +5692,12 @@ def p64(x): return struct.pack("<Q", x & 0xffffffffffffffff)
 
 def argv():
     if RUNNER:
+        if LOADER and os.path.exists(LOADER):
+            libpath = LIBDIR or os.path.dirname(LOADER)
+            bindir = os.path.dirname(os.path.abspath(BIN))
+            if bindir and os.path.isdir(bindir):
+                libpath = (libpath + ":" + bindir) if libpath else bindir
+            return [RUNNER, LOADER, "--library-path", libpath, BIN]
         out = [RUNNER]
         if SYSROOT:
             out += ["-L", SYSROOT]
@@ -5671,15 +5739,43 @@ class Tube:
         self.read_until(prompt)
         self.line(str(n).encode())
 
-    def finish(self, timeout=5):
+    def finish(self, timeout=5, max_output=20000):
         try:
-            out = self.p.communicate(timeout=timeout)[0]
-        except subprocess.TimeoutExpired:
+            self.p.stdin.close()
+        except Exception:
+            pass
+        out = b""
+        end = time.time() + timeout
+        while time.time() < end and len(self.buf) + len(out) < max_output:
+            if self.p.poll() is not None:
+                break
+            ready, _, _ = select.select([self.p.stdout], [], [], max(0.0, min(0.05, end - time.time())))
+            if not ready:
+                continue
+            chunk = os.read(self.p.stdout.fileno(), max(1, min(4096, max_output - len(self.buf) - len(out))))
+            if not chunk:
+                break
+            out += chunk
+        if self.p.poll() is None:
             self.p.kill()
-            out = self.p.communicate()[0]
-        sys.stdout.buffer.write(self.buf + out)
-        print("returncode=%d" % self.p.returncode)
-        return self.p.returncode
+            try:
+                self.p.wait(timeout=1)
+            except Exception:
+                pass
+        try:
+            more = self.p.stdout.read(max(0, max_output - len(self.buf) - len(out))) or b""
+        except Exception:
+            more = b""
+        data = self.buf + out + more
+        try:
+            sys.stdout.buffer.write(data[:max_output])
+            if len(data) >= max_output:
+                sys.stdout.write("\n[kaijulab] output truncated at %d bytes\n" % max_output)
+            rc = self.p.returncode if self.p.returncode is not None else -1
+            print("returncode=%d" % rc)
+        except BrokenPipeError:
+            pass
+        return self.p.returncode if self.p.returncode is not None else -1
 
 def main():
     t = Tube()
@@ -5694,6 +5790,8 @@ if __name__ == "__main__":
         primitive_note = primitive_note,
         sysroot_default = sysroot_default,
         qemu_default = qemu_default,
+        loader_default = loader_default,
+        libdir_default = libdir_default,
         width = width,
         offset = offset,
         base = base,
@@ -5847,6 +5945,8 @@ async fn exploit_batch_loop_json(
             }));
             continue;
         } else {
+            open_api_workspace(client, base_url, token, &path).await?;
+            reset_agent_console(client, base_url, token, agent).await;
             match run_agent_console(
                 base_url,
                 token,
@@ -7104,6 +7204,7 @@ fn analysis_loop_json(
     candidate: Option<&Path>,
     max_gadgets: usize,
 ) -> Result<serde_json::Value> {
+    let cli = kaijulab_cli_q();
     let context = build_exploit_context(binary, max_gadgets)?;
     let kit = exploit_kit_json(binary, Some(256), None, 8192, max_gadgets)?;
     let ir = ir_query_json(binary, None, None, 40)?;
@@ -7116,7 +7217,7 @@ fn analysis_loop_json(
             "path": path,
             "exists": path.exists(),
             "verify_command": format!(
-                "target/debug/kaijulab api exploit-verify --file {} --expect-target-exit 42 {}",
+                "{cli} api exploit-verify --file {} --expect-target-exit 42 {}",
                 shell_quote(&binary.to_string_lossy()),
                 shell_quote(&path.to_string_lossy())
             ),
@@ -7147,25 +7248,25 @@ fn analysis_loop_json(
         ],
         "tool_contract": {
             "one_shot_behavior": [
-                format!("target/debug/kaijulab api runtime-run --file {}", shell_quote(&binary.to_string_lossy())),
-                format!("target/debug/kaijulab api debug-probe --file {}", shell_quote(&binary.to_string_lossy())),
-                format!("target/debug/kaijulab api crash-offset --file {}", shell_quote(&binary.to_string_lossy()))
+                format!("{cli} api runtime-run --file {}", shell_quote(&binary.to_string_lossy())),
+                format!("{cli} api debug-probe --file {}", shell_quote(&binary.to_string_lossy())),
+                format!("{cli} api crash-offset --file {}", shell_quote(&binary.to_string_lossy()))
             ],
             "live_debug": [
-                "target/debug/kaijulab api debug-session-start",
-                "target/debug/kaijulab api debug-session-action <id> break --address 0xADDR",
-                "target/debug/kaijulab api debug-session-action <id> continue",
-                "target/debug/kaijulab api debug-session-action <id> snapshot",
-                "target/debug/kaijulab api debug-session-stop <id>"
+                format!("{cli} api debug-session-start"),
+                format!("{cli} api debug-session-action <id> break --address 0xADDR"),
+                format!("{cli} api debug-session-action <id> continue"),
+                format!("{cli} api debug-session-action <id> snapshot"),
+                format!("{cli} api debug-session-stop <id>")
             ],
             "evidence": [
-                format!("target/debug/kaijulab api evidence-list --file {}", shell_quote(&binary.to_string_lossy())),
+                format!("{cli} api evidence-list --file {}", shell_quote(&binary.to_string_lossy())),
                 "Prefer --save-evidence on runtime-run/debug-probe/exploit-verify/crash-offset when the observation changes the exploit hypothesis."
             ]
         },
         "recommended_next_tool": recommended_next_tool(observation, &runtime_notes, candidate),
         "agent_prompt_fragment": format!(
-            "Use kaijulab api analysis-loop --file {} --candidate <poc> after each failed attempt; use runtime-run/debug-probe/debug-session/crash-offset for behavior and exploit-verify for proof.",
+            "Use {cli} api analysis-loop --file {} --candidate <poc> after each failed attempt; use runtime-run/debug-probe/debug-session/crash-offset for behavior and exploit-verify for proof.",
             shell_quote(&binary.to_string_lossy())
         ),
     }))
@@ -7178,6 +7279,7 @@ fn exploit_batch_exec_prompt(
     sysroot: Option<&Path>,
     context: &serde_json::Value,
 ) -> Result<String> {
+    let cli = kaijulab_cli_q();
     let strategy = context
         .get("inferred_exploit_strategy")
         .cloned()
@@ -7207,25 +7309,29 @@ Compact facts:
 {compact}
 
 Required loop:
-1. Use at most 3 quick KaijuLab probes before writing {output_q}.
-2. Prefer these exact commands:
-   - `target/debug/kaijulab api binary-facts --file {binary_q}`
-   - `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`
-   - `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`
-   - `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`
-   - `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`
-   - `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write`
-   - `target/debug/kaijulab api poc-synthesize --file {binary_q}{sysroot_arg} --chain ret2libc --output {output_q}`
-   - `target/debug/kaijulab api constraint-plan --file {binary_q} --mode sorted-ascending --value 0xADDR`
-3. After writing the PoC, run `target/debug/kaijulab api exploit-verify --file {binary_q}{sysroot_arg} --expect-target-exit 42 {output_q}`.
-4. If verification fails, run `target/debug/kaijulab api poc-repair --file {binary_q}{sysroot_arg} {output_q}` and apply exactly one repair.
-5. Print SCRIPT_READY only if exploit-verify returns success=true. Otherwise leave the best candidate at {output_q} and summarize the last structured failure.
+1. Use this absolute KaijuLab command even if you cd elsewhere: `{cli}`.
+2. Use at most 3 quick KaijuLab probes before writing {output_q}. Do not run raw objdump/readelf/strings before a candidate exists.
+3. Prefer these exact commands:
+   - `{cli} api binary-facts --file {binary_q}`
+   - `{cli} api heap-probe-plan --file {binary_q}`
+   - `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`
+   - `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`
+   - `{cli} api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer --max-rounds 4`
+   - `{cli} api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`
+   - `{cli} api exploit-plan --file {binary_q} --primitive duplicate-allocation --primitive arbitrary-write`
+   - `{cli} api poc-synthesize --file {binary_q}{sysroot_arg} --chain arbitrary-write --primitive duplicate-allocation --primitive arbitrary-write --output {output_q}`
+   - `{cli} api constraint-plan --file {binary_q} --mode sorted-ascending --value 0xADDR`
+4. `poc-synthesize` output is only plumbing. Before verification, edit {output_q} so it has concrete menu actions and no unresolved TODO placeholders on the executed path.
+5. After writing the real PoC, run `{cli} api exploit-verify --file {binary_q}{sysroot_arg} --expect-target-exit 42 {output_q}`.
+6. If verification fails, run `{cli} api poc-repair --file {binary_q}{sysroot_arg} {output_q}` and apply exactly one repair.
+7. Print SCRIPT_READY only if exploit-verify returns success=true. Otherwise leave the best candidate at {output_q} and summarize the last structured failure.
 
 PoC requirements:
 - Read KAIJU_BINARY/KAIJULAB_BINARY and KAIJU_SYSROOT/KAIJULAB_SYSROOT.
 - Use qemu runner with -L sysroot for i386/x86_64 foreign runs.
 - Use timeouts/select; do not block forever on reads.
 - Prove execution by making the target process exit 42 or by printing an exact marker verified by exploit-verify.
+- Do not verify a scaffold whose executed path only contains comments/TODOs; first drive at least one valid target menu path.
 "#,
         binary = binary.display(),
         output = output.display(),
@@ -7234,6 +7340,7 @@ PoC requirements:
         compact = serde_json::to_string_pretty(&compact)?,
         binary_q = shell_quote(&binary.to_string_lossy()),
         output_q = shell_quote(&output.to_string_lossy()),
+        cli = cli,
     ))
 }
 
@@ -7245,6 +7352,7 @@ fn exploit_loop_prompt(
     sysroot: Option<&Path>,
     context: &serde_json::Value,
 ) -> Result<String> {
+    let cli = kaijulab_cli_q();
     let context = serde_json::to_string_pretty(context)?;
     let sysroot_arg = sysroot
         .map(|path| format!(" --sysroot {}", shell_quote(&path.to_string_lossy())))
@@ -7282,24 +7390,25 @@ Rules:
 - Use qemu/runtime candidates from the context; handle missing dynamic loaders explicitly.
 - Check `adjacent_shared_objects` before claiming a challenge libc is unavailable; use bundled libc paths for offsets/leaks when present.
 - Use `inferred_exploit_strategy.ranked_families` to choose the first probes. Treat it as a hypothesis from imports/strings/protections, not as ground truth.
-- Use `target/debug/kaijulab api binary-facts --file {binary_q}` first when you need a compact, agent-sized summary of protections, imports, strings, libc offsets, gadgets, and ranked exploit families.
-- Use `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}` before writing a PoC from scratch; then edit the generated candidate instead of rebuilding process/qemu plumbing.
-- For heap/menu targets, use `target/debug/kaijulab api heap-probe-plan --file {binary_q}` before guessing primitives, then run synchronized probes with `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"4"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`.
-- After a heap transcript exists, normalize it into events and run `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'` before choosing UAF/double-free/overlap hypotheses.
-- For leaks, prefer `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --setup @setup.json --cycle @cycle.json --want libc --max-rounds 8` over manual transcript scraping; use it for `/proc/self/maps`, repeated show/read cycles, and raw pointer candidate harvesting.
-- After any libc leak, run `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol SYMBOL` before hardcoding offsets. After proving primitives, run `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write` to rank finalization paths.
-- Use `target/debug/kaijulab api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
-- Use `target/debug/kaijulab api exploit-recipe --file {binary_q}` to retrieve only the inferred strategy profile.
-- Use `target/debug/kaijulab api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
-- Use `target/debug/kaijulab api runtime-run --file {binary_q}{sysroot_arg}` for stdout/stderr/exit behavior and `target/debug/kaijulab api debug-probe --file {binary_q}{sysroot_arg}` for registers/backtrace/crash state.
+- Use this absolute KaijuLab command even after changing directories: `{cli}`.
+- Use `{cli} api binary-facts --file {binary_q}` first when you need a compact, agent-sized summary of protections, imports, strings, libc offsets, gadgets, and ranked exploit families.
+- Use `{cli} api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}` before writing a PoC from scratch; then edit the generated candidate instead of rebuilding process/qemu plumbing.
+- For heap/menu targets, use `{cli} api heap-probe-plan --file {binary_q}` before guessing primitives, then run synchronized probes with `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"4"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`.
+- After a heap transcript exists, normalize it into events and run `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'` before choosing UAF/double-free/overlap hypotheses.
+- For leaks, prefer `{cli} api leak-probe --file {binary_q}{sysroot_arg} --setup @setup.json --cycle @cycle.json --want libc --max-rounds 8` over manual transcript scraping; use it for `/proc/self/maps`, repeated show/read cycles, and raw pointer candidate harvesting.
+- After any libc leak, run `{cli} api libc-resolve --file {binary_q} --leak 0xADDR --symbol SYMBOL` before hardcoding offsets. After proving primitives, run `{cli} api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write` to rank finalization paths.
+- Use `{cli} api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.
+- Use `{cli} api exploit-recipe --file {binary_q}` to retrieve only the inferred strategy profile.
+- Use `{cli} api analysis-loop --file {binary_q} --candidate {output_q}` after failed attempts to refresh loop state.
+- Use `{cli} api runtime-run --file {binary_q}{sysroot_arg}` for stdout/stderr/exit behavior and `{cli} api debug-probe --file {binary_q}{sysroot_arg}` for registers/backtrace/crash state.
 - Prefer KaijuLab analysis output over raw binutils. Do not use raw `objdump`, `readelf`, `strings`, `ROPgadget`, or `checksec` as the first source of facts when `exploit-kit`, `ir-query`, `decompile-enhanced`, or `exploit-context` already provide the needed data.
 - Prefer KaijuLab runtime/debug/verify commands over raw target execution. If you must run the target or helper scripts directly, every command must include a hard timeout and an output cap (`timeout 10s ... | head -c 20000` or equivalent) so menu loops cannot flood the console.
 - Do not redirect raw target output to unbounded files. Use `runtime-run --timeout-secs N` or cap file output with `head -c`/`dd count=` before inspection.
-- When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
-- If stdin can crash/control execution, run `target/debug/kaijulab api crash-offset --file {binary_q}{sysroot_arg}` before hand-computing offsets.
-- Use exact tool syntax: `target/debug/kaijulab api binary-facts --file {binary_q}`; `target/debug/kaijulab api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}`; `target/debug/kaijulab api heap-probe-plan --file {binary_q}`; `target/debug/kaijulab api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`; `target/debug/kaijulab api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`; `target/debug/kaijulab api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`; `target/debug/kaijulab api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`; `target/debug/kaijulab api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write`; `target/debug/kaijulab api poc-repair --file {binary_q}{sysroot_arg} {output_q}`; `target/debug/kaijulab api exploit-kit --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q}`; `target/debug/kaijulab api ir-query --file {binary_q} --function 0xADDR`; `target/debug/kaijulab api ir-query --file {binary_q} --search TEXT`; `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0xADDR`.
-- Save important observations with `--save-evidence`, inspect them with `target/debug/kaijulab api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
-- After every candidate edit, run `target/debug/kaijulab api exploit-verify --save-evidence --file {binary_q}{sysroot_arg} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
+- When one-shot probes are insufficient, use live sessions: `{cli} api debug-session-start`, then `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and finally `debug-session-stop <id>`.
+- If stdin can crash/control execution, run `{cli} api crash-offset --file {binary_q}{sysroot_arg}` before hand-computing offsets.
+- Use exact tool syntax: `{cli} api binary-facts --file {binary_q}`; `{cli} api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}`; `{cli} api heap-probe-plan --file {binary_q}`; `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`; `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}}]' --expect TEXT`; `{cli} api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer`; `{cli} api libc-resolve --file {binary_q} --leak 0xADDR --symbol puts`; `{cli} api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write`; `{cli} api poc-repair --file {binary_q}{sysroot_arg} {output_q}`; `{cli} api exploit-kit --file {binary_q}`; `{cli} api ir-query --file {binary_q}`; `{cli} api ir-query --file {binary_q} --function 0xADDR`; `{cli} api ir-query --file {binary_q} --search TEXT`; `{cli} api decompile-enhanced --file {binary_q} 0xADDR`.
+- Save important observations with `--save-evidence`, inspect them with `{cli} api evidence-list --file {binary_q}`, and cite evidence IDs in your final status.
+- After every candidate edit, run `{cli} api exploit-verify --save-evidence --file {binary_q}{sysroot_arg} {output_q}` with the right predicate (`--expect-target-exit 42`, `--expect-exit 42`, or `--expect-output MARKER`).
 - If exploit-verify returns success=true, print SCRIPT_READY and stop.
 - Do not print SCRIPT_READY_BLOCKED for exploit complexity, missing offsets, failed hypotheses, or attempt budget. Use it only for true missing environment dependencies such as absent binary/qemu/sysroot/loader, and expect exploit-verify to mark it success=false.
 - Do not spin after the attempt budget; leave the best candidate PoC in place, report the last structured failure, and do not claim SCRIPT_READY.
@@ -7313,6 +7422,7 @@ Rules:
         binary_q = shell_quote(&binary.to_string_lossy()),
         output_q = shell_quote(&output.to_string_lossy()),
         sysroot_arg = sysroot_arg,
+        cli = cli,
     ))
 }
 
@@ -7323,6 +7433,7 @@ fn agent_decompile_loop_prompt(
     attempts: u32,
     max_functions: usize,
 ) -> Result<String> {
+    let cli = kaijulab_cli_q();
     let enhanced = core::decompile::decompile_enhanced_path(binary, function)?;
     let analysis = core::decompile::decompile_analysis_path(binary, function)?;
     let quality = core::decompile::decompiler_quality_report_path(binary, max_functions)?;
@@ -7365,12 +7476,13 @@ Enhanced decompile text:
 
 Rules:
 - Maintain an inspect -> hypothesize -> verify loop. Spend at most {attempts} attempts.
-- Prefer KaijuLab facts over ad-hoc guessing. Refresh with `target/debug/kaijulab api decompile-analysis --file {binary_q} 0x{function:x}` and `target/debug/kaijulab api decompile-enhanced --file {binary_q} 0x{function:x}` when needed.
-- Use `target/debug/kaijulab api recovery-cfg --file {binary_q} 0x{function:x}` and `target/debug/kaijulab api recovery-xrefs --file {binary_q} 0xADDR` for graph-backed control flow and xrefs.
-- Use `target/debug/kaijulab api ir-query --file {binary_q} --function 0x{function:x}` for mixed disassembly, strings, xrefs, and pseudo-C.
-- Use `target/debug/kaijulab api runtime-run --file {binary_q}` or `target/debug/kaijulab api debug-probe --file {binary_q}` before claiming behavior that depends on runtime state.
-- When one-shot probes are insufficient, use live sessions: `target/debug/kaijulab api debug-session-start`, `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and `debug-session-stop <id>`.
-- Save important runtime/debug observations with `--save-evidence`, then cite evidence IDs from `target/debug/kaijulab api evidence-list --file {binary_q}`.
+- Use this absolute KaijuLab command even after changing directories: `{cli}`.
+- Prefer KaijuLab facts over ad-hoc guessing. Refresh with `{cli} api decompile-analysis --file {binary_q} 0x{function:x}` and `{cli} api decompile-enhanced --file {binary_q} 0x{function:x}` when needed.
+- Use `{cli} api recovery-cfg --file {binary_q} 0x{function:x}` and `{cli} api recovery-xrefs --file {binary_q} 0xADDR` for graph-backed control flow and xrefs.
+- Use `{cli} api ir-query --file {binary_q} --function 0x{function:x}` for mixed disassembly, strings, xrefs, and pseudo-C.
+- Use `{cli} api runtime-run --file {binary_q}` or `{cli} api debug-probe --file {binary_q}` before claiming behavior that depends on runtime state.
+- When one-shot probes are insufficient, use live sessions: `{cli} api debug-session-start`, `debug-session-action <id> break --address 0xADDR`, `continue`, `stepi`, `registers`, `memory`, `snapshot`, and `debug-session-stop <id>`.
+- Save important runtime/debug observations with `--save-evidence`, then cite evidence IDs from `{cli} api evidence-list --file {binary_q}`.
 - If the decompiler output looks wrong, state the likely missing recovery/type/alias fact and the exact KaijuLab improvement that would fix it.
 - Finish with DECOMPILER_LOOP_DONE and a concise JSON object: summary, function_semantics, risks, evidence_commands, decompiler_gaps, recommended_next_actions.
 "#,
@@ -7381,6 +7493,7 @@ Rules:
         compact = compact,
         enhanced = enhanced,
         binary_q = shell_quote(&binary.to_string_lossy()),
+        cli = cli,
     ))
 }
 
@@ -7395,6 +7508,29 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn kaijulab_cli_q() -> String {
+    if let Ok(path) = std::env::var("KAIJULAB_AGENT_CLI") {
+        if !path.trim().is_empty() {
+            return shell_quote(path.trim());
+        }
+    }
+    let raw = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kaijulab"));
+    let path = raw.canonicalize().unwrap_or(raw);
+    if path
+        .components()
+        .any(|component| component.as_os_str() == "debug")
+    {
+        if let Some(root) = std::env::current_dir().ok().filter(|dir| dir.join("Cargo.toml").exists())
+        {
+            let release = root.join("target/release/kaijulab");
+            if release.exists() {
+                return shell_quote(&release.to_string_lossy());
+            }
+        }
+    }
+    shell_quote(&path.to_string_lossy())
 }
 
 fn gdb_quote(s: &str) -> String {
@@ -7854,12 +7990,19 @@ async fn run_agent_console(
         }
 
         let needs_enter = enter;
+        let prompt_len = prompt.len();
         sink.send(WsMessage::Text(
             serde_json::json!({ "type": "input", "data": prompt }).to_string(),
         ))
         .await?;
         if needs_enter {
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            let paste_settle_ms = (1_000_u64 + (prompt_len as u64 / 80) * 25).clamp(1_000, 4_000);
+            tokio::time::sleep(Duration::from_millis(paste_settle_ms)).await;
+            sink.send(WsMessage::Text(
+                serde_json::json!({ "type": "input", "data": "\r" }).to_string(),
+            ))
+            .await?;
+            tokio::time::sleep(Duration::from_millis(250)).await;
             sink.send(WsMessage::Text(
                 serde_json::json!({ "type": "input", "data": "\r" }).to_string(),
             ))
@@ -7930,6 +8073,20 @@ async fn run_agent_console(
     }
     stdin_task.abort();
     Ok(())
+}
+
+async fn reset_agent_console(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: Option<&str>,
+    agent: &str,
+) {
+    let url = api_url(base_url, &format!("/api/agent-console/{agent}"));
+    let mut req = client.delete(url);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let _ = req.send().await;
 }
 
 fn handle_console_message(msg: WsMessage) -> Result<bool> {
