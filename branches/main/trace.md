@@ -2687,3 +2687,4 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 [00:05:38] NOTE: KaijuLab+Claude batch after generic tools: 0/7 reached SCRIPT_READY under bounded attempts. Artifacts /tmp/kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py. Root causes: menu/protocol sync, missing leak loops/calibration, canary/order handling, complex heap chains.
 [00:05:41] OBSERVE: listed files under samples
 [00:05:41] OBSERVE: searched samples for "tcache_tear"
+[00:05:41] OBSERVE: listed files under samples
