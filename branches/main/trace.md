@@ -3256,3 +3256,4 @@ _[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loa
 ---
 
 [03:00:38] NOTE: realloc-menu primitive synthesis: src/main.rs detects generic index/size/data realloc menus, emits targeted heap-probe-plan, plt/got map, direct loader runtime command, and poc-synthesize helper with consuming Tube buffer + aligned tcache target.
+[03:00:39] OBSERVE: searched src/main.rs
