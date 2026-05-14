@@ -2912,3 +2912,4 @@ _[Checkpoint: 6a05239e — Removed default claude -p usage from batch automation
 [01:34:00] OBSERVE: read /tmp/kaijulab-batch-seethefile.py
 [01:34:00] OBSERVE: searched .*Exploit|fn for "ApiCommands|struct"
 [01:34:00] OBSERVE: searched main.rs for "exploit-batch-loop|poc-synthesize|exploit-verify|enum ApiCommands|struct .*Exploit|fn verify_exploit_script|ClaudeAdapter|KAIJULAB_ENABLE_CLAUDE_P"
+[01:34:00] OBSERVE: read /tmp/kaijulab-batch-realloc.py
