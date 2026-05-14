@@ -3013,3 +3013,9 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 [01:53:11] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [01:53:11] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [01:53:11] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a052b15 — Added adjacent libc version/loader detection; auto-pwn now reports tcache-tear glibc 2.27 missing ld-2.27.so and realloc glibc 2.29 missing ld-2.29.so.]_
+---
+
