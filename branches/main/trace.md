@@ -2868,3 +2868,4 @@ _[Checkpoint: 6a051f20 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a05206f — Added PoC synthesis, constrained-write planning, and batch exploit loop; validated new commands/build; tested Claude canary and found remaining timeout/no-PoC blocker.]_
 ---
 
+[01:21:26] THINK: Avoid claude -p inside KaijuLab: disabled ClaudeAdapter by default, exploit-batch-loop claude-exec returns unsupported, prompt-pack writes compact solve prompts; interactive claude/codex console remains available.
