@@ -3122,3 +3122,4 @@ _[Checkpoint: 6a0536bb — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 [02:43:47] THINK: Console-driven loops open target workspace before spawning agent over local-only file canonicalization because MCP active.json otherwise points at stale binary/socket.
 [02:45:05] OBSERVE: read src/main.rs
 [02:45:05] OBSERVE: read src/server/agent_console.rs
+[02:45:05] OBSERVE: read src/main.rs
