@@ -2975,6 +2975,8 @@ fn adjacent_shared_objects(path: &Path) -> Vec<serde_json::Value> {
                 "size": data.len(),
                 "sha256": sha256,
                 "arch": binary_arch_from_data(&data),
+                "glibc_version": glibc_version_from_data(&data),
+                "matching_loaders": matching_glibc_loaders(&data, binary_arch_from_data(&data).as_deref()),
             }))
         })
         .collect::<Vec<_>>();
@@ -2984,6 +2986,79 @@ fn adjacent_shared_objects(path: &Path) -> Vec<serde_json::Value> {
             .cmp(&b.get("path").and_then(|v| v.as_str()))
     });
     out
+}
+
+fn glibc_version_from_data(data: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(data);
+    for marker in ["glibc ", "GLIBC "] {
+        if let Some(pos) = text.find(marker) {
+            let rest = &text[pos + marker.len()..];
+            let version: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if !version.is_empty() {
+                return Some(version);
+            }
+        }
+    }
+    if let Some(pos) = text.find("stable release version ") {
+        let rest = &text[pos + "stable release version ".len()..];
+        let version: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if !version.is_empty() {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn matching_glibc_loaders(data: &[u8], arch: Option<&str>) -> Vec<String> {
+    let Some(version) = glibc_version_from_data(data) else {
+        return Vec::new();
+    };
+    let candidates: Vec<PathBuf> = match arch {
+        Some("x86_64") => vec![
+            PathBuf::from(format!("/lib/x86_64-linux-gnu/ld-{version}.so")),
+            PathBuf::from(format!("/usr/lib/x86_64-linux-gnu/ld-{version}.so")),
+            PathBuf::from(format!(
+                "/opt/sysroots/x86_64/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/opt/sysroots/x86_64/usr/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/tmp/x86_64sysroot/root/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/tmp/x86_64sysroot/root/usr/lib/x86_64-linux-gnu/ld-{version}.so"
+            )),
+        ],
+        Some("i386") => vec![
+            PathBuf::from(format!("/lib/i386-linux-gnu/ld-{version}.so")),
+            PathBuf::from(format!("/usr/lib/i386-linux-gnu/ld-{version}.so")),
+            PathBuf::from(format!(
+                "/opt/sysroots/i386/lib/i386-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/opt/sysroots/i386/usr/lib/i386-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/tmp/i386sysroot/root/lib/i386-linux-gnu/ld-{version}.so"
+            )),
+            PathBuf::from(format!(
+                "/tmp/i386sysroot/root/usr/lib/i386-linux-gnu/ld-{version}.so"
+            )),
+        ],
+        _ => Vec::new(),
+    };
+    candidates
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn inferred_exploit_strategy(path: &Path) -> Result<serde_json::Value> {
@@ -6023,6 +6098,36 @@ fn auto_pwn_runtime_notes(binary: &Path, lower_text: &str, sysroot: Option<&Path
     let sysroot_s = sysroot
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+    for obj in adjacent_shared_objects(binary) {
+        let name = obj
+            .get("path")
+            .and_then(|v| v.as_str())
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !name.contains("libc") {
+            continue;
+        }
+        let version = obj
+            .get("glibc_version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let loaders = obj
+            .get("matching_loaders")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or(0);
+        if loaders == 0 {
+            notes.push(format!(
+                "bundled libc {name} found (glibc {version}), but no matching ld-{version}.so loader was found on disk"
+            ));
+        } else {
+            notes.push(format!(
+                "bundled libc {name} found (glibc {version}) with {loaders} matching loader candidate(s)"
+            ));
+        }
+    }
     if (lower_text.contains("tcache")
         || lower_text.contains("realloc")
         || lower_text.contains("malloc"))
@@ -6068,6 +6173,7 @@ fn auto_pwn_root_causes(
             if note.contains("matching old dynamic loader")
                 || note.contains("matching i386 glibc")
                 || note.contains("modern qemu/sysroot")
+                || note.contains("no matching ld-")
             {
                 causes.push(note);
             }
