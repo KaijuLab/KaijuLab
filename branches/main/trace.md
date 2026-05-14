@@ -3427,3 +3427,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [04:07:14] ACT: edited src/main.rs
 [04:07:14] ACT: edited src/main.rs
 [04:07:14] ACT: edited src/main.rs
+[04:07:14] NOTE: auto-pwn update: seethefile solved by restoring classic fake FILE layout with sysroot system offset. Current solved 4/7: silver-bullet, hacknote, realloc, seethefile. Remaining: tcache final hook write not firing; dubblesort classic sorted ret2libc still segv under qemu despite -B base; applestore leaks work but unlink/atoi pivot still loops.
