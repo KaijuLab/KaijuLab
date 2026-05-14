@@ -2671,3 +2671,9 @@ _[Checkpoint: 6a0510bf — wrote kaijulab-batch-tcache-tear.py; wrote kaijulab-b
 ---
 
 [00:02:34] ACT: wrote kaijulab-batch-dubblesort.py
+
+
+---
+_[Checkpoint: 6a051129 — wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py]_
+---
+
