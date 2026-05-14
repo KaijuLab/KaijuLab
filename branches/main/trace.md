@@ -3331,3 +3331,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:14:15] OBSERVE: searched elf_plt_got_map|fn for "TargetCommand|fn"
 [03:14:15] OBSERVE: searched main.rs for "struct TargetCommand|fn elf_plt_got_map|fn detect_realloc_menu_model|fn poc_skeleton_text|fn heap_probe_plan_json|targeted_probes|For partial-RELRO menu parsers"
 [03:14:15] OBSERVE: listed files under /tmp
+[03:14:15] OBSERVE: searched /tmp for "true|success":true|PwnableTW|tcache|silver|realloc|seethefile|dubblesort|hacknote|applestore""
