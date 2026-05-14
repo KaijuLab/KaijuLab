@@ -2684,3 +2684,4 @@ _[Checkpoint: 6a051129 — wrote kaijulab-batch-seethefile.py; edited kaijulab-b
 _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py]_
 ---
 
+[00:05:38] NOTE: KaijuLab+Claude batch after generic tools: 0/7 reached SCRIPT_READY under bounded attempts. Artifacts /tmp/kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py. Root causes: menu/protocol sync, missing leak loops/calibration, canary/order handling, complex heap chains.
