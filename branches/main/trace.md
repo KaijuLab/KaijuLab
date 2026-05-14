@@ -3094,3 +3094,9 @@ _[Checkpoint: 6a052f47 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a053423 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
 ---
 
+
+
+---
+_[Checkpoint: 6a053466 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs]_
+---
+
