@@ -2971,3 +2971,4 @@ _[Checkpoint: 6a0526a3 — Added no-claude-p offline auto-pwn path; verified aut
 [01:47:38] OBSERVE: listed files under tcache-tear
 [01:47:38] OBSERVE: listed files under /home/koukyosyumei
 [01:47:38] OBSERVE: listed files under /home/koukyosyumei
+[01:47:38] OBSERVE: listed files under koukyosyumei
