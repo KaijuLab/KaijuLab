@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::core::workspace::{read_active_workspace, socket_path_for, WritePolicy, Workspace};
+use crate::core::workspace::{read_active_workspace, socket_path_for, Workspace, WritePolicy};
 
 pub async fn run(binary_path: PathBuf, policy: WritePolicy) -> Result<()> {
     let workspace = Workspace::open(&binary_path, policy)?;
@@ -38,7 +38,10 @@ pub async fn run(binary_path: PathBuf, policy: WritePolicy) -> Result<()> {
             }
         }
     } else {
-        tracing::info!("mcp: no daemon found at {}; running standalone", socket.display());
+        tracing::info!(
+            "mcp: no daemon found at {}; running standalone",
+            socket.display()
+        );
         Box::new(server::LocalBackend::new(workspace))
     };
 

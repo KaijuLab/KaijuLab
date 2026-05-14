@@ -27,8 +27,7 @@ pub fn sections(ws: &Workspace) -> Result<String> {
     // `file_info` already lists sections; expose a section_entropy summary
     // here so the section pane has dedicated data.  Falls back to file_info
     // if the binary is too small to compute entropy.
-    raw("section_entropy", json!({ "path": ws.binary_path_str() }))
-        .or_else(|_| file_info(ws))
+    raw("section_entropy", json!({ "path": ws.binary_path_str() })).or_else(|_| file_info(ws))
 }
 
 pub fn imports(ws: &Workspace) -> Result<String> {
@@ -36,7 +35,10 @@ pub fn imports(ws: &Workspace) -> Result<String> {
     if let Ok(out) = raw("resolve_plt", json!({ "path": ws.binary_path_str() })) {
         return Ok(out);
     }
-    raw("resolve_pe_imports", json!({ "path": ws.binary_path_str() }))
+    raw(
+        "resolve_pe_imports",
+        json!({ "path": ws.binary_path_str() }),
+    )
 }
 
 pub fn strings_extract(

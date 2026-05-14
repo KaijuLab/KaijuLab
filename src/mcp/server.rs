@@ -199,7 +199,10 @@ async fn handle_request(
         },
         "tools/call" => {
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
             match backend.call_tool(name, args).await {
                 Ok(text) => json!({
                     "jsonrpc": "2.0",

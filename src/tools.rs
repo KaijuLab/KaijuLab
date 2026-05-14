@@ -15,11 +15,15 @@ pub struct ToolResult {
 
 impl ToolResult {
     fn ok(output: impl Into<String>) -> Self {
-        ToolResult { output: output.into() }
+        ToolResult {
+            output: output.into(),
+        }
     }
 
     fn err(msg: impl Into<String>) -> Self {
-        ToolResult { output: format!("Error: {}", msg.into()) }
+        ToolResult {
+            output: format!("Error: {}", msg.into()),
+        }
     }
 }
 
@@ -51,7 +55,12 @@ impl ToolCache {
         self.entries.insert(key, val);
     }
     fn invalidate_path(&mut self, path: &str) {
-        let to_remove: Vec<String> = self.order.iter().filter(|k| k.contains(path)).cloned().collect();
+        let to_remove: Vec<String> = self
+            .order
+            .iter()
+            .filter(|k| k.contains(path))
+            .cloned()
+            .collect();
         for k in to_remove {
             self.order.retain(|x| x != &k);
             self.entries.remove(&k);
@@ -71,16 +80,33 @@ fn tool_cache() -> &'static Mutex<ToolCache> {
 }
 
 const CACHEABLE_TOOLS: &[&str] = &[
-    "disassemble", "decompile", "xrefs_to", "cfg_view", "call_graph",
-    "pe_security_audit", "pe_internals", "elf_internals",
-    "crypto_identify", "function_context",
-    "stack_bof_candidates", "writable_iat_hijack_surface", "find_injection_chains",
+    "disassemble",
+    "decompile",
+    "xrefs_to",
+    "cfg_view",
+    "call_graph",
+    "pe_security_audit",
+    "pe_internals",
+    "elf_internals",
+    "crypto_identify",
+    "function_context",
+    "stack_bof_candidates",
+    "writable_iat_hijack_surface",
+    "find_injection_chains",
 ];
 
 const WRITE_TOOLS: &[&str] = &[
-    "rename_function", "add_comment", "set_vuln_score", "rename_variable",
-    "set_return_type", "set_param_type", "set_param_name", "define_struct",
-    "add_note", "delete_note", "batch_annotate",
+    "rename_function",
+    "add_comment",
+    "set_vuln_score",
+    "rename_variable",
+    "set_return_type",
+    "set_param_type",
+    "set_param_name",
+    "define_struct",
+    "add_note",
+    "delete_note",
+    "batch_annotate",
 ];
 
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
@@ -104,9 +130,8 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
             }
         }
         // Execute and cache
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            dispatch_inner(name, args)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch_inner(name, args)));
         let result = match result {
             Ok(r) => r,
             Err(_) => ToolResult::err(format!(
@@ -123,9 +148,8 @@ pub fn dispatch(name: &str, args: &Value) -> ToolResult {
     }
 
     // Non-cached tools: still wrap in catch_unwind
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        dispatch_inner(name, args)
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch_inner(name, args)));
     match result {
         Ok(r) => r,
         Err(_) => ToolResult::err(format!(
@@ -156,20 +180,14 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["vaddr"].as_u64(),
         ),
         "read_section" => read_section(&str_arg(args, "path"), &str_arg(args, "section")),
-        "resolve_plt"   => resolve_plt(&str_arg(args, "path")),
+        "resolve_plt" => resolve_plt(&str_arg(args, "path")),
         "list_functions" => list_functions(
             &str_arg(args, "path"),
             args["max_results"].as_u64().unwrap_or(50) as usize,
             args["json"].as_bool().unwrap_or(false),
         ),
-        "decompile" => decompile(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
-        "xrefs_to" => xrefs_to(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
+        "decompile" => decompile(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0)),
+        "xrefs_to" => xrefs_to(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0)),
         "dwarf_info" => dwarf_info(&str_arg(args, "path")),
         "rename_function" => rename_function(
             &str_arg(args, "path"),
@@ -209,7 +227,9 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "path"),
             &str_arg(args, "struct_name"),
             args["total_size"].as_u64().unwrap_or(0) as usize,
-            args.get("fields").cloned().unwrap_or(serde_json::Value::Null),
+            args.get("fields")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
         ),
         "list_types" => list_types(&str_arg(args, "path")),
 
@@ -219,10 +239,7 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "path"),
             args["max_depth"].as_u64().unwrap_or(2) as usize,
         ),
-        "cfg_view" => cfg_view(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
+        "cfg_view" => cfg_view(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0)),
         "scan_vulnerabilities" => scan_vulnerabilities(
             &str_arg(args, "path"),
             args["max_fns"].as_u64().unwrap_or(5) as usize,
@@ -232,38 +249,25 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["vaddr"].as_u64().unwrap_or(0),
             args["score"].as_u64().unwrap_or(0) as u8,
         ),
-        "explain_function" => explain_function(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
+        "explain_function" => {
+            explain_function(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0))
+        }
         "identify_library_functions" => identify_library_functions(&str_arg(args, "path")),
-        "diff_binary" => diff_binary(
-            &str_arg(args, "path_a"),
-            &str_arg(args, "path_b"),
-        ),
+        "diff_binary" => diff_binary(&str_arg(args, "path_a"), &str_arg(args, "path_b")),
         "auto_analyze" => auto_analyze(
             &str_arg(args, "path"),
             args["top_n"].as_u64().unwrap_or(5) as usize,
         ),
         "export_report" => export_report(&str_arg(args, "path")),
-        "load_pdb" => load_pdb(
-            &str_arg(args, "binary_path"),
-            &str_arg(args, "pdb_path"),
-        ),
+        "load_pdb" => load_pdb(&str_arg(args, "binary_path"), &str_arg(args, "pdb_path")),
         "decompile_flat" => decompile_flat(
             &str_arg(args, "path"),
             args["base_addr"].as_u64().unwrap_or(0),
             args["vaddr"].as_u64().unwrap_or(0),
             args["arch"].as_str().unwrap_or("x86_64"),
         ),
-        "search_bytes" => search_bytes(
-            &str_arg(args, "path"),
-            &str_arg(args, "pattern"),
-        ),
-        "search_gadgets" => search_gadgets(
-            &str_arg(args, "path"),
-            &str_arg(args, "pattern"),
-        ),
+        "search_bytes" => search_bytes(&str_arg(args, "path"), &str_arg(args, "pattern")),
+        "search_gadgets" => search_gadgets(&str_arg(args, "path"), &str_arg(args, "pattern")),
         "dump_range" => dump_range(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
@@ -286,10 +290,9 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["vaddr"].as_u64().unwrap_or(0),
             &str_arg(args, "name"),
         ),
-        "lookup_function_hash" => lookup_function_hash(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
+        "lookup_function_hash" => {
+            lookup_function_hash(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0))
+        }
         "match_all_functions" => match_all_functions(
             &str_arg(args, "path"),
             args["max_results"].as_u64().unwrap_or(50) as usize,
@@ -302,10 +305,7 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             &str_arg(args, "text"),
             args["vaddr"].as_u64(),
         ),
-        "delete_note" => delete_note_tool(
-            &str_arg(args, "path"),
-            args["id"].as_i64().unwrap_or(0),
-        ),
+        "delete_note" => delete_note_tool(&str_arg(args, "path"), args["id"].as_i64().unwrap_or(0)),
         "list_notes" => list_notes_tool(&str_arg(args, "path")),
 
         // ── Vulnerability score query ──────────────────────────────────────
@@ -318,16 +318,19 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["binary"].as_str(),
             args["timeout_secs"].as_u64().unwrap_or(30).min(120),
         ),
-        "batch_annotate" => batch_annotate(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0), args),
-        "elf_internals" => elf_internals(&str_arg(args, "path")),
-        "pe_internals"      => pe_internals(&str_arg(args, "path")),
-        "pe_security_audit" => pe_security_audit(&str_arg(args, "path")),
-        "python_env"        => python_env(),
-        "crypto_identify"   => crypto_identify(&str_arg(args, "path")),
-        "function_context"  => function_context(
+        "batch_annotate" => batch_annotate(
             &str_arg(args, "path"),
             args["vaddr"].as_u64().unwrap_or(0),
+            args,
         ),
+        "elf_internals" => elf_internals(&str_arg(args, "path")),
+        "pe_internals" => pe_internals(&str_arg(args, "path")),
+        "pe_security_audit" => pe_security_audit(&str_arg(args, "path")),
+        "python_env" => python_env(),
+        "crypto_identify" => crypto_identify(&str_arg(args, "path")),
+        "function_context" => {
+            function_context(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0))
+        }
         "angr_find" => angr_find(
             &str_arg(args, "path"),
             args["find_addr"].as_u64().unwrap_or(0),
@@ -336,13 +339,15 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
             args["stdin_bytes"].as_u64().unwrap_or(32),
             args["timeout_secs"].as_u64().unwrap_or(60),
         ),
-        "xrefs_data" => xrefs_data(
-            &str_arg(args, "path"),
-            args["vaddr"].as_u64().unwrap_or(0),
-        ),
+        "xrefs_data" => xrefs_data(&str_arg(args, "path"), args["vaddr"].as_u64().unwrap_or(0)),
         "run_binary" => {
-            let argv: Vec<String> = args["args"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            let argv: Vec<String> = args["args"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
             run_binary(
                 &str_arg(args, "path"),
@@ -363,8 +368,13 @@ fn dispatch_inner(name: &str, args: &Value) -> ToolResult {
         ),
 
         "frida_trace" => {
-            let hooks: Vec<String> = args["hooks"].as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            let hooks: Vec<String> = args["hooks"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
             frida_trace(
                 &str_arg(args, "path"),
@@ -408,10 +418,10 @@ fn vaddr_to_file_offset(data: &[u8], vaddr: u64) -> Option<usize> {
     if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(data) {
         let image_base = pe.image_base as u64;
         for section in &pe.sections {
-            let sec_vaddr  = image_base + section.virtual_address as u64;
-            let sec_vsize  = section.virtual_size as u64;
+            let sec_vaddr = image_base + section.virtual_address as u64;
+            let sec_vsize = section.virtual_size as u64;
             let raw_offset = section.pointer_to_raw_data as u64;
-            let raw_size   = section.size_of_raw_data as u64;
+            let raw_size = section.size_of_raw_data as u64;
             if vaddr >= sec_vaddr && vaddr < sec_vaddr + sec_vsize {
                 let delta = vaddr - sec_vaddr;
                 if delta < raw_size {
@@ -433,11 +443,15 @@ fn pe_pdata_fn_size(data: &[u8], va: u64) -> Option<usize> {
     };
     let image_base = pe.image_base as u64;
 
-    let pdata = pe.sections.iter()
+    let pdata = pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))?;
     let pdata_bytes = pdata.data(data).ok()??;
 
-    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+    let rdata_range: Option<(u64, usize)> = pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
         .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
 
@@ -446,10 +460,12 @@ fn pe_pdata_fn_size(data: &[u8], va: u64) -> Option<usize> {
 
     for i in 0..num_entries {
         let off = i * 8;
-        let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().ok()?);
-        if begin_rva != target_rva { continue; }
+        let begin_rva = u32::from_le_bytes(pdata_bytes[off..off + 4].try_into().ok()?);
+        if begin_rva != target_rva {
+            continue;
+        }
 
-        let unwind_raw = u32::from_le_bytes(pdata_bytes[off+4..off+8].try_into().ok()?);
+        let unwind_raw = u32::from_le_bytes(pdata_bytes[off + 4..off + 8].try_into().ok()?);
         let flag = unwind_raw & 0x3;
         let fn_size: u64 = if flag != 0 {
             ((unwind_raw >> 2) & 0x7FF) as u64 * 4
@@ -458,11 +474,17 @@ fn pe_pdata_fn_size(data: &[u8], va: u64) -> Option<usize> {
             if ui_rva >= rdata_va {
                 let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
                 if ui_off + 4 <= data.len() {
-                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().ok()?);
+                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off + 4].try_into().ok()?);
                     (ui_word & 0x3_FFFF) as u64 * 4
-                } else { 0 }
-            } else { 0 }
-        } else { 0 };
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
 
         if fn_size > 0 {
             return Some(fn_size as usize);
@@ -509,8 +531,8 @@ fn file_info(path: &str) -> ToolResult {
     };
 
     let arch = format!("{:?}", obj.architecture());
-    let fmt  = format!("{:?}", obj.format());
-    let bits   = if obj.is_64() { "64-bit" } else { "32-bit" };
+    let fmt = format!("{:?}", obj.format());
+    let bits = if obj.is_64() { "64-bit" } else { "32-bit" };
     let endian = if obj.is_little_endian() { "LE" } else { "BE" };
 
     // LOAD segments — vaddr ↔ file-offset mapping the LLM needs for disassembly
@@ -521,7 +543,10 @@ fn file_info(path: &str) -> ToolResult {
             let (file_off, file_sz) = seg.file_range();
             format!(
                 "    vaddr=0x{:016x}  foff=0x{:08x}  fsz={:<8}  msz={}",
-                seg.address(), file_off, file_sz, seg.size()
+                seg.address(),
+                file_off,
+                file_sz,
+                seg.size()
             )
         })
         .collect();
@@ -530,10 +555,14 @@ fn file_info(path: &str) -> ToolResult {
         .sections()
         .filter_map(|s| {
             let name = s.name().ok()?;
-            if name.is_empty() { return None; }
+            if name.is_empty() {
+                return None;
+            }
             Some(format!(
                 "    {:<18} addr=0x{:016x}  size={}",
-                name, s.address(), s.size()
+                name,
+                s.address(),
+                s.size()
             ))
         })
         .collect();
@@ -569,7 +598,9 @@ fn file_info(path: &str) -> ToolResult {
 // ─── Tool: elf_internals ─────────────────────────────────────────────────────
 
 fn elf_internals(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -578,70 +609,122 @@ fn elf_internals(path: &str) -> ToolResult {
 
     let elf = match goblin::elf::Elf::parse(&data) {
         Ok(e) => e,
-        Err(_) => return ToolResult::err(
-            "Not a valid ELF binary — use file_info for PE/Mach-O formats"
-        ),
+        Err(_) => {
+            return ToolResult::err("Not a valid ELF binary — use file_info for PE/Mach-O formats")
+        }
     };
 
     let mut out = String::new();
 
     // ── Header / type ─────────────────────────────────────────────────────
-    use goblin::elf::header::{ET_EXEC, ET_DYN};
+    use goblin::elf::header::{ET_DYN, ET_EXEC};
     let pie = elf.header.e_type == ET_DYN;
     out.push_str(&format!(
         "ELF type    : {} ({})\n",
-        if pie { "ET_DYN" } else if elf.header.e_type == ET_EXEC { "ET_EXEC" } else { "other" },
-        if pie { "PIE — load address randomised" } else { "not PIE — fixed load address" }
+        if pie {
+            "ET_DYN"
+        } else if elf.header.e_type == ET_EXEC {
+            "ET_EXEC"
+        } else {
+            "other"
+        },
+        if pie {
+            "PIE — load address randomised"
+        } else {
+            "not PIE — fixed load address"
+        }
     ));
 
     // ── Security mitigations ──────────────────────────────────────────────
-    use goblin::elf::program_header::{PT_GNU_STACK, PT_GNU_RELRO, PF_X};
-    let nx = elf.program_headers.iter()
+    use goblin::elf::program_header::{PF_X, PT_GNU_RELRO, PT_GNU_STACK};
+    let nx = elf
+        .program_headers
+        .iter()
         .find(|ph| ph.p_type == PT_GNU_STACK)
         .map(|ph| ph.p_flags & PF_X == 0)
         .unwrap_or(false);
 
-    let has_relro = elf.program_headers.iter().any(|ph| ph.p_type == PT_GNU_RELRO);
+    let has_relro = elf
+        .program_headers
+        .iter()
+        .any(|ph| ph.p_type == PT_GNU_RELRO);
 
     use goblin::elf::dynamic::{DT_BIND_NOW, DT_FLAGS, DT_FLAGS_1};
     const DF_BIND_NOW: u64 = 0x8;
     const DF_1_NOW: u64 = 0x1;
-    let bind_now = elf.dynamic.as_ref()
-        .map(|dyn_| dyn_.dyns.iter().any(|d| {
-            d.d_tag == DT_BIND_NOW
-                || (d.d_tag == DT_FLAGS   && d.d_val & DF_BIND_NOW != 0)
-                || (d.d_tag == DT_FLAGS_1 && d.d_val & DF_1_NOW    != 0)
-        }))
+    let bind_now = elf
+        .dynamic
+        .as_ref()
+        .map(|dyn_| {
+            dyn_.dyns.iter().any(|d| {
+                d.d_tag == DT_BIND_NOW
+                    || (d.d_tag == DT_FLAGS && d.d_val & DF_BIND_NOW != 0)
+                    || (d.d_tag == DT_FLAGS_1 && d.d_val & DF_1_NOW != 0)
+            })
+        })
         .unwrap_or(false);
 
     let relro = match (has_relro, bind_now) {
-        (false, _)    => "None",
+        (false, _) => "None",
         (true, false) => "Partial RELRO",
-        (true, true)  => "Full RELRO",
+        (true, true) => "Full RELRO",
     };
 
-    let has_canary = elf.dynsyms.iter().any(|sym|
-        elf.dynstrtab.get_at(sym.st_name).map_or(false, |n| n.contains("__stack_chk"))
-    );
-    let has_fortify = elf.dynsyms.iter().any(|sym|
-        elf.dynstrtab.get_at(sym.st_name)
+    let has_canary = elf.dynsyms.iter().any(|sym| {
+        elf.dynstrtab
+            .get_at(sym.st_name)
+            .map_or(false, |n| n.contains("__stack_chk"))
+    });
+    let has_fortify = elf.dynsyms.iter().any(|sym| {
+        elf.dynstrtab
+            .get_at(sym.st_name)
             .map_or(false, |n| n.ends_with("_chk") && n.starts_with("__"))
-    );
+    });
 
     out.push_str("\nSecurity mitigations:\n");
-    out.push_str(&format!("  PIE          : {}\n", if pie { "Yes" } else { "No (fixed address)" }));
-    out.push_str(&format!("  NX (DEP)     : {}\n", if nx  { "Yes" } else { "No — stack is executable!" }));
+    out.push_str(&format!(
+        "  PIE          : {}\n",
+        if pie { "Yes" } else { "No (fixed address)" }
+    ));
+    out.push_str(&format!(
+        "  NX (DEP)     : {}\n",
+        if nx {
+            "Yes"
+        } else {
+            "No — stack is executable!"
+        }
+    ));
     out.push_str(&format!("  RELRO        : {}\n", relro));
-    out.push_str(&format!("  Stack canary : {}\n", if has_canary  { "Yes (__stack_chk_fail)" } else { "No" }));
-    out.push_str(&format!("  FORTIFY      : {}\n", if has_fortify { "Yes" } else { "No" }));
+    out.push_str(&format!(
+        "  Stack canary : {}\n",
+        if has_canary {
+            "Yes (__stack_chk_fail)"
+        } else {
+            "No"
+        }
+    ));
+    out.push_str(&format!(
+        "  FORTIFY      : {}\n",
+        if has_fortify { "Yes" } else { "No" }
+    ));
 
     // ── Special sections ──────────────────────────────────────────────────
     out.push_str("\nSpecial sections:\n");
-    for sec_name in &[".got", ".got.plt", ".plt", ".plt.got",
-                      ".init_array", ".fini_array", ".bss", ".data"] {
-        if let Some(sh) = elf.section_headers.iter().find(|sh|
-            elf.shdr_strtab.get_at(sh.sh_name).map_or(false, |n| n == *sec_name)
-        ) {
+    for sec_name in &[
+        ".got",
+        ".got.plt",
+        ".plt",
+        ".plt.got",
+        ".init_array",
+        ".fini_array",
+        ".bss",
+        ".data",
+    ] {
+        if let Some(sh) = elf.section_headers.iter().find(|sh| {
+            elf.shdr_strtab
+                .get_at(sh.sh_name)
+                .map_or(false, |n| n == *sec_name)
+        }) {
             if sh.sh_addr != 0 {
                 out.push_str(&format!(
                     "  {:<15} : vaddr=0x{:016x}  size={}\n",
@@ -655,18 +738,26 @@ fn elf_internals(path: &str) -> ToolResult {
     let ptr_size: usize = if elf.is_64 { 8 } else { 4 };
     let is_le = elf.little_endian;
     for arr_sec in &[".init_array", ".fini_array"] {
-        if let Some(sh) = elf.section_headers.iter().find(|sh|
-            elf.shdr_strtab.get_at(sh.sh_name).map_or(false, |n| n == *arr_sec)
-        ) {
+        if let Some(sh) = elf.section_headers.iter().find(|sh| {
+            elf.shdr_strtab
+                .get_at(sh.sh_name)
+                .map_or(false, |n| n == *arr_sec)
+        }) {
             let off = sh.sh_offset as usize;
-            let sz  = sh.sh_size  as usize;
-            if sh.sh_addr == 0 || sz < ptr_size || off + sz > data.len() { continue; }
+            let sz = sh.sh_size as usize;
+            if sh.sh_addr == 0 || sz < ptr_size || off + sz > data.len() {
+                continue;
+            }
             out.push_str(&format!(
                 "\n{}  (0x{:x} .. 0x{:x}):\n",
-                arr_sec, sh.sh_addr, sh.sh_addr + sh.sh_size
+                arr_sec,
+                sh.sh_addr,
+                sh.sh_addr + sh.sh_size
             ));
             for (i, chunk) in data[off..off + sz].chunks(ptr_size).enumerate() {
-                if chunk.len() < ptr_size { break; }
+                if chunk.len() < ptr_size {
+                    break;
+                }
                 let ptr: u64 = if elf.is_64 && is_le {
                     u64::from_le_bytes(chunk.try_into().unwrap_or([0u8; 8]))
                 } else if elf.is_64 {
@@ -676,11 +767,14 @@ fn elf_internals(path: &str) -> ToolResult {
                 } else {
                     u32::from_be_bytes(chunk[..4].try_into().unwrap_or([0u8; 4])) as u64
                 };
-                let sym_name = elf.syms.iter()
+                let sym_name = elf
+                    .syms
+                    .iter()
                     .chain(elf.dynsyms.iter())
                     .find(|s| s.st_value == ptr && !s.is_import())
                     .and_then(|s| {
-                        elf.strtab.get_at(s.st_name)
+                        elf.strtab
+                            .get_at(s.st_name)
                             .or_else(|| elf.dynstrtab.get_at(s.st_name))
                     })
                     .unwrap_or("?");
@@ -708,7 +802,9 @@ fn elf_internals(path: &str) -> ToolResult {
 // ─── Tool: pe_internals ──────────────────────────────────────────────────────
 
 fn pe_internals(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -717,7 +813,7 @@ fn pe_internals(path: &str) -> ToolResult {
 
     let pe = match goblin::Object::parse(&data) {
         Ok(goblin::Object::PE(p)) => p,
-        Ok(_)  => return ToolResult::err("Not a PE binary — use elf_internals for ELF"),
+        Ok(_) => return ToolResult::err("Not a PE binary — use elf_internals for ELF"),
         Err(e) => return ToolResult::err(format!("Cannot parse PE: {}", e)),
     };
 
@@ -725,40 +821,52 @@ fn pe_internals(path: &str) -> ToolResult {
 
     // ── Header ────────────────────────────────────────────────────────────
     let image_base = pe.image_base as u64;
-    let is_dll  = pe.header.coff_header.characteristics & 0x2000 != 0;
-    let is_64   = pe.is_64;
-    out.push_str(&format!("Type        : {} ({})\n",
+    let is_dll = pe.header.coff_header.characteristics & 0x2000 != 0;
+    let is_64 = pe.is_64;
+    out.push_str(&format!(
+        "Type        : {} ({})\n",
         if is_dll { "DLL" } else { "EXE" },
         if is_64 { "PE32+" } else { "PE32" }
     ));
     out.push_str(&format!("Image base  : 0x{:016x}\n", image_base));
 
     // ── DLL Characteristics (security mitigations) ────────────────────────
-    let dll_chars = pe.header.optional_header
+    let dll_chars = pe
+        .header
+        .optional_header
         .map(|oh| oh.windows_fields.dll_characteristics)
         .unwrap_or(0);
 
-    const DYNBASE     : u16 = 0x0040; // ASLR
-    const FORCE_INTEG : u16 = 0x0080; // Force integrity / signed
-    const NX_COMPAT   : u16 = 0x0100; // DEP
+    const DYNBASE: u16 = 0x0040; // ASLR
+    const FORCE_INTEG: u16 = 0x0080; // Force integrity / signed
+    const NX_COMPAT: u16 = 0x0100; // DEP
     const NO_ISOLATION: u16 = 0x0200;
-    const NO_SEH      : u16 = 0x0400;
-    const NO_BIND     : u16 = 0x0800;
+    const NO_SEH: u16 = 0x0400;
+    const NO_BIND: u16 = 0x0800;
     const APPCONTAINER: u16 = 0x1000;
-    const WDM_DRIVER  : u16 = 0x2000;
-    const GUARD_CF    : u16 = 0x4000; // Control Flow Guard
-    const TERM_SRV    : u16 = 0x8000;
+    const WDM_DRIVER: u16 = 0x2000;
+    const GUARD_CF: u16 = 0x4000; // Control Flow Guard
+    const TERM_SRV: u16 = 0x8000;
     const HIGH_ENTROPY: u16 = 0x0020; // 64-bit ASLR
 
     let flag = |f: u16| if dll_chars & f != 0 { "Yes" } else { "No" };
     out.push_str("\nSecurity mitigations (DllCharacteristics):\n");
     out.push_str(&format!("  ASLR (DYNAMIC_BASE)    : {}\n", flag(DYNBASE)));
-    out.push_str(&format!("  High-entropy ASLR      : {}\n", flag(HIGH_ENTROPY)));
+    out.push_str(&format!(
+        "  High-entropy ASLR      : {}\n",
+        flag(HIGH_ENTROPY)
+    ));
     out.push_str(&format!("  DEP/NX (NX_COMPAT)     : {}\n", flag(NX_COMPAT)));
     out.push_str(&format!("  CFG (GUARD_CF)         : {}\n", flag(GUARD_CF)));
-    out.push_str(&format!("  Force integrity        : {}\n", flag(FORCE_INTEG)));
+    out.push_str(&format!(
+        "  Force integrity        : {}\n",
+        flag(FORCE_INTEG)
+    ));
     out.push_str(&format!("  No SEH                 : {}\n", flag(NO_SEH)));
-    out.push_str(&format!("  AppContainer           : {}\n", flag(APPCONTAINER)));
+    out.push_str(&format!(
+        "  AppContainer           : {}\n",
+        flag(APPCONTAINER)
+    ));
     out.push_str(&format!("  Terminal server aware  : {}\n", flag(TERM_SRV)));
     let _ = (NO_ISOLATION, NO_BIND, WDM_DRIVER); // suppress unused warnings
 
@@ -770,10 +878,18 @@ fn pe_internals(path: &str) -> ToolResult {
         let vsize = sec.virtual_size;
         let chars = sec.characteristics;
         let mut perms = String::new();
-        if chars & 0x20000000 != 0 { perms.push('X'); }
-        if chars & 0x40000000 != 0 { perms.push('R'); }
-        if chars & 0x80000000 != 0 { perms.push('W'); }
-        if perms.is_empty() { perms.push('-'); }
+        if chars & 0x20000000 != 0 {
+            perms.push('X');
+        }
+        if chars & 0x40000000 != 0 {
+            perms.push('R');
+        }
+        if chars & 0x80000000 != 0 {
+            perms.push('W');
+        }
+        if perms.is_empty() {
+            perms.push('-');
+        }
         out.push_str(&format!(
             "  {:<12} vaddr=0x{:016x}  vsize=0x{:08x}  [{}]\n",
             name, vaddr, vsize, perms
@@ -781,20 +897,32 @@ fn pe_internals(path: &str) -> ToolResult {
     }
 
     // ── Exception directory (.pdata) ──────────────────────────────────────
-    let pdata_count = pe.sections.iter()
+    let pdata_count = pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
         .map(|s| s.size_of_raw_data as usize / 8)
         .unwrap_or(0);
     if pdata_count > 0 {
-        out.push_str(&format!("\nException directory (.pdata): {} function entries\n", pdata_count));
+        out.push_str(&format!(
+            "\nException directory (.pdata): {} function entries\n",
+            pdata_count
+        ));
     }
 
     // ── TLS directory ─────────────────────────────────────────────────────
     // Presence of .tls indicates use of Thread Local Storage (can execute code at startup)
-    let has_tls = pe.sections.iter().any(|s| s.name().ok().map_or(false, |n| n == ".tls"));
-    out.push_str(&format!("\nTLS (.tls section) : {}\n",
-        if has_tls { "Present — may contain TLS callbacks (code run before entry point)" }
-        else { "Not present" }
+    let has_tls = pe
+        .sections
+        .iter()
+        .any(|s| s.name().ok().map_or(false, |n| n == ".tls"));
+    out.push_str(&format!(
+        "\nTLS (.tls section) : {}\n",
+        if has_tls {
+            "Present — may contain TLS callbacks (code run before entry point)"
+        } else {
+            "Not present"
+        }
     ));
 
     // ── Imports summary ───────────────────────────────────────────────────
@@ -802,30 +930,49 @@ fn pe_internals(path: &str) -> ToolResult {
         let mut by_dll: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for imp in &pe.imports {
-            by_dll.entry(imp.dll.to_string()).or_default().push(imp.name.to_string());
+            by_dll
+                .entry(imp.dll.to_string())
+                .or_default()
+                .push(imp.name.to_string());
         }
-        out.push_str(&format!("\nImports ({} DLLs, {} symbols):\n",
-            by_dll.len(), pe.imports.len()));
+        out.push_str(&format!(
+            "\nImports ({} DLLs, {} symbols):\n",
+            by_dll.len(),
+            pe.imports.len()
+        ));
         for (dll, syms) in &by_dll {
             let preview: Vec<&str> = syms.iter().map(|s| s.as_str()).take(5).collect();
-            let extra = if syms.len() > 5 { format!(" …+{}", syms.len()-5) } else { String::new() };
-            out.push_str(&format!("  {:<35} {}{}\n",
-                dll, preview.join(", "), extra));
+            let extra = if syms.len() > 5 {
+                format!(" …+{}", syms.len() - 5)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("  {:<35} {}{}\n", dll, preview.join(", "), extra));
         }
 
         // Flag high-interest imports
-        let interesting: Vec<String> = pe.imports.iter()
+        let interesting: Vec<String> = pe
+            .imports
+            .iter()
             .map(|i| i.name.to_string())
             .filter(|n| {
                 let l = n.to_ascii_lowercase();
-                l.contains("createremotethread") || l.contains("virtualalloc")
-                    || l.contains("writeprocessmemory") || l.contains("createprocess")
-                    || l.contains("loadlibrary") || l.contains("getprocaddress")
-                    || l.contains("namedpipe") || l.contains("winsock")
-                    || l.contains("wsastartup") || l.contains("connect")
-                    || l.contains("cryptencrypt") || l.contains("cryptdecrypt")
-                    || l.contains("regopen") || l.contains("regset")
-                    || l.contains("shellexecute") || l.contains("winexec")
+                l.contains("createremotethread")
+                    || l.contains("virtualalloc")
+                    || l.contains("writeprocessmemory")
+                    || l.contains("createprocess")
+                    || l.contains("loadlibrary")
+                    || l.contains("getprocaddress")
+                    || l.contains("namedpipe")
+                    || l.contains("winsock")
+                    || l.contains("wsastartup")
+                    || l.contains("connect")
+                    || l.contains("cryptencrypt")
+                    || l.contains("cryptdecrypt")
+                    || l.contains("regopen")
+                    || l.contains("regset")
+                    || l.contains("shellexecute")
+                    || l.contains("winexec")
             })
             .collect();
         if !interesting.is_empty() {
@@ -841,7 +988,7 @@ fn pe_internals(path: &str) -> ToolResult {
         out.push_str(&format!("\nExports ({}):\n", pe.exports.len()));
         for exp in pe.exports.iter().take(20) {
             let name = exp.name.unwrap_or("<ordinal>");
-            let va   = image_base + exp.rva as u64;
+            let va = image_base + exp.rva as u64;
             out.push_str(&format!("  0x{:016x}  {}\n", va, name));
         }
         if pe.exports.len() > 20 {
@@ -868,7 +1015,7 @@ fn pe_rva_to_file_offset(
     rva: u64,
 ) -> Option<usize> {
     for s in sections {
-        let va  = s.virtual_address as u64;
+        let va = s.virtual_address as u64;
         let vsz = (s.virtual_size.max(s.size_of_raw_data)) as u64;
         if rva >= va && rva < va + vsz {
             return Some(s.pointer_to_raw_data as usize + (rva - va) as usize);
@@ -913,75 +1060,116 @@ fn pe_security_audit(path: &str) -> ToolResult {
         Err(e) => return ToolResult::err(format!("Cannot parse PE: {}", e)),
     };
 
-    let is_64      = pe.is_64;
+    let is_64 = pe.is_64;
     let image_base = pe.image_base as u64;
-    let machine    = pe.header.coff_header.machine; // 0xAA64 = ARM64
-    let is_arm64   = machine == 0xAA64;
+    let machine = pe.header.coff_header.machine; // 0xAA64 = ARM64
+    let is_arm64 = machine == 0xAA64;
 
-    let mut out          = String::new();
-    let mut high_count   = 0u32;
+    let mut out = String::new();
+    let mut high_count = 0u32;
     let mut medium_count = 0u32;
 
-    out.push_str(&format!("PE Security Audit: '{}'\n{}\n\n", path, "═".repeat(72)));
+    out.push_str(&format!(
+        "PE Security Audit: '{}'\n{}\n\n",
+        path,
+        "═".repeat(72)
+    ));
 
     // ── DLL Characteristics ──────────────────────────────────────────────────
-    let dll_chars = pe.header.optional_header
+    let dll_chars = pe
+        .header
+        .optional_header
         .map(|oh| oh.windows_fields.dll_characteristics)
         .unwrap_or(0);
 
-    let has_aslr         = dll_chars & 0x0040 != 0;
+    let has_aslr = dll_chars & 0x0040 != 0;
     let has_high_entropy = dll_chars & 0x0020 != 0;
-    let has_dep          = dll_chars & 0x0100 != 0;
-    let has_cfg_decl     = dll_chars & 0x4000 != 0;
-    let has_force_integ  = dll_chars & 0x0080 != 0;
-    let has_no_seh       = dll_chars & 0x0400 != 0;
+    let has_dep = dll_chars & 0x0100 != 0;
+    let has_cfg_decl = dll_chars & 0x4000 != 0;
+    let has_force_integ = dll_chars & 0x0080 != 0;
+    let has_no_seh = dll_chars & 0x0400 != 0;
 
     out.push_str("── DLL Characteristics ─────────────────────────────────────────────\n");
-    out.push_str(&format!("  ASLR (DYNAMIC_BASE)     : {}\n",
-        if has_aslr { "YES" } else { "NO  ← missing mitigation" }));
-    out.push_str(&format!("  High-entropy ASLR       : {}\n",
-        if has_high_entropy { "YES" } else { "no" }));
-    out.push_str(&format!("  DEP / NX (NX_COMPAT)    : {}\n",
-        if has_dep { "YES" } else { "NO  ← missing mitigation" }));
-    out.push_str(&format!("  CFG (GUARD_CF declared) : {}\n",
-        if has_cfg_decl { "declared" } else { "NO  ← missing mitigation" }));
-    out.push_str(&format!("  Force Integrity         : {}\n",
-        if has_force_integ { "YES" } else { "no  ← FIND-05 [MEDIUM]" }));
-    out.push_str(&format!("  No SEH (NO_SEH)         : {}\n",
-        if has_no_seh { "YES" } else { "no" }));
-    out.push_str(&format!("  DllCharacteristics raw  : 0x{:04x}\n\n", dll_chars));
+    out.push_str(&format!(
+        "  ASLR (DYNAMIC_BASE)     : {}\n",
+        if has_aslr {
+            "YES"
+        } else {
+            "NO  ← missing mitigation"
+        }
+    ));
+    out.push_str(&format!(
+        "  High-entropy ASLR       : {}\n",
+        if has_high_entropy { "YES" } else { "no" }
+    ));
+    out.push_str(&format!(
+        "  DEP / NX (NX_COMPAT)    : {}\n",
+        if has_dep {
+            "YES"
+        } else {
+            "NO  ← missing mitigation"
+        }
+    ));
+    out.push_str(&format!(
+        "  CFG (GUARD_CF declared) : {}\n",
+        if has_cfg_decl {
+            "declared"
+        } else {
+            "NO  ← missing mitigation"
+        }
+    ));
+    out.push_str(&format!(
+        "  Force Integrity         : {}\n",
+        if has_force_integ {
+            "YES"
+        } else {
+            "no  ← FIND-05 [MEDIUM]"
+        }
+    ));
+    out.push_str(&format!(
+        "  No SEH (NO_SEH)         : {}\n",
+        if has_no_seh { "YES" } else { "no" }
+    ));
+    out.push_str(&format!(
+        "  DllCharacteristics raw  : 0x{:04x}\n\n",
+        dll_chars
+    ));
 
-    if !has_force_integ { medium_count += 1; }
+    if !has_force_integ {
+        medium_count += 1;
+    }
 
     // ── Section characteristics ──────────────────────────────────────────────
     // IMAGE_SCN_MEM_WRITE = 0x80000000
     // Sections whose name implies they should be read-only
-    const SCN_MEM_WRITE : u32 = 0x8000_0000;
-    const SCN_MEM_EXEC  : u32 = 0x2000_0000;
-    const SCN_MEM_READ  : u32 = 0x4000_0000;
-    const SCN_CNT_IDATA : u32 = 0x0000_0040; // Initialized data
+    const SCN_MEM_WRITE: u32 = 0x8000_0000;
+    const SCN_MEM_EXEC: u32 = 0x2000_0000;
+    const SCN_MEM_READ: u32 = 0x4000_0000;
+    const SCN_CNT_IDATA: u32 = 0x0000_0040; // Initialized data
 
     out.push_str("── Section Characteristics ─────────────────────────────────────────\n");
     let mut writable_ro_secs: Vec<String> = Vec::new();
 
     for sec in &pe.sections {
-        let name  = sec.name().unwrap_or("?");
+        let name = sec.name().unwrap_or("?");
         let chars = sec.characteristics;
-        let va    = image_base + sec.virtual_address as u64;
-        let vsz   = sec.virtual_size as u64;
+        let va = image_base + sec.virtual_address as u64;
+        let vsz = sec.virtual_size as u64;
 
-        let r = if chars & SCN_MEM_READ  != 0 { "R" } else { "-" };
+        let r = if chars & SCN_MEM_READ != 0 { "R" } else { "-" };
         let w = if chars & SCN_MEM_WRITE != 0 { "W" } else { "-" };
-        let x = if chars & SCN_MEM_EXEC  != 0 { "X" } else { "-" };
+        let x = if chars & SCN_MEM_EXEC != 0 { "X" } else { "-" };
         let perm = format!("{}{}{}", r, w, x);
 
         // Sections that are data-only AND writable AND look like read-only data
-        let is_data       = chars & SCN_CNT_IDATA != 0;
-        let is_writable   = chars & SCN_MEM_WRITE != 0;
-        let is_executable = chars & SCN_MEM_EXEC  != 0;
-        let ro_name       = name.contains("rodata") || name.contains("rdata")
-                         || name.contains("fptable") || name.contains("const")
-                         || name == ".rdata";
+        let is_data = chars & SCN_CNT_IDATA != 0;
+        let is_writable = chars & SCN_MEM_WRITE != 0;
+        let is_executable = chars & SCN_MEM_EXEC != 0;
+        let ro_name = name.contains("rodata")
+            || name.contains("rdata")
+            || name.contains("fptable")
+            || name.contains("const")
+            || name == ".rdata";
 
         let annotation = if is_data && is_writable && !is_executable && ro_name {
             writable_ro_secs.push(name.to_string());
@@ -1042,16 +1230,18 @@ fn pe_security_audit(path: &str) -> ToolResult {
             .map(|dd| (dd.virtual_address, dd.size))
     });
 
-    let mut cookie_va: u64   = 0;
+    let mut cookie_va: u64 = 0;
     let mut guard_check: u64 = 0;
-    let mut lc_parsed        = false;
+    let mut lc_parsed = false;
 
     match lc_info {
         None => {
             out.push_str("  Load Config: no optional header present\n\n");
         }
         Some((0, _)) => {
-            out.push_str("  Load Config: directory not present (no SecurityCookie, no CFG table)\n\n");
+            out.push_str(
+                "  Load Config: directory not present (no SecurityCookie, no CFG table)\n\n",
+            );
             high_count += 1;
         }
         Some((lc_rva, lc_size)) => {
@@ -1063,8 +1253,9 @@ fn pe_security_audit(path: &str) -> ToolResult {
                     ));
                 }
                 Some(lc_off) => {
-                    let avail = (lc_size as usize).min(0x200).min(
-                        data.len().saturating_sub(lc_off));
+                    let avail = (lc_size as usize)
+                        .min(0x200)
+                        .min(data.len().saturating_sub(lc_off));
                     if avail == 0 {
                         out.push_str("  Load Config extends beyond file end\n\n");
                     } else {
@@ -1072,13 +1263,21 @@ fn pe_security_audit(path: &str) -> ToolResult {
                         lc_parsed = true;
 
                         let (guard_table, guard_count, guard_flags) = if is_64 {
-                            cookie_va   = read_u64_le(lc, 0x58);
+                            cookie_va = read_u64_le(lc, 0x58);
                             guard_check = read_u64_le(lc, 0x70);
-                            (read_u64_le(lc, 0x80), read_u64_le(lc, 0x88), read_u32_le(lc, 0x90))
+                            (
+                                read_u64_le(lc, 0x80),
+                                read_u64_le(lc, 0x88),
+                                read_u32_le(lc, 0x90),
+                            )
                         } else {
-                            cookie_va   = read_u32_le(lc, 0x3C) as u64;
+                            cookie_va = read_u32_le(lc, 0x3C) as u64;
                             guard_check = read_u32_le(lc, 0x48) as u64;
-                            (read_u32_le(lc, 0x50) as u64, read_u32_le(lc, 0x54) as u64, read_u32_le(lc, 0x58))
+                            (
+                                read_u32_le(lc, 0x50) as u64,
+                                read_u32_le(lc, 0x54) as u64,
+                                read_u32_le(lc, 0x58),
+                            )
                         };
 
                         // IMAGE_GUARD_CF_INSTRUMENTED = 0x0100
@@ -1093,15 +1292,25 @@ fn pe_security_audit(path: &str) -> ToolResult {
                             }
                         ));
                         out.push_str(&format!(
-                            "  GuardCFCheckFunctionPointer : 0x{:016x}\n", guard_check));
+                            "  GuardCFCheckFunctionPointer : 0x{:016x}\n",
+                            guard_check
+                        ));
                         out.push_str(&format!(
-                            "  GuardCFFunctionTable        : 0x{:016x}\n", guard_table));
+                            "  GuardCFFunctionTable        : 0x{:016x}\n",
+                            guard_table
+                        ));
                         out.push_str(&format!(
-                            "  GuardCFFunctionCount        : {}\n", guard_count));
+                            "  GuardCFFunctionCount        : {}\n",
+                            guard_count
+                        ));
                         out.push_str(&format!(
                             "  GuardFlags                  : 0x{:08x}  (CF_INSTRUMENTED: {})\n\n",
                             guard_flags,
-                            if cf_instrumented { "SET" } else { "NOT SET ← CFG declared but not built" }
+                            if cf_instrumented {
+                                "SET"
+                            } else {
+                                "NOT SET ← CFG declared but not built"
+                            }
                         ));
 
                         if cookie_va == 0 {
@@ -1120,12 +1329,14 @@ fn pe_security_audit(path: &str) -> ToolResult {
                                 };
                                 if target_va != 0 {
                                     let target_rva = target_va.wrapping_sub(image_base);
-                                    if let Some(target_off) = pe_rva_to_file_offset(&pe.sections, target_rva) {
+                                    if let Some(target_off) =
+                                        pe_rva_to_file_offset(&pe.sections, target_rva)
+                                    {
                                         if target_off + 4 <= data.len() {
                                             let insn = read_u32_le(&data, target_off);
                                             // ARM64 RET = 0xD65F03C0; x86-64 RET = 0xC3 (first byte)
-                                            let is_ret = insn == 0xD65F03C0
-                                                || (data[target_off] == 0xC3);
+                                            let is_ret =
+                                                insn == 0xD65F03C0 || (data[target_off] == 0xC3);
                                             if is_ret {
                                                 out.push_str(&format!(
                                                     "[!] FIND-03 [HIGH]: __guard_check_icall_fptr (0x{:016x})\n\
@@ -1159,17 +1370,20 @@ fn pe_security_audit(path: &str) -> ToolResult {
     // ADRP:     (insn & 0x9F000000) == 0x90000000
 
     if is_arm64 && lc_parsed {
-        let text_sec = pe.sections.iter().find(|s| {
-            s.name().ok().map_or(false, |n| n == ".text")
-        });
+        let text_sec = pe
+            .sections
+            .iter()
+            .find(|s| s.name().ok().map_or(false, |n| n == ".text"));
 
         if let Some(ts) = text_sec {
-            let ts_off  = ts.pointer_to_raw_data as usize;
+            let ts_off = ts.pointer_to_raw_data as usize;
             let ts_size = ts.size_of_raw_data as usize;
-            let ts_va   = image_base + ts.virtual_address as u64;
+            let ts_va = image_base + ts.virtual_address as u64;
 
             // Count .pdata entries as the function denominator
-            let pdata_fn_count = pe.sections.iter()
+            let pdata_fn_count = pe
+                .sections
+                .iter()
                 .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
                 .map(|s| s.size_of_raw_data as usize / 8)
                 .unwrap_or(0);
@@ -1180,8 +1394,8 @@ fn pe_security_audit(path: &str) -> ToolResult {
                 // Derive the SecurityCookie page so we can identify ADRP-to-cookie
                 let cookie_page = cookie_va & !0xFFFu64;
 
-                let mut total_blr    = 0u32;
-                let mut guarded_blr  = 0u32;
+                let mut total_blr = 0u32;
+                let mut guarded_blr = 0u32;
                 let mut fn_with_cookie = 0u32;
 
                 let mut i = 0usize;
@@ -1201,33 +1415,33 @@ fn pe_security_audit(path: &str) -> ToolResult {
                             let prev = read_u32_le(text, j);
                             if (prev & 0x9F00_0000) == 0x9000_0000 {
                                 // This is an ADRP — decode its target page
-                                let pc        = ts_va + j as u64;
-                                let immlo     = ((prev >> 29) & 0x3) as u64;
-                                let immhi     = ((prev >>  5) & 0x0007_FFFF) as u64;
-                                let imm21     = (immhi << 2) | immlo;
+                                let pc = ts_va + j as u64;
+                                let immlo = ((prev >> 29) & 0x3) as u64;
+                                let immhi = ((prev >> 5) & 0x0007_FFFF) as u64;
+                                let imm21 = (immhi << 2) | immlo;
                                 // Sign-extend 21-bit immediate
                                 let imm21_s = if imm21 & (1 << 20) != 0 {
                                     (imm21 | (!0u64 << 21)) as i64
                                 } else {
                                     imm21 as i64
                                 };
-                                let target_page = ((pc & !0xFFF) as i64)
-                                    .wrapping_add(imm21_s << 12) as u64;
+                                let target_page =
+                                    ((pc & !0xFFF) as i64).wrapping_add(imm21_s << 12) as u64;
 
                                 // Guard-check pointer lives on its own page;
                                 // if this ADRP targets that page it is the CFG
                                 // guard prefix.  Fall back to "any ADRP" as a
                                 // conservative heuristic when cookie_page == 0.
-                                if cookie_page == 0
-                                    || target_page == (guard_check & !0xFFF)
-                                {
+                                if cookie_page == 0 || target_page == (guard_check & !0xFFF) {
                                     found_guard = true;
                                     break;
                                 }
                             }
                             j += 4;
                         }
-                        if found_guard { guarded_blr += 1; }
+                        if found_guard {
+                            guarded_blr += 1;
+                        }
                     }
 
                     // ── Function prologue + cookie ADRP scan ─────────────────
@@ -1236,8 +1450,7 @@ fn pe_security_audit(path: &str) -> ToolResult {
                     if cookie_page != 0 {
                         // STP X29,X30,[SP,#imm]: (insn & 0xFFC003FF) == 0xA9003BFD
                         // PACIBSP: 0xD503237F
-                        let is_entry = (insn & 0xFFC0_03FF) == 0xA900_3BFD
-                            || insn == 0xD503_237F;
+                        let is_entry = (insn & 0xFFC0_03FF) == 0xA900_3BFD || insn == 0xD503_237F;
                         if is_entry {
                             let limit = (i + 64).min(text.len().saturating_sub(4));
                             let mut has_cookie_ref = false;
@@ -1245,17 +1458,17 @@ fn pe_security_audit(path: &str) -> ToolResult {
                             while k < limit {
                                 let prev = read_u32_le(text, k);
                                 if (prev & 0x9F00_0000) == 0x9000_0000 {
-                                    let pc    = ts_va + k as u64;
+                                    let pc = ts_va + k as u64;
                                     let immlo = ((prev >> 29) & 0x3) as u64;
-                                    let immhi = ((prev >>  5) & 0x0007_FFFF) as u64;
+                                    let immhi = ((prev >> 5) & 0x0007_FFFF) as u64;
                                     let imm21 = (immhi << 2) | immlo;
                                     let imm21_s = if imm21 & (1 << 20) != 0 {
                                         (imm21 | (!0u64 << 21)) as i64
                                     } else {
                                         imm21 as i64
                                     };
-                                    let tp = ((pc & !0xFFF) as i64)
-                                        .wrapping_add(imm21_s << 12) as u64;
+                                    let tp =
+                                        ((pc & !0xFFF) as i64).wrapping_add(imm21_s << 12) as u64;
                                     if tp == cookie_page {
                                         has_cookie_ref = true;
                                         break;
@@ -1263,38 +1476,54 @@ fn pe_security_audit(path: &str) -> ToolResult {
                                 }
                                 k += 4;
                             }
-                            if has_cookie_ref { fn_with_cookie += 1; }
+                            if has_cookie_ref {
+                                fn_with_cookie += 1;
+                            }
                         }
                     }
 
                     i += 4;
                 }
 
-                let bare_blr  = total_blr.saturating_sub(guarded_blr);
-                let bare_pct  = if total_blr > 0 {
+                let bare_blr = total_blr.saturating_sub(guarded_blr);
+                let bare_pct = if total_blr > 0 {
                     bare_blr as f64 * 100.0 / total_blr as f64
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 let cookie_pct = if pdata_fn_count > 0 {
                     fn_with_cookie as f64 * 100.0 / pdata_fn_count as f64
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 let uncookied = pdata_fn_count.saturating_sub(fn_with_cookie as usize);
 
-                out.push_str("── ARM64 CFG / Stack Canary Coverage ───────────────────────────────\n");
+                out.push_str(
+                    "── ARM64 CFG / Stack Canary Coverage ───────────────────────────────\n",
+                );
                 out.push_str(&format!(
                     "  .text size                  : 0x{:x} bytes ({} instructions)\n",
-                    ts_size, ts_size / 4
+                    ts_size,
+                    ts_size / 4
                 ));
                 out.push_str(&format!(
-                    "  Functions (.pdata entries)  : {}\n", pdata_fn_count));
-                out.push_str(&format!(
-                    "  Total BLR instructions      : {}\n", total_blr));
+                    "  Functions (.pdata entries)  : {}\n",
+                    pdata_fn_count
+                ));
+                out.push_str(&format!("  Total BLR instructions      : {}\n", total_blr));
                 out.push_str(&format!(
                     "  Guarded BLR (ADRP prefix)   : {} ({:.1}%)\n",
-                    guarded_blr, if total_blr > 0 { guarded_blr as f64 * 100.0 / total_blr as f64 } else { 0.0 }
+                    guarded_blr,
+                    if total_blr > 0 {
+                        guarded_blr as f64 * 100.0 / total_blr as f64
+                    } else {
+                        0.0
+                    }
                 ));
                 out.push_str(&format!(
                     "  Bare BLR (no guard prefix)  : {} ({:.1}%){}  [FIND-03]\n",
-                    bare_blr, bare_pct,
+                    bare_blr,
+                    bare_pct,
                     if bare_pct > 20.0 { "  ← [HIGH]" } else { "" }
                 ));
                 out.push_str(&format!(
@@ -1304,12 +1533,24 @@ fn pe_security_audit(path: &str) -> ToolResult {
                 out.push_str(&format!(
                     "  Fns WITHOUT canary          : {} ({:.1}%){}  [FIND-04]\n\n",
                     uncookied,
-                    if pdata_fn_count > 0 { uncookied as f64 * 100.0 / pdata_fn_count as f64 } else { 0.0 },
-                    if cookie_pct < 70.0 { "  ← [HIGH]" } else { "" }
+                    if pdata_fn_count > 0 {
+                        uncookied as f64 * 100.0 / pdata_fn_count as f64
+                    } else {
+                        0.0
+                    },
+                    if cookie_pct < 70.0 {
+                        "  ← [HIGH]"
+                    } else {
+                        ""
+                    }
                 ));
 
-                if bare_pct > 20.0 { high_count += 1; }
-                if cookie_pct < 70.0 && cookie_va != 0 { high_count += 1; }
+                if bare_pct > 20.0 {
+                    high_count += 1;
+                }
+                if cookie_pct < 70.0 && cookie_va != 0 {
+                    high_count += 1;
+                }
 
                 if bare_pct > 20.0 {
                     out.push_str(&format!(
@@ -1337,9 +1578,20 @@ fn pe_security_audit(path: &str) -> ToolResult {
     out.push_str("── Summary ─────────────────────────────────────────────────────────\n");
     out.push_str(&format!("  High-severity findings  : {}\n", high_count));
     out.push_str(&format!("  Medium-severity findings: {}\n", medium_count));
-    out.push_str(&format!("  Architecture            : {}\n",
-        if is_arm64 { "ARM64" } else if is_64 { "x86-64" } else { "x86" }));
-    out.push_str(&format!("  Image base (preferred)  : 0x{:016x}\n", image_base));
+    out.push_str(&format!(
+        "  Architecture            : {}\n",
+        if is_arm64 {
+            "ARM64"
+        } else if is_64 {
+            "x86-64"
+        } else {
+            "x86"
+        }
+    ));
+    out.push_str(&format!(
+        "  Image base (preferred)  : 0x{:016x}\n",
+        image_base
+    ));
 
     ToolResult::ok(out)
 }
@@ -1353,7 +1605,11 @@ fn hexdump(path: &str, offset: usize, length: usize) -> ToolResult {
     };
 
     if offset >= data.len() {
-        return ToolResult::err(format!("Offset 0x{:x} is beyond file size {} bytes", offset, data.len()));
+        return ToolResult::err(format!(
+            "Offset 0x{:x} is beyond file size {} bytes",
+            offset,
+            data.len()
+        ));
     }
 
     let end = (offset + length).min(data.len());
@@ -1361,15 +1617,33 @@ fn hexdump(path: &str, offset: usize, length: usize) -> ToolResult {
     let mut out = String::new();
 
     for (row, chunk) in bytes.chunks(16).enumerate() {
-        let addr  = offset + row * 16;
+        let addr = offset + row * 16;
         let first8 = &chunk[..chunk.len().min(8)];
-        let rest   = if chunk.len() > 8 { &chunk[8..] } else { &[] };
-        let hex_a: String = first8.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-        let hex_b: String = rest.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-        let ascii: String = chunk.iter()
-            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+        let rest = if chunk.len() > 8 { &chunk[8..] } else { &[] };
+        let hex_a: String = first8
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hex_b: String = rest
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii: String = chunk
+            .iter()
+            .map(|&b| {
+                if (0x20..0x7f).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
-        out.push_str(&format!("{:08x}  {:<23}  {:<23}  |{}|\n", addr, hex_a, hex_b, ascii));
+        out.push_str(&format!(
+            "{:08x}  {:<23}  {:<23}  |{}|\n",
+            addr, hex_a, hex_b, ascii
+        ));
     }
 
     if end < data.len() {
@@ -1381,7 +1655,12 @@ fn hexdump(path: &str, offset: usize, length: usize) -> ToolResult {
 
 // ─── Tool: strings_extract ───────────────────────────────────────────────────
 
-fn strings_extract(path: &str, min_len: usize, max_results: usize, section: Option<&str>) -> ToolResult {
+fn strings_extract(
+    path: &str,
+    min_len: usize,
+    max_results: usize,
+    section: Option<&str>,
+) -> ToolResult {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -1414,7 +1693,9 @@ fn strings_extract(path: &str, min_len: usize, max_results: usize, section: Opti
 
     for (i, &b) in scan_bytes.iter().enumerate() {
         if b.is_ascii_graphic() || b == b' ' {
-            if run.is_empty() { run_start = i; }
+            if run.is_empty() {
+                run_start = i;
+            }
             run.push(b);
         } else {
             if run.len() >= min_len {
@@ -1433,7 +1714,10 @@ fn strings_extract(path: &str, min_len: usize, max_results: usize, section: Opti
 
     let total = results.len();
     let sec_label = section.map(|s| format!(" in '{}'", s)).unwrap_or_default();
-    let mut out = format!("Found {} strings (min_len={}{})\n\n", total, min_len, sec_label);
+    let mut out = format!(
+        "Found {} strings (min_len={}{})\n\n",
+        total, min_len, sec_label
+    );
     for (offset, s) in results.iter().take(max_results) {
         out.push_str(&format!("  0x{:08x}  {}\n", offset, s));
     }
@@ -1459,30 +1743,39 @@ fn disassemble_capstone_with_project(
 
     // Build the Capstone engine for the target architecture
     let cs = match arch {
-        Architecture::Aarch64 | Architecture::Aarch64_Ilp32 => {
-            Capstone::new().arm64().mode(arch::arm64::ArchMode::Arm).build()
-        }
-        Architecture::Arm => {
-            Capstone::new().arm().mode(arch::arm::ArchMode::Arm).build()
-        }
-        Architecture::Mips => {
-            Capstone::new().mips().mode(arch::mips::ArchMode::Mips32).endian(Endian::Little).build()
-        }
-        Architecture::Mips64 => {
-            Capstone::new().mips().mode(arch::mips::ArchMode::Mips64).endian(Endian::Little).build()
-        }
-        Architecture::PowerPc => {
-            Capstone::new().ppc().mode(arch::ppc::ArchMode::Mode32).endian(Endian::Big).build()
-        }
-        Architecture::PowerPc64 => {
-            Capstone::new().ppc().mode(arch::ppc::ArchMode::Mode64).endian(Endian::Big).build()
-        }
-        Architecture::Riscv32 => {
-            Capstone::new().riscv().mode(arch::riscv::ArchMode::RiscV32).build()
-        }
-        Architecture::Riscv64 => {
-            Capstone::new().riscv().mode(arch::riscv::ArchMode::RiscV64).build()
-        }
+        Architecture::Aarch64 | Architecture::Aarch64_Ilp32 => Capstone::new()
+            .arm64()
+            .mode(arch::arm64::ArchMode::Arm)
+            .build(),
+        Architecture::Arm => Capstone::new().arm().mode(arch::arm::ArchMode::Arm).build(),
+        Architecture::Mips => Capstone::new()
+            .mips()
+            .mode(arch::mips::ArchMode::Mips32)
+            .endian(Endian::Little)
+            .build(),
+        Architecture::Mips64 => Capstone::new()
+            .mips()
+            .mode(arch::mips::ArchMode::Mips64)
+            .endian(Endian::Little)
+            .build(),
+        Architecture::PowerPc => Capstone::new()
+            .ppc()
+            .mode(arch::ppc::ArchMode::Mode32)
+            .endian(Endian::Big)
+            .build(),
+        Architecture::PowerPc64 => Capstone::new()
+            .ppc()
+            .mode(arch::ppc::ArchMode::Mode64)
+            .endian(Endian::Big)
+            .build(),
+        Architecture::Riscv32 => Capstone::new()
+            .riscv()
+            .mode(arch::riscv::ArchMode::RiscV32)
+            .build(),
+        Architecture::Riscv64 => Capstone::new()
+            .riscv()
+            .mode(arch::riscv::ArchMode::RiscV64)
+            .build(),
         other => {
             return ToolResult::err(format!(
                 "No disassembler available for {:?}. Supported: x86, x86-64, ARM64, ARM, MIPS, PowerPC, RISC-V.",
@@ -1500,22 +1793,27 @@ fn disassemble_capstone_with_project(
         (Some(off), _) => off,
         (None, Some(va)) => match vaddr_to_file_offset(data, va) {
             Some(off) => off,
-            None => return ToolResult::err(format!(
-                "Virtual address 0x{:x} not found in any segment", va
-            )),
+            None => {
+                return ToolResult::err(format!(
+                    "Virtual address 0x{:x} not found in any segment",
+                    va
+                ))
+            }
         },
         (None, None) => 0,
     };
 
     if file_offset >= data.len() {
         return ToolResult::err(format!(
-            "Offset 0x{:x} is beyond file size {} bytes", file_offset, data.len()
+            "Offset 0x{:x} is beyond file size {} bytes",
+            file_offset,
+            data.len()
         ));
     }
 
-    let end   = (file_offset + length).min(data.len());
+    let end = (file_offset + length).min(data.len());
     let slice = &data[file_offset..end];
-    let ip    = vaddr_hint.unwrap_or(file_offset as u64);
+    let ip = vaddr_hint.unwrap_or(file_offset as u64);
 
     let insns = match cs.disasm_all(slice, ip) {
         Ok(i) => i,
@@ -1523,7 +1821,9 @@ fn disassemble_capstone_with_project(
     };
 
     let arch_class = crate::arch::ArchClass::from_object(
-        object::File::parse(data).map(|f| f.architecture()).unwrap_or(arch)
+        object::File::parse(data)
+            .map(|f| f.architecture())
+            .unwrap_or(arch),
     );
 
     let mut out = format!(
@@ -1532,21 +1832,22 @@ fn disassemble_capstone_with_project(
     );
 
     for insn in insns.as_ref() {
-        let bytes: String = insn.bytes().iter()
+        let bytes: String = insn
+            .bytes()
+            .iter()
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
 
         let mnemonic = insn.mnemonic().unwrap_or("");
-        let op_str   = insn.op_str().unwrap_or("");
+        let op_str = insn.op_str().unwrap_or("");
 
         // Resolve branch target name from project
         let target_name: Option<String> = project.and_then(|p| {
             if crate::arch::is_direct_call(arch_class, mnemonic, op_str)
                 || crate::arch::is_direct_branch(arch_class, mnemonic, op_str)
             {
-                crate::arch::parse_branch_target(op_str)
-                    .and_then(|tgt| p.get_name(tgt))
+                crate::arch::parse_branch_target(op_str).and_then(|tgt| p.get_name(tgt))
             } else {
                 None
             }
@@ -1557,9 +1858,9 @@ fn disassemble_capstone_with_project(
 
         let annotation = match (&target_name, &addr_comment) {
             (Some(name), Some(cmt)) => format!("  ; {} | {}", name, cmt),
-            (Some(name), None)       => format!("  ; {}", name),
-            (None, Some(cmt))        => format!("  ; {}", cmt),
-            (None, None)             => String::new(),
+            (Some(name), None) => format!("  ; {}", name),
+            (None, Some(cmt)) => format!("  ; {}", cmt),
+            (None, None) => String::new(),
         };
 
         out.push_str(&format!(
@@ -1581,7 +1882,12 @@ fn disassemble_capstone_with_project(
 
 // ─── Tool: disassemble ───────────────────────────────────────────────────────
 
-fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Option<u64>) -> ToolResult {
+fn disassemble(
+    path: &str,
+    offset: Option<usize>,
+    length: usize,
+    vaddr_hint: Option<u64>,
+) -> ToolResult {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -1592,7 +1898,10 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
     // Route non-x86 architectures through Capstone
     let is_x86 = matches!(
         obj_arch,
-        Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) | Some(Architecture::I386) | None
+        Some(Architecture::X86_64)
+            | Some(Architecture::X86_64_X32)
+            | Some(Architecture::I386)
+            | None
     );
 
     // Auto-size: when targeting a specific vaddr with no explicit raw offset,
@@ -1620,7 +1929,14 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
 
     if !is_x86 {
         let proj = Project::load_for(path);
-        return disassemble_capstone_with_project(&data, obj_arch.unwrap(), offset, auto_length, vaddr_hint, Some(&proj));
+        return disassemble_capstone_with_project(
+            &data,
+            obj_arch.unwrap(),
+            offset,
+            auto_length,
+            vaddr_hint,
+            Some(&proj),
+        );
     }
 
     let bitness: u32 = match obj_arch {
@@ -1637,49 +1953,63 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
         (Some(off), _) => off,
         (None, Some(va)) => match vaddr_to_file_offset(&data, va) {
             Some(off) => off,
-            None => return ToolResult::err(format!(
-                "Virtual address 0x{:x} not found in any LOAD segment — \
-                 use file_info to inspect the segment table", va
-            )),
+            None => {
+                return ToolResult::err(format!(
+                    "Virtual address 0x{:x} not found in any LOAD segment — \
+                 use file_info to inspect the segment table",
+                    va
+                ))
+            }
         },
         (None, None) => 0,
     };
 
     if file_offset >= data.len() {
         return ToolResult::err(format!(
-            "Offset 0x{:x} is beyond file size {} bytes", file_offset, data.len()
+            "Offset 0x{:x} is beyond file size {} bytes",
+            file_offset,
+            data.len()
         ));
     }
 
-    let end   = (file_offset + auto_length).min(data.len());
+    let end = (file_offset + auto_length).min(data.len());
     let slice = &data[file_offset..end];
     let ip: u64 = vaddr_hint.unwrap_or(file_offset as u64);
 
     // Load project annotations (renames, comments) — optional, never fail
-    let project = if !path.is_empty() { Some(Project::load_for(path)) } else { None };
+    let project = if !path.is_empty() {
+        Some(Project::load_for(path))
+    } else {
+        None
+    };
 
     // Build a symbol-address → name map from the binary's own symbol table
     // (covers DWARF debug symbols and exported/imported names).
     // Used as fallback when the project has no user rename for a call target.
-    let sym_map: HashMap<u64, String> = object::File::parse(&*data).ok().map(|obj| {
-        obj.symbols()
-            .filter_map(|s| {
-                let name = s.name().ok()?.trim();
-                if name.is_empty() || name.starts_with("$") { return None; }
-                // Demangle Rust / C++ names if they look mangled
-                let display = if name.starts_with("_Z") || name.starts_with("__Z") {
-                    name.to_string()
-                } else {
-                    name.to_string()
-                };
-                Some((s.address(), display))
-            })
-            .collect()
-    }).unwrap_or_default();
+    let sym_map: HashMap<u64, String> = object::File::parse(&*data)
+        .ok()
+        .map(|obj| {
+            obj.symbols()
+                .filter_map(|s| {
+                    let name = s.name().ok()?.trim();
+                    if name.is_empty() || name.starts_with("$") {
+                        return None;
+                    }
+                    // Demangle Rust / C++ names if they look mangled
+                    let display = if name.starts_with("_Z") || name.starts_with("__Z") {
+                        name.to_string()
+                    } else {
+                        name.to_string()
+                    };
+                    Some((s.address(), display))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic, OpKind};
 
-    let mut decoder   = Decoder::with_ip(bitness, slice, ip, DecoderOptions::NONE);
+    let mut decoder = Decoder::with_ip(bitness, slice, ip, DecoderOptions::NONE);
     let mut formatter = IntelFormatter::new();
     formatter.options_mut().set_first_operand_char_index(10);
 
@@ -1695,9 +2025,12 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
             out.push_str(&format!("  {:016x}  ?? (invalid)\n", instr.ip()));
         } else {
             let byte_start = (instr.ip() - ip) as usize;
-            let byte_end   = (byte_start + instr.len()).min(slice.len());
+            let byte_end = (byte_start + instr.len()).min(slice.len());
             let bytes: String = slice[byte_start..byte_end]
-                .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
             let mut mnemonic = String::new();
             formatter.format(&instr, &mut mnemonic);
 
@@ -1717,14 +2050,24 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
                     }
                 }
                 // Resolve branch / call targets to renamed names (project first, sym_map fallback)
-                let op0_kind = if instr.op_count() > 0 { instr.op_kind(0) } else { OpKind::Register };
-                if matches!(op0_kind,
-                    OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 |
-                    OpKind::FarBranch16  | OpKind::FarBranch32
+                let op0_kind = if instr.op_count() > 0 {
+                    instr.op_kind(0)
+                } else {
+                    OpKind::Register
+                };
+                if matches!(
+                    op0_kind,
+                    OpKind::NearBranch16
+                        | OpKind::NearBranch32
+                        | OpKind::NearBranch64
+                        | OpKind::FarBranch16
+                        | OpKind::FarBranch32
                 ) {
                     let target = instr.near_branch_target();
                     if target != 0 {
-                        let resolved = p.renames.get(&target)
+                        let resolved = p
+                            .renames
+                            .get(&target)
                             .map(|s| s.as_str())
                             .or_else(|| sym_map.get(&target).map(|s| s.as_str()));
                         if let Some(name) = resolved {
@@ -1734,8 +2077,13 @@ fn disassemble(path: &str, offset: Option<usize>, length: usize, vaddr_hint: Opt
                 }
             }
 
-            out.push_str(&format!("  {:016x}  {:<24}  {}{}\n",
-                instr.ip(), bytes, mnemonic, annotation));
+            out.push_str(&format!(
+                "  {:016x}  {:<24}  {}{}\n",
+                instr.ip(),
+                bytes,
+                mnemonic,
+                annotation
+            ));
         }
         count += 1;
         if is_ret {
@@ -1764,10 +2112,12 @@ fn read_section(path: &str, section_name: &str) -> ToolResult {
     };
 
     for section in obj.sections() {
-        if section.name().ok() != Some(section_name) { continue; }
+        if section.name().ok() != Some(section_name) {
+            continue;
+        }
 
         let sec_data = match section.data() {
-            Ok(d)  => d,
+            Ok(d) => d,
             Err(e) => return ToolResult::err(format!("Cannot read section data: {}", e)),
         };
 
@@ -1778,9 +2128,20 @@ fn read_section(path: &str, section_name: &str) -> ToolResult {
         );
         for (row, chunk) in sec_data[..preview].chunks(16).enumerate() {
             let addr = section.address() as usize + row * 16;
-            let hex: String  = chunk.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-            let ascii: String = chunk.iter()
-                .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+            let hex: String = chunk
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let ascii: String = chunk
+                .iter()
+                .map(|&b| {
+                    if (0x20..0x7f).contains(&b) {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
                 .collect();
             out.push_str(&format!("{:08x}  {:<47}  |{}|\n", addr, hex, ascii));
         }
@@ -1795,7 +2156,11 @@ fn read_section(path: &str, section_name: &str) -> ToolResult {
         .filter_map(|s| s.name().ok().map(|n| n.to_string()))
         .filter(|n| !n.is_empty())
         .collect();
-    ToolResult::err(format!("Section '{}' not found. Available: {}", section_name, available.join(", ")))
+    ToolResult::err(format!(
+        "Section '{}' not found. Available: {}",
+        section_name,
+        available.join(", ")
+    ))
 }
 
 // ─── Tool: resolve_plt ───────────────────────────────────────────────────────
@@ -1809,7 +2174,7 @@ fn resolve_plt(path: &str) -> ToolResult {
     // Use goblin for ELF-specific relocation / dynsym access.
     let elf = match goblin::Object::parse(&data) {
         Ok(goblin::Object::Elf(e)) => e,
-        Ok(_)  => return ToolResult::err("Not an ELF binary — resolve_plt only supports ELF"),
+        Ok(_) => return ToolResult::err("Not an ELF binary — resolve_plt only supports ELF"),
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
 
@@ -1822,7 +2187,7 @@ fn resolve_plt(path: &str) -> ToolResult {
 
     let plt_addr = match plt_addr {
         Some(a) => a,
-        None    => return ToolResult::ok("No .plt section found — binary may be statically linked"),
+        None => return ToolResult::ok("No .plt section found — binary may be statically linked"),
     };
 
     // Walk .rela.plt relocations.  Each entry N (0-indexed) corresponds to
@@ -1836,8 +2201,10 @@ fn resolve_plt(path: &str) -> ToolResult {
 
     let mut out = format!(
         "PLT stubs ({} entries, .plt @ 0x{:016x}):\n\n  {:<20}  {}\n  {}\n",
-        relocs.len(), plt_addr,
-        "Stub address", "Symbol",
+        relocs.len(),
+        plt_addr,
+        "Stub address",
+        "Symbol",
         "─".repeat(50)
     );
 
@@ -1874,11 +2241,7 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     let sym_funcs: Vec<(u64, String)> = {
         let mut v: Vec<_> = obj
             .symbols()
-            .filter(|s| {
-                s.kind() == object::SymbolKind::Text
-                    && s.address() != 0
-                    && s.size() > 0
-            })
+            .filter(|s| s.kind() == object::SymbolKind::Text && s.address() != 0 && s.size() > 0)
             .map(|s| (s.address(), s.name().unwrap_or("<?>").to_string()))
             .collect();
         v.sort_by_key(|(a, _)| *a);
@@ -1911,7 +2274,11 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
 
         let mut out = format!(
             "Functions from symbol table ({} total):\n\n  {:<20}  {:<8}  {}\n  {}\n",
-            total, "Address", "Size", "Name", "─".repeat(55)
+            total,
+            "Address",
+            "Size",
+            "Name",
+            "─".repeat(55)
         );
         for (addr, size, name) in with_size.iter().take(max_results) {
             out.push_str(&format!("  0x{:016x}  {:<8}  {}\n", addr, size, name));
@@ -1939,7 +2306,9 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     //   bits  2:12  FunctionLength (in 4-byte units)
     if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
         // Find .pdata section by name
-        let pdata_bytes: Option<Vec<u8>> = pe.sections.iter()
+        let pdata_bytes: Option<Vec<u8>> = pe
+            .sections
+            .iter()
             .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
             .and_then(|s| s.data(&data).ok().flatten())
             .map(|b| b.to_vec());
@@ -1948,7 +2317,9 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
             let image_base = pe.image_base as u64;
 
             // Locate .rdata for resolving UNWIND_INFO pointers
-            let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+            let rdata_range: Option<(u64, usize)> = pe
+                .sections
+                .iter()
                 .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
                 .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
 
@@ -1958,10 +2329,14 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
 
             for i in 0..num_entries {
                 let off = i * 8;
-                let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
-                let unwind_raw = u32::from_le_bytes(pdata[off+4..off+8].try_into().unwrap_or([0;4]));
+                let begin_rva =
+                    u32::from_le_bytes(pdata[off..off + 4].try_into().unwrap_or([0; 4])) as u64;
+                let unwind_raw =
+                    u32::from_le_bytes(pdata[off + 4..off + 8].try_into().unwrap_or([0; 4]));
 
-                if begin_rva == 0 { continue; }
+                if begin_rva == 0 {
+                    continue;
+                }
 
                 let begin_va = image_base + begin_rva;
                 let flag = unwind_raw & 0x3;
@@ -1974,13 +2349,22 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
                     if ui_rva >= rdata_va {
                         let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
                         if ui_off + 4 <= data.len() {
-                            let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                            let ui_word = u32::from_le_bytes(
+                                data[ui_off..ui_off + 4].try_into().unwrap_or([0; 4]),
+                            );
                             (ui_word & 0x3_FFFF) as u64 * 4
-                        } else { 0 }
-                    } else { 0 }
-                } else { 0 };
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
 
-                let name = project.get_name(begin_va)
+                let name = project
+                    .get_name(begin_va)
                     .unwrap_or_else(|| format!("FUN_{:016x}", begin_va));
                 fns.push((begin_va, fn_size, name));
             }
@@ -2028,13 +2412,15 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
     });
     let (text_bytes, text_vaddr, text_arch) = match text_sec {
         Some(s) => match s.data() {
-            Ok(d)  => (d.to_vec(), s.address(), obj.architecture()),
+            Ok(d) => (d.to_vec(), s.address(), obj.architecture()),
             Err(e) => return ToolResult::err(format!("Cannot read text section: {}", e)),
         },
-        None => return ToolResult::err(
-            "No text section and no symbols — cannot enumerate functions.\
-             \nFor Mach-O fat binaries, try extracting the desired slice with lipo first."
-        ),
+        None => {
+            return ToolResult::err(
+                "No text section and no symbols — cannot enumerate functions.\
+             \nFor Mach-O fat binaries, try extracting the desired slice with lipo first.",
+            )
+        }
     };
 
     let is_64 = obj.is_64();
@@ -2067,14 +2453,21 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
             }
             _ if is_64 => {
                 (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
-                || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
+                    || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
             }
             _ => b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5,
         };
         if hit {
             found.push(text_vaddr + i as u64);
         }
-        i += if matches!(text_arch, Architecture::Aarch64 | Architecture::Aarch64_Ilp32 | Architecture::Arm) { 4 } else { 1 };
+        i += if matches!(
+            text_arch,
+            Architecture::Aarch64 | Architecture::Aarch64_Ilp32 | Architecture::Arm
+        ) {
+            4
+        } else {
+            1
+        };
     }
 
     if found.is_empty() {
@@ -2101,13 +2494,18 @@ fn list_functions(path: &str, max_results: usize, as_json: bool) -> ToolResult {
 
     let mut out = format!(
         "Functions from prologue scan — stripped binary ({} candidates):\n\n  {:<20}\n  {}\n",
-        total, "Virtual address", "─".repeat(20)
+        total,
+        "Virtual address",
+        "─".repeat(20)
     );
     for addr in found.iter().take(max_results) {
         out.push_str(&format!("  0x{:016x}\n", addr));
     }
     if total > max_results {
-        out.push_str(&format!("  … and {} more (use a smaller max_results range or filter by address)", total - max_results));
+        out.push_str(&format!(
+            "  … and {} more (use a smaller max_results range or filter by address)",
+            total - max_results
+        ));
     }
 
     ToolResult::ok(out)
@@ -2128,7 +2526,9 @@ fn pe_pdata_functions(path: &str) -> Vec<(u64, u64, String)> {
         Ok(goblin::Object::PE(p)) => p,
         _ => return Vec::new(),
     };
-    let pdata_bytes = match pe.sections.iter()
+    let pdata_bytes = match pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
         .and_then(|s| s.data(&data).ok().flatten())
     {
@@ -2137,7 +2537,9 @@ fn pe_pdata_functions(path: &str) -> Vec<(u64, u64, String)> {
     };
 
     let image_base = pe.image_base as u64;
-    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+    let rdata_range: Option<(u64, usize)> = pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
         .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
 
@@ -2147,9 +2549,13 @@ fn pe_pdata_functions(path: &str) -> Vec<(u64, u64, String)> {
 
     for i in 0..num_entries {
         let off = i * 8;
-        let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().unwrap_or([0;4])) as u64;
-        let unwind_raw = u32::from_le_bytes(pdata_bytes[off+4..off+8].try_into().unwrap_or([0;4]));
-        if begin_rva == 0 { continue; }
+        let begin_rva =
+            u32::from_le_bytes(pdata_bytes[off..off + 4].try_into().unwrap_or([0; 4])) as u64;
+        let unwind_raw =
+            u32::from_le_bytes(pdata_bytes[off + 4..off + 8].try_into().unwrap_or([0; 4]));
+        if begin_rva == 0 {
+            continue;
+        }
 
         let begin_va = image_base + begin_rva;
         let flag = unwind_raw & 0x3;
@@ -2160,13 +2566,21 @@ fn pe_pdata_functions(path: &str) -> Vec<(u64, u64, String)> {
             if ui_rva >= rdata_va {
                 let ui_off = rdata_file_off + (ui_rva - rdata_va) as usize;
                 if ui_off + 4 <= data.len() {
-                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                    let ui_word =
+                        u32::from_le_bytes(data[ui_off..ui_off + 4].try_into().unwrap_or([0; 4]));
                     (ui_word & 0x3_FFFF) as u64 * 4
-                } else { 0 }
-            } else { 0 }
-        } else { 0 };
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
 
-        let name = project.get_name(begin_va)
+        let name = project
+            .get_name(begin_va)
             .unwrap_or_else(|| format!("FUN_{:016x}", begin_va));
         fns.push((begin_va, fn_size, name));
     }
@@ -2207,36 +2621,46 @@ fn aarch64_adrp_page(insn: u32, pc: u64) -> u64 {
 /// - `adrp_pc`      — address of the ADRP instruction (start of the load sequence)
 /// - `ldr_pc`       — address of the LDR instruction (+4)
 /// - `is_blr_next`  — true when the instruction after LDR is `BLR Rm` (indirect call)
-fn aarch64_scan_iat_refs(
-    obj: &object::File,
-    target_vaddr: u64,
-) -> Vec<(u64, u64, bool)> {
-    let target_page    = target_vaddr & !0xFFF;
+fn aarch64_scan_iat_refs(obj: &object::File, target_vaddr: u64) -> Vec<(u64, u64, bool)> {
+    let target_page = target_vaddr & !0xFFF;
     let target_off_raw = target_vaddr & 0xFFF;
 
     let mut hits: Vec<(u64, u64, bool)> = Vec::new();
 
     for sec in obj.sections() {
-        if !crate::arch::is_code_section(sec.name().unwrap_or("")) { continue; }
+        if !crate::arch::is_code_section(sec.name().unwrap_or("")) {
+            continue;
+        }
         let sec_vaddr = sec.address();
-        let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
-        if sec_bytes.len() < 8 { continue; }
+        let sec_bytes = match sec.data() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if sec_bytes.len() < 8 {
+            continue;
+        }
 
         let n = sec_bytes.len() / 4;
 
         for i in 0..n.saturating_sub(1) {
             let off0 = i * 4;
             let insn0 = u32::from_le_bytes([
-                sec_bytes[off0], sec_bytes[off0+1],
-                sec_bytes[off0+2], sec_bytes[off0+3],
+                sec_bytes[off0],
+                sec_bytes[off0 + 1],
+                sec_bytes[off0 + 2],
+                sec_bytes[off0 + 3],
             ]);
             let pc0 = sec_vaddr + off0 as u64;
 
             // ── Check ADRP ─────────────────────────────────────────────────
             // Encoding: bit31=1, bits[28:24]=10000  →  mask 0x9F000000 == 0x90000000
-            if (insn0 & 0x9F000000) != 0x90000000 { continue; }
+            if (insn0 & 0x9F000000) != 0x90000000 {
+                continue;
+            }
             let rd = insn0 & 0x1F;
-            if aarch64_adrp_page(insn0, pc0) != target_page { continue; }
+            if aarch64_adrp_page(insn0, pc0) != target_page {
+                continue;
+            }
 
             // ── Search the next MAX_GAP instructions for a matching LDR ─────────
             // The compiler sometimes interleaves other instructions between
@@ -2246,10 +2670,14 @@ fn aarch64_scan_iat_refs(
             const MAX_GAP: usize = 8;
             for gap in 1..=MAX_GAP {
                 let off1 = off0 + gap * 4;
-                if off1 + 4 > sec_bytes.len() { break; }
+                if off1 + 4 > sec_bytes.len() {
+                    break;
+                }
                 let insn1 = u32::from_le_bytes([
-                    sec_bytes[off1], sec_bytes[off1+1],
-                    sec_bytes[off1+2], sec_bytes[off1+3],
+                    sec_bytes[off1],
+                    sec_bytes[off1 + 1],
+                    sec_bytes[off1 + 2],
+                    sec_bytes[off1 + 3],
                 ]);
                 let pc1 = pc0 + gap as u64 * 4;
 
@@ -2258,20 +2686,22 @@ fn aarch64_scan_iat_refs(
                 // Heuristic: if this is another ADRP or MOV writing rd, stop.
                 let writes_rd = {
                     let dest_5 = insn1 & 0x1F; // bottom 5 bits = Rd for most insns
-                    // ADRP writes rd directly
-                    let is_adrp  = (insn1 & 0x9F000000) == 0x90000000;
+                                               // ADRP writes rd directly
+                    let is_adrp = (insn1 & 0x9F000000) == 0x90000000;
                     // MOV (register) Xd, Xm: alias of ORR Xd, XZR, Xm → 0xAA0003E0
                     let is_mov_r = (insn1 & 0x7FE0FFE0) == 0xAA0003E0;
                     // MOVZ Xd = 0xD2800000 family
-                    let is_movz  = (insn1 & 0xFF800000) == 0xD2800000;
+                    let is_movz = (insn1 & 0xFF800000) == 0xD2800000;
                     (is_adrp || is_mov_r || is_movz) && dest_5 == rd
                 };
-                if writes_rd { break; }
+                if writes_rd {
+                    break;
+                }
 
                 // LDR Xt, [Xn, #uimm12]  (64-bit, unsigned offset)
                 // Encoding: 1111 1001 01 imm12 Rn Rt  →  0xF9400000 / 0xFFC00000
                 if (insn1 & 0xFFC00000) == 0xF9400000 {
-                    let rn    = (insn1 >> 5) & 0x1F;
+                    let rn = (insn1 >> 5) & 0x1F;
                     let imm12 = (insn1 >> 10) & 0xFFF;
                     let load_off = (imm12 * 8) as u64; // 64-bit scale: ×8
                     if rn == rd && load_off == target_off_raw {
@@ -2279,11 +2709,12 @@ fn aarch64_scan_iat_refs(
                         // Peek one instruction further for BLR Rt
                         let is_blr = off1 + 8 <= sec_bytes.len() && {
                             let insn2 = u32::from_le_bytes([
-                                sec_bytes[off1+4], sec_bytes[off1+5],
-                                sec_bytes[off1+6], sec_bytes[off1+7],
+                                sec_bytes[off1 + 4],
+                                sec_bytes[off1 + 5],
+                                sec_bytes[off1 + 6],
+                                sec_bytes[off1 + 7],
                             ]);
-                            (insn2 & 0xFFFFFC1F) == 0xD63F0000
-                                && ((insn2 >> 5) & 0x1F) == rt
+                            (insn2 & 0xFFFFFC1F) == 0xD63F0000 && ((insn2 >> 5) & 0x1F) == rt
                         };
                         hits.push((pc0, pc1, is_blr));
                         break; // found the matching LDR for this ADRP
@@ -2293,18 +2724,19 @@ fn aarch64_scan_iat_refs(
                 // LDR Wt, [Xn, #uimm12]  (32-bit, unsigned offset)
                 // Encoding: 1011 1001 01 imm12 Rn Rt  →  0xB9400000 / 0xFFC00000
                 if (insn1 & 0xFFC00000) == 0xB9400000 {
-                    let rn    = (insn1 >> 5) & 0x1F;
+                    let rn = (insn1 >> 5) & 0x1F;
                     let imm12 = (insn1 >> 10) & 0xFFF;
                     let load_off = (imm12 * 4) as u64; // 32-bit scale: ×4
                     if rn == rd && load_off == target_off_raw {
                         let rt = insn1 & 0x1F;
                         let is_blr = off1 + 8 <= sec_bytes.len() && {
                             let insn2 = u32::from_le_bytes([
-                                sec_bytes[off1+4], sec_bytes[off1+5],
-                                sec_bytes[off1+6], sec_bytes[off1+7],
+                                sec_bytes[off1 + 4],
+                                sec_bytes[off1 + 5],
+                                sec_bytes[off1 + 6],
+                                sec_bytes[off1 + 7],
                             ]);
-                            (insn2 & 0xFFFFFC1F) == 0xD63F0000
-                                && ((insn2 >> 5) & 0x1F) == rt
+                            (insn2 & 0xFFFFFC1F) == 0xD63F0000 && ((insn2 >> 5) & 0x1F) == rt
                         };
                         hits.push((pc0, pc1, is_blr));
                         break;
@@ -2326,8 +2758,12 @@ fn aarch64_scan_iat_refs(
 ///      When such a site is a shared import stub (ADRP+LDR+BR tail-call),
 ///      a third pass scans for `BL <stub_addr>` callers.
 fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if target_vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if target_vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -2372,7 +2808,6 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
 
     // ── AArch64: raw BL/B pattern scan + ADRP+LDR indirect scan ─────────────
     } else if matches!(arch_class, crate::arch::ArchClass::Arm64) {
-
         // Pass 1 — direct BL / B <target_vaddr> via raw 4-byte word scan.
         //
         // Capstone full-section scan loses decode sync on large binaries when
@@ -2385,17 +2820,29 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         //   imm26 target = PC + sign_extend(word & 0x3FFFFFF, 26) * 4
         for sec in obj.sections() {
             let sec_name = sec.name().unwrap_or("");
-            if !crate::arch::is_code_section(sec_name) { continue; }
+            if !crate::arch::is_code_section(sec_name) {
+                continue;
+            }
             let sec_vaddr = sec.address();
-            let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
-            if sec_bytes.len() < 4 { continue; }
+            let sec_bytes = match sec.data() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            if sec_bytes.len() < 4 {
+                continue;
+            }
             let n = sec_bytes.len() & !3; // align to 4-byte boundary
             for i in (0..n).step_by(4) {
                 let word = u32::from_le_bytes([
-                    sec_bytes[i], sec_bytes[i+1], sec_bytes[i+2], sec_bytes[i+3]
+                    sec_bytes[i],
+                    sec_bytes[i + 1],
+                    sec_bytes[i + 2],
+                    sec_bytes[i + 3],
                 ]);
                 let op = word >> 26;
-                if op != 0x25 && op != 0x05 { continue; } // not BL or B
+                if op != 0x25 && op != 0x05 {
+                    continue;
+                } // not BL or B
                 let imm26 = word & 0x3FF_FFFF;
                 let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
                     (imm26 as i64) | (-1i64 << 26)
@@ -2405,7 +2852,11 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
                 let pc = sec_vaddr + i as u64;
                 let tgt = pc.wrapping_add((signed_off * 4) as u64);
                 if tgt == target_vaddr {
-                    let label = if op == 0x25 { "direct BL" } else { "direct B (tail call)" };
+                    let label = if op == 0x25 {
+                        "direct BL"
+                    } else {
+                        "direct B (tail call)"
+                    };
                     callers.push((pc, label));
                 }
             }
@@ -2414,14 +2865,19 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         // Pass 2 — ADRP+LDR indirect pattern (IAT / GOT references)
         let iat_hits = aarch64_scan_iat_refs(&obj, target_vaddr);
         for (adrp_pc, _ldr_pc, is_blr) in &iat_hits {
-            let label = if *is_blr { "ADRP+LDR+BLR (indirect call)" } else { "ADRP+LDR (indirect load)" };
+            let label = if *is_blr {
+                "ADRP+LDR+BLR (indirect call)"
+            } else {
+                "ADRP+LDR (indirect load)"
+            };
             callers.push((*adrp_pc, label));
         }
 
         // Pass 3 — if the ADRP+LDR site looks like a shared import stub
         //          (ADRP at the very start of a function, followed by LDR then BR),
         //          scan for BL <stub_addr> callers using the same raw-word scan.
-        let stub_candidates: Vec<u64> = iat_hits.iter()
+        let stub_candidates: Vec<u64> = iat_hits
+            .iter()
             .filter(|(_, _, is_blr)| *is_blr)
             .map(|(adrp_pc, _, _)| *adrp_pc)
             .collect();
@@ -2429,16 +2885,28 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         if !stub_candidates.is_empty() {
             for sec in obj.sections() {
                 let sec_name = sec.name().unwrap_or("");
-                if !crate::arch::is_code_section(sec_name) { continue; }
+                if !crate::arch::is_code_section(sec_name) {
+                    continue;
+                }
                 let sec_vaddr = sec.address();
-                let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
-                if sec_bytes.len() < 4 { continue; }
+                let sec_bytes = match sec.data() {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                };
+                if sec_bytes.len() < 4 {
+                    continue;
+                }
                 let n = sec_bytes.len() & !3;
                 for i in (0..n).step_by(4) {
                     let word = u32::from_le_bytes([
-                        sec_bytes[i], sec_bytes[i+1], sec_bytes[i+2], sec_bytes[i+3]
+                        sec_bytes[i],
+                        sec_bytes[i + 1],
+                        sec_bytes[i + 2],
+                        sec_bytes[i + 3],
                     ]);
-                    if word >> 26 != 0x25 { continue; } // only BL
+                    if word >> 26 != 0x25 {
+                        continue;
+                    } // only BL
                     let imm26 = word & 0x3FF_FFFF;
                     let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
                         (imm26 as i64) | (-1i64 << 26)
@@ -2462,9 +2930,14 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
         };
         for sec in obj.sections() {
             let sec_name = sec.name().unwrap_or("");
-            if !crate::arch::is_code_section(sec_name) { continue; }
+            if !crate::arch::is_code_section(sec_name) {
+                continue;
+            }
             let sec_vaddr = sec.address();
-            let sec_bytes = match sec.data() { Ok(d) => d, Err(_) => continue };
+            let sec_bytes = match sec.data() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
             if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
                 for insn in insns.as_ref() {
                     let m = insn.mnemonic().unwrap_or("");
@@ -2486,9 +2959,12 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
             "\nHint: for ARM64 imports, also try xrefs_to with the IAT entry address \
              from pe_internals/resolve_pe_imports. If still empty, the binary may use \
              an import-by-ordinal or delay-load scheme."
-        } else { "" };
+        } else {
+            ""
+        };
         return ToolResult::ok(format!(
-            "No call/jmp to 0x{:x} found in .text{}", target_vaddr, hint
+            "No call/jmp to 0x{:x} found in .text{}",
+            target_vaddr, hint
         ));
     }
 
@@ -2509,14 +2985,20 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
     let project = Project::load_for(path);
 
     let find_func = |addr: u64| -> String {
-        if let Some(renamed) = project.get_name(addr) { return renamed; }
+        if let Some(renamed) = project.get_name(addr) {
+            return renamed;
+        }
         // Binary search for the last function whose start <= addr
         match syms.binary_search_by_key(&addr, |(a, _, _)| *a) {
             Ok(i) => return syms[i].2.clone(),
             Err(0) => {}
             Err(i) => {
                 let (fn_addr, fn_size, fn_name) = &syms[i - 1];
-                let end = if *fn_size > 0 { fn_addr + fn_size } else { u64::MAX };
+                let end = if *fn_size > 0 {
+                    fn_addr + fn_size
+                } else {
+                    u64::MAX
+                };
                 if addr >= *fn_addr && addr < end {
                     return fn_name.clone();
                 }
@@ -2531,11 +3013,16 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
 
     let mut out = format!(
         "Cross-references to 0x{:x} ({} site{}):\n\n",
-        target_vaddr, callers.len(), if callers.len() == 1 { "" } else { "s" }
+        target_vaddr,
+        callers.len(),
+        if callers.len() == 1 { "" } else { "s" }
     );
     out.push_str(&format!(
         "  {:<20}  {:<32}  {}\n  {}\n",
-        "Site address", "Enclosing function", "How", "─".repeat(72)
+        "Site address",
+        "Enclosing function",
+        "How",
+        "─".repeat(72)
     ));
     for (addr, how) in &callers {
         let fname = find_func(*addr);
@@ -2550,8 +3037,12 @@ fn xrefs_to(path: &str, target_vaddr: u64) -> ToolResult {
 /// Find all instructions that read or write a given virtual address.
 /// Uses iced-x86 RIP-relative + absolute operand resolution on x86/x86-64.
 fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
-    if path.is_empty()       { return ToolResult::err("'path' is required"); }
-    if target_vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if target_vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -2567,18 +3058,16 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
         Architecture::X86_64 | Architecture::X86_64_X32 | Architecture::I386
     );
     if !is_x86 {
-        return ToolResult::err(
-            "xrefs_data currently supports x86 / x86-64 only"
-        );
+        return ToolResult::err("xrefs_data currently supports x86 / x86-64 only");
     }
     let bitness: u32 = match obj.architecture() {
         Architecture::X86_64 | Architecture::X86_64_X32 => 64,
         _ => 32,
     };
 
-    use iced_x86::{Decoder, DecoderOptions, OpKind, Register};
-    use iced_x86::IntelFormatter;
     use iced_x86::Formatter;
+    use iced_x86::IntelFormatter;
+    use iced_x86::{Decoder, DecoderOptions, OpKind, Register};
 
     let mut fmt = IntelFormatter::new();
     fmt.options_mut().set_uppercase_mnemonics(false);
@@ -2586,27 +3075,37 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
 
     // Collect function address→name map for annotation
     let project = Project::load_for(path);
-    let sym_map: HashMap<u64, String> = obj.symbols()
+    let sym_map: HashMap<u64, String> = obj
+        .symbols()
         .filter_map(|s| {
             let name = s.name().ok()?.trim();
-            if name.is_empty() { return None; }
+            if name.is_empty() {
+                return None;
+            }
             Some((s.address(), name.to_string()))
         })
         .collect();
 
     let enclosing_fn = |addr: u64| -> String {
-        if let Some(n) = project.get_name(addr) { return n; }
+        if let Some(n) = project.get_name(addr) {
+            return n;
+        }
         let mut best: Option<(u64, String)> = None;
         for (fn_va, fname) in &sym_map {
             if *fn_va <= addr {
                 match &best {
-                    None => { best = Some((*fn_va, fname.clone())); }
-                    Some((bva, _)) if fn_va > bva => { best = Some((*fn_va, fname.clone())); }
+                    None => {
+                        best = Some((*fn_va, fname.clone()));
+                    }
+                    Some((bva, _)) if fn_va > bva => {
+                        best = Some((*fn_va, fname.clone()));
+                    }
                     _ => {}
                 }
             }
         }
-        best.map(|(_, n)| n).unwrap_or_else(|| "<unknown>".to_string())
+        best.map(|(_, n)| n)
+            .unwrap_or_else(|| "<unknown>".to_string())
     };
 
     // Scan all executable sections
@@ -2617,13 +3116,15 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
         use object::{ObjectSection, SectionFlags};
         let is_exec = match sec.flags() {
             SectionFlags::Elf { sh_flags } => sh_flags & 0x4 != 0, // SHF_EXECINSTR
-            SectionFlags::MachO { flags }  => flags & 0x400 != 0,  // S_ATTR_SOME_INSTRUCTIONS
+            SectionFlags::MachO { flags } => flags & 0x400 != 0,   // S_ATTR_SOME_INSTRUCTIONS
             _ => {
                 let name = sec.name().unwrap_or("");
                 name == ".text" || name == "__text" || name.ends_with(",__text")
             }
         };
-        if !is_exec { continue; }
+        if !is_exec {
+            continue;
+        }
 
         let sec_vaddr = sec.address();
         let sec_bytes = match sec.data() {
@@ -2633,10 +3134,14 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
 
         let mut decoder = Decoder::with_ip(bitness, sec_bytes, sec_vaddr, DecoderOptions::NONE);
         for instr in decoder.iter() {
-            if instr.is_invalid() { continue; }
+            if instr.is_invalid() {
+                continue;
+            }
 
             for op_idx in 0..instr.op_count() {
-                if instr.op_kind(op_idx) != OpKind::Memory { continue; }
+                if instr.op_kind(op_idx) != OpKind::Memory {
+                    continue;
+                }
 
                 // Compute the effective address for this memory operand
                 let eff_addr: Option<u64> = if instr.memory_base() == Register::RIP
@@ -2672,17 +3177,22 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
 
     if refs.is_empty() {
         return ToolResult::ok(format!(
-            "No data references to 0x{:x} found in executable sections", target_vaddr
+            "No data references to 0x{:x} found in executable sections",
+            target_vaddr
         ));
     }
 
     let mut out = format!(
         "Data cross-references to 0x{:x} ({} refs):\n\n",
-        target_vaddr, refs.len()
+        target_vaddr,
+        refs.len()
     );
     out.push_str(&format!(
         "  {:<20}  {:<8}  {:<30}  {}\n  {}\n",
-        "Site address", "Access", "Instruction", "Enclosing function",
+        "Site address",
+        "Access",
+        "Instruction",
+        "Enclosing function",
         "─".repeat(80)
     ));
     for (site, disasm, access) in &refs {
@@ -2699,18 +3209,33 @@ fn xrefs_data(path: &str, target_vaddr: u64) -> ToolResult {
 // ─── Tool: dwarf_info ────────────────────────────────────────────────────────
 
 fn dwarf_info(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     match crate::dwarf::parse_dwarf_functions(path) {
         Ok(funcs) => {
             if funcs.is_empty() {
-                return ToolResult::ok("No DWARF debug information found (or no DW_TAG_subprogram entries)");
+                return ToolResult::ok(
+                    "No DWARF debug information found (or no DW_TAG_subprogram entries)",
+                );
             }
             let mut out = format!("DWARF functions ({} entries):\n\n", funcs.len());
-            out.push_str(&format!("  {:<20}  {:<8}  {}\n  {}\n",
-                "Address", "Size", "Name", "─".repeat(55)));
+            out.push_str(&format!(
+                "  {:<20}  {:<8}  {}\n  {}\n",
+                "Address",
+                "Size",
+                "Name",
+                "─".repeat(55)
+            ));
             for f in &funcs {
-                let size_str = f.size.map(|s| s.to_string()).unwrap_or_else(|| "?".to_string());
-                out.push_str(&format!("  0x{:016x}  {:<8}  {}\n", f.addr, size_str, f.name));
+                let size_str = f
+                    .size
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                out.push_str(&format!(
+                    "  0x{:016x}  {:<8}  {}\n",
+                    f.addr, size_str, f.name
+                ));
             }
             ToolResult::ok(out)
         }
@@ -2724,8 +3249,12 @@ fn dwarf_info(path: &str) -> ToolResult {
 /// Replaces the need for 5–10 separate rename_function / set_param_* /
 /// rename_variable / add_comment calls.
 fn batch_annotate(path: &str, vaddr: u64, args: &Value) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let mut project = Project::load_for(path);
     let mut applied: Vec<String> = Vec::new();
@@ -2794,12 +3323,18 @@ fn batch_annotate(path: &str, vaddr: u64, args: &Value) -> ToolResult {
 
     let mut out = format!(
         "batch_annotate applied to 0x{:x} in '{}': {} changes\n",
-        vaddr, path, applied.len()
+        vaddr,
+        path,
+        applied.len()
     );
-    for a in &applied { out.push_str(&format!("  + {}\n", a)); }
+    for a in &applied {
+        out.push_str(&format!("  + {}\n", a));
+    }
     if !skipped.is_empty() {
         out.push_str(&format!("\nSkipped ({}):\n", skipped.len()));
-        for s in &skipped { out.push_str(&format!("  - {}\n", s)); }
+        for s in &skipped {
+            out.push_str(&format!("  - {}\n", s));
+        }
     }
     out.push_str("\nRe-decompile to see the changes applied.");
     ToolResult::ok(out)
@@ -2808,9 +3343,15 @@ fn batch_annotate(path: &str, vaddr: u64, args: &Value) -> ToolResult {
 // ─── Tool: rename_function / add_comment / load_project ─────────────────────
 
 fn rename_function(path: &str, vaddr: u64, name: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
-    if name.is_empty() { return ToolResult::err("'name' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
+    if name.is_empty() {
+        return ToolResult::err("'name' is required");
+    }
     let mut p = Project::load_for(path);
     p.rename(vaddr, name.to_string());
     match p.save() {
@@ -2820,9 +3361,15 @@ fn rename_function(path: &str, vaddr: u64, name: &str) -> ToolResult {
 }
 
 fn add_comment(path: &str, vaddr: u64, comment: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
-    if comment.is_empty() { return ToolResult::err("'comment' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
+    if comment.is_empty() {
+        return ToolResult::err("'comment' is required");
+    }
     let mut p = Project::load_for(path);
     p.comment(vaddr, comment.to_string());
     match p.save() {
@@ -2834,14 +3381,22 @@ fn add_comment(path: &str, vaddr: u64, comment: &str) -> ToolResult {
 // ─── Tool: rename_variable ───────────────────────────────────────────────────
 
 fn rename_variable(path: &str, fn_vaddr: u64, old_name: &str, new_name: &str) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
-    if old_name.is_empty(){ return ToolResult::err("'old_name' is required"); }
-    if new_name.is_empty(){ return ToolResult::err("'new_name' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if fn_vaddr == 0 {
+        return ToolResult::err("'fn_vaddr' is required");
+    }
+    if old_name.is_empty() {
+        return ToolResult::err("'old_name' is required");
+    }
+    if new_name.is_empty() {
+        return ToolResult::err("'new_name' is required");
+    }
     let mut p = Project::load_for(path);
     p.rename_var(fn_vaddr, old_name.to_string(), new_name.to_string());
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!(
+        Ok(_) => ToolResult::ok(format!(
             "In function 0x{:x}: '{}' → '{}' (will apply on next decompile)",
             fn_vaddr, old_name, new_name
         )),
@@ -2852,13 +3407,19 @@ fn rename_variable(path: &str, fn_vaddr: u64, old_name: &str, new_name: &str) ->
 // ─── Tool: set_return_type ───────────────────────────────────────────────────
 
 fn set_return_type(path: &str, fn_vaddr: u64, type_str: &str) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
-    if type_str.is_empty(){ return ToolResult::err("'type_str' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if fn_vaddr == 0 {
+        return ToolResult::err("'fn_vaddr' is required");
+    }
+    if type_str.is_empty() {
+        return ToolResult::err("'type_str' is required");
+    }
     let mut p = Project::load_for(path);
     p.set_return_type(fn_vaddr, type_str.to_string());
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!(
+        Ok(_) => ToolResult::ok(format!(
             "Return type of 0x{:x} set to '{}' (will apply on next decompile)",
             fn_vaddr, type_str
         )),
@@ -2869,14 +3430,22 @@ fn set_return_type(path: &str, fn_vaddr: u64, type_str: &str) -> ToolResult {
 // ─── Tool: set_param_type ────────────────────────────────────────────────────
 
 fn set_param_type(path: &str, fn_vaddr: u64, param_n: usize, type_str: &str) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if fn_vaddr == 0      { return ToolResult::err("'fn_vaddr' is required"); }
-    if param_n == 0       { return ToolResult::err("'param_n' must be ≥ 1"); }
-    if type_str.is_empty(){ return ToolResult::err("'type_str' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if fn_vaddr == 0 {
+        return ToolResult::err("'fn_vaddr' is required");
+    }
+    if param_n == 0 {
+        return ToolResult::err("'param_n' must be ≥ 1");
+    }
+    if type_str.is_empty() {
+        return ToolResult::err("'type_str' is required");
+    }
     let mut p = Project::load_for(path);
     p.set_param_type(fn_vaddr, param_n, type_str.to_string());
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!(
+        Ok(_) => ToolResult::ok(format!(
             "Parameter {} of 0x{:x} type set to '{}' (will apply on next decompile)",
             param_n, fn_vaddr, type_str
         )),
@@ -2887,14 +3456,22 @@ fn set_param_type(path: &str, fn_vaddr: u64, param_n: usize, type_str: &str) -> 
 // ─── Tool: set_param_name ────────────────────────────────────────────────────
 
 fn set_param_name(path: &str, fn_vaddr: u64, param_n: usize, name: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if fn_vaddr == 0   { return ToolResult::err("'fn_vaddr' is required"); }
-    if param_n == 0    { return ToolResult::err("'param_n' must be ≥ 1"); }
-    if name.is_empty() { return ToolResult::err("'name' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if fn_vaddr == 0 {
+        return ToolResult::err("'fn_vaddr' is required");
+    }
+    if param_n == 0 {
+        return ToolResult::err("'param_n' must be ≥ 1");
+    }
+    if name.is_empty() {
+        return ToolResult::err("'name' is required");
+    }
     let mut p = Project::load_for(path);
     p.set_param_name(fn_vaddr, param_n, name.to_string());
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!(
+        Ok(_) => ToolResult::ok(format!(
             "Parameter {} of 0x{:x} renamed to '{}' (will apply on next decompile)",
             param_n, fn_vaddr, name
         )),
@@ -2910,8 +3487,12 @@ fn define_struct(
     total_size: usize,
     fields_val: serde_json::Value,
 ) -> ToolResult {
-    if path.is_empty()        { return ToolResult::err("'path' is required"); }
-    if struct_name.is_empty() { return ToolResult::err("'struct_name' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if struct_name.is_empty() {
+        return ToolResult::err("'struct_name' is required");
+    }
 
     // Parse fields array: [{offset, size, name, type_str}, ...]
     let fields: Vec<crate::project::StructField> = match fields_val.as_array() {
@@ -2919,11 +3500,16 @@ fn define_struct(
         Some(arr) => arr
             .iter()
             .filter_map(|f| {
-                let offset   = f["offset"].as_u64()? as usize;
-                let size     = f["size"].as_u64().unwrap_or(4) as usize;
-                let name     = f["name"].as_str().unwrap_or("field").to_string();
+                let offset = f["offset"].as_u64()? as usize;
+                let size = f["size"].as_u64().unwrap_or(4) as usize;
+                let name = f["name"].as_str().unwrap_or("field").to_string();
                 let type_str = f["type_str"].as_str().unwrap_or("int").to_string();
-                Some(crate::project::StructField { offset, size, name, type_str })
+                Some(crate::project::StructField {
+                    offset,
+                    size,
+                    name,
+                    type_str,
+                })
             })
             .collect(),
     };
@@ -2938,7 +3524,7 @@ fn define_struct(
     let mut p = Project::load_for(path);
     p.define_struct(def);
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!("Struct '{}' saved:\n\n{}", struct_name, c_repr)),
+        Ok(_) => ToolResult::ok(format!("Struct '{}' saved:\n\n{}", struct_name, c_repr)),
         Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
     }
 }
@@ -2946,14 +3532,16 @@ fn define_struct(
 // ─── Tool: list_types ────────────────────────────────────────────────────────
 
 fn list_types(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let p = Project::load_for(path);
 
     if p.signatures.is_empty() && p.var_renames.is_empty() && p.structs.is_empty() {
         return ToolResult::ok(
             "No type annotations saved yet.\n\
              Use set_return_type, set_param_type, set_param_name, rename_variable, \
-             or define_struct to annotate this binary."
+             or define_struct to annotate this binary.",
         );
     }
 
@@ -2961,7 +3549,10 @@ fn list_types(path: &str) -> ToolResult {
 
     // Struct definitions
     if !p.structs.is_empty() {
-        out.push_str(&format!("─── Struct definitions ({}) ───\n\n", p.structs.len()));
+        out.push_str(&format!(
+            "─── Struct definitions ({}) ───\n\n",
+            p.structs.len()
+        ));
         let mut names: Vec<&String> = p.structs.keys().collect();
         names.sort();
         for name in names {
@@ -2972,26 +3563,40 @@ fn list_types(path: &str) -> ToolResult {
 
     // Function signatures
     if !p.signatures.is_empty() {
-        out.push_str(&format!("─── Function signatures ({}) ───\n\n", p.signatures.len()));
+        out.push_str(&format!(
+            "─── Function signatures ({}) ───\n\n",
+            p.signatures.len()
+        ));
         let mut addrs: Vec<u64> = p.signatures.keys().cloned().collect();
         addrs.sort();
         for addr in addrs {
             let sig = &p.signatures[&addr];
-            let fn_name = p.renames.get(&addr)
+            let fn_name = p
+                .renames
+                .get(&addr)
                 .map(|s| s.as_str())
                 .unwrap_or("<unnamed>");
             let ret = sig.return_type.as_deref().unwrap_or("void");
             let params: Vec<String> = (0..sig.param_types.len().max(sig.param_names.len()))
                 .map(|i| {
-                    let t = sig.param_types.get(i).and_then(|x| x.as_deref()).unwrap_or("int32_t");
-                    let n = sig.param_names.get(i).and_then(|x| x.as_deref())
+                    let t = sig
+                        .param_types
+                        .get(i)
+                        .and_then(|x| x.as_deref())
+                        .unwrap_or("int32_t");
+                    let n = sig
+                        .param_names
+                        .get(i)
+                        .and_then(|x| x.as_deref())
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| {
                             // borrow trick: use a static-lifetime placeholder
                             "arg"
                         });
                     // Build the actual name
-                    let actual_name = sig.param_names.get(i)
+                    let actual_name = sig
+                        .param_names
+                        .get(i)
                         .and_then(|x| x.as_deref())
                         .filter(|n| !n.is_empty())
                         .map(|s| s.to_string())
@@ -3002,7 +3607,10 @@ fn list_types(path: &str) -> ToolResult {
                 .collect();
             out.push_str(&format!(
                 "  0x{:016x}  {} {}({})\n",
-                addr, ret, fn_name, params.join(", ")
+                addr,
+                ret,
+                fn_name,
+                params.join(", ")
             ));
         }
         out.push('\n');
@@ -3010,11 +3618,16 @@ fn list_types(path: &str) -> ToolResult {
 
     // Variable renames per function
     if !p.var_renames.is_empty() {
-        out.push_str(&format!("─── Variable renames ({} functions) ───\n\n", p.var_renames.len()));
+        out.push_str(&format!(
+            "─── Variable renames ({} functions) ───\n\n",
+            p.var_renames.len()
+        ));
         let mut addrs: Vec<u64> = p.var_renames.keys().cloned().collect();
         addrs.sort();
         for addr in addrs {
-            let fn_name = p.renames.get(&addr)
+            let fn_name = p
+                .renames
+                .get(&addr)
                 .map(|s| s.as_str())
                 .unwrap_or("<unnamed>");
             out.push_str(&format!("  0x{:016x}  {}:\n", addr, fn_name));
@@ -3031,17 +3644,23 @@ fn list_types(path: &str) -> ToolResult {
 }
 
 fn load_project(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let p = Project::load_for(path);
     let db_path = Project::db_path(path);
-    let has_data = !p.renames.is_empty() || !p.comments.is_empty()
-        || !p.notes.is_empty() || !p.vuln_scores.is_empty()
-        || !p.var_renames.is_empty() || !p.signatures.is_empty()
+    let has_data = !p.renames.is_empty()
+        || !p.comments.is_empty()
+        || !p.notes.is_empty()
+        || !p.vuln_scores.is_empty()
+        || !p.var_renames.is_empty()
+        || !p.signatures.is_empty()
         || !p.structs.is_empty();
     if !has_data {
         return ToolResult::ok(format!(
             "No project annotations found for '{}'\nDatabase would be at: {}",
-            path, db_path.display()
+            path,
+            db_path.display()
         ));
     }
     let mut out = format!("Project annotations for: {}\n\n", path);
@@ -3065,21 +3684,39 @@ fn load_project(path: &str) -> ToolResult {
         out.push('\n');
     }
     if !p.vuln_scores.is_empty() {
-        out.push_str(&format!("Vulnerability scores ({}):\n", p.vuln_scores.len()));
+        out.push_str(&format!(
+            "Vulnerability scores ({}):\n",
+            p.vuln_scores.len()
+        ));
         let mut scores: Vec<_> = p.vuln_scores.iter().collect();
         scores.sort_by_key(|(k, _)| *k);
         for (addr, score) in scores {
-            let badge = if *score >= 7 { "[HIGH]" } else if *score >= 4 { "[MED]" } else { "[LOW]" };
+            let badge = if *score >= 7 {
+                "[HIGH]"
+            } else if *score >= 4 {
+                "[MED]"
+            } else {
+                "[LOW]"
+            };
             let name = p.renames.get(addr).map(|s| s.as_str()).unwrap_or("?");
-            out.push_str(&format!("  0x{:016x}  score={}/10  {}  {}\n", addr, score, badge, name));
+            out.push_str(&format!(
+                "  0x{:016x}  score={}/10  {}  {}\n",
+                addr, score, badge, name
+            ));
         }
         out.push('\n');
     }
     if !p.notes.is_empty() {
         out.push_str(&format!("Analyst notes ({}):\n", p.notes.len()));
         for note in &p.notes {
-            let addr_str = note.vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
-            out.push_str(&format!("  [{}]{} ({}): {}\n", note.id, addr_str, note.timestamp, note.text));
+            let addr_str = note
+                .vaddr
+                .map(|a| format!(" @ 0x{:x}", a))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  [{}]{} ({}): {}\n",
+                note.id, addr_str, note.timestamp, note.text
+            ));
         }
         out.push('\n');
     }
@@ -3089,8 +3726,12 @@ fn load_project(path: &str) -> ToolResult {
 // ─── Tool: add_note ───────────────────────────────────────────────────────────
 
 fn add_note_tool(path: &str, text: &str, vaddr: Option<u64>) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if text.is_empty()  { return ToolResult::err("'text' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if text.is_empty() {
+        return ToolResult::err("'text' is required");
+    }
     let mut p = Project::load_for(path);
     match p.add_note(vaddr, text.to_string()) {
         Ok(note) => {
@@ -3107,27 +3748,36 @@ fn add_note_tool(path: &str, text: &str, vaddr: Option<u64>) -> ToolResult {
 // ─── Tool: delete_note ────────────────────────────────────────────────────────
 
 fn delete_note_tool(path: &str, id: i64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if id <= 0 { return ToolResult::err("'id' must be a positive integer"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if id <= 0 {
+        return ToolResult::err("'id' must be a positive integer");
+    }
     let mut p = Project::load_for(path);
     match p.delete_note(id) {
-        Ok(true)  => ToolResult::ok(format!("Note [{}] deleted", id)),
+        Ok(true) => ToolResult::ok(format!("Note [{}] deleted", id)),
         Ok(false) => ToolResult::err(format!("No note with id={} found", id)),
-        Err(e)    => ToolResult::err(format!("Failed to delete note: {}", e)),
+        Err(e) => ToolResult::err(format!("Failed to delete note: {}", e)),
     }
 }
 
 // ─── Tool: list_notes ─────────────────────────────────────────────────────────
 
 fn list_notes_tool(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let p = Project::load_for(path);
     if p.notes.is_empty() {
         return ToolResult::ok("No analyst notes saved for this binary yet.");
     }
     let mut out = format!("Analyst notes for {} ({} total):\n\n", path, p.notes.len());
     for note in &p.notes {
-        let addr_str = note.vaddr.map(|a| format!(" @ 0x{:x}", a)).unwrap_or_default();
+        let addr_str = note
+            .vaddr
+            .map(|a| format!(" @ 0x{:x}", a))
+            .unwrap_or_default();
         out.push_str(&format!(
             "  [{}]{} ({}):\n    {}\n\n",
             note.id, addr_str, note.timestamp, note.text
@@ -3139,17 +3789,33 @@ fn list_notes_tool(path: &str) -> ToolResult {
 // ─── Tool: get_vuln_scores ────────────────────────────────────────────────────
 
 fn get_vuln_scores_tool(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let p = Project::load_for(path);
     if p.vuln_scores.is_empty() {
         return ToolResult::ok("No vulnerability scores set for this binary yet.");
     }
     let mut scores: Vec<_> = p.vuln_scores.iter().collect();
     scores.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    let mut out = format!("Vulnerability scores for {} ({} functions scored):\n\n", path, scores.len());
+    let mut out = format!(
+        "Vulnerability scores for {} ({} functions scored):\n\n",
+        path,
+        scores.len()
+    );
     for (addr, score) in scores {
-        let badge = if *score >= 7 { "HIGH " } else if *score >= 4 { "MED  " } else { "LOW  " };
-        let name = p.renames.get(addr).map(|s| s.as_str()).unwrap_or("(unnamed)");
+        let badge = if *score >= 7 {
+            "HIGH "
+        } else if *score >= 4 {
+            "MED  "
+        } else {
+            "LOW  "
+        };
+        let name = p
+            .renames
+            .get(addr)
+            .map(|s| s.as_str())
+            .unwrap_or("(unnamed)");
         out.push_str(&format!(
             "  {}/10  [{}]  0x{:016x}  {}\n",
             score, badge, addr, name
@@ -3171,8 +3837,7 @@ fn build_pe_iat_map(data: &[u8]) -> std::collections::HashMap<u64, String> {
     let ptr_size: u64 = if pe.is_64 { 8 } else { 4 };
     if let Some(import_data) = &pe.import_data {
         for dll_entry in &import_data.import_data {
-            let iat_base_rva =
-                dll_entry.import_directory_entry.import_address_table_rva as u64;
+            let iat_base_rva = dll_entry.import_directory_entry.import_address_table_rva as u64;
             let dll = dll_entry.name.to_ascii_lowercase();
             let dll_stem = dll.trim_end_matches(".dll");
             let lut = match &dll_entry.import_lookup_table {
@@ -3196,14 +3861,16 @@ fn build_pe_iat_map(data: &[u8]) -> std::collections::HashMap<u64, String> {
 // ─── Tool: resolve_pe_imports ────────────────────────────────────────────────
 
 fn resolve_pe_imports(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
     };
     let pe = match goblin::Object::parse(&data) {
         Ok(goblin::Object::PE(p)) => p,
-        Ok(_)  => return ToolResult::err("Not a PE binary — use resolve_plt for ELF"),
+        Ok(_) => return ToolResult::err("Not a PE binary — use resolve_plt for ELF"),
         Err(e) => return ToolResult::err(format!("Cannot parse binary: {}", e)),
     };
     if pe.imports.is_empty() {
@@ -3222,8 +3889,7 @@ fn resolve_pe_imports(path: &str) -> ToolResult {
 
     if let Some(import_data) = &pe.import_data {
         for dll_entry in &import_data.import_data {
-            let iat_base_rva =
-                dll_entry.import_directory_entry.import_address_table_rva as u64;
+            let iat_base_rva = dll_entry.import_directory_entry.import_address_table_rva as u64;
             let dll_name_raw = dll_entry.name.to_ascii_lowercase();
             // Walk the import lookup table entries for this DLL
             let lut = if let Some(l) = &dll_entry.import_lookup_table {
@@ -3245,13 +3911,18 @@ fn resolve_pe_imports(path: &str) -> ToolResult {
 
     let mut out = format!(
         "PE imports ({} entries, image_base=0x{:016x}):\n\n  {:<20}  {:<30}  {}\n  {}\n",
-        pe.imports.len(), image_base,
-        "IAT slot address", "DLL", "Symbol",
+        pe.imports.len(),
+        image_base,
+        "IAT slot address",
+        "DLL",
+        "Symbol",
         "─".repeat(72)
     );
     for imp in &pe.imports {
         let key = (imp.dll.to_ascii_lowercase(), imp.name.to_string());
-        let vaddr = iat_map.get(&key).copied()
+        let vaddr = iat_map
+            .get(&key)
+            .copied()
             // Fall back to the name-table address if lookup failed (should not happen)
             .unwrap_or_else(|| image_base + imp.rva as u64);
         out.push_str(&format!(
@@ -3265,7 +3936,9 @@ fn resolve_pe_imports(path: &str) -> ToolResult {
 // ─── Tool: call_graph ────────────────────────────────────────────────────────
 
 fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -3288,7 +3961,8 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
         name_map.insert(*addr, name.clone());
     }
     let resolve_name = |addr: u64| -> String {
-        name_map.get(&addr)
+        name_map
+            .get(&addr)
             .cloned()
             .unwrap_or_else(|| format!("0x{:x}", addr))
     };
@@ -3320,7 +3994,7 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
         };
         let text_sec = match obj.sections().find(|s| s.name().ok() == Some(".text")) {
             Some(s) => s,
-            None    => return ToolResult::err("No .text section found"),
+            None => return ToolResult::err("No .text section found"),
         };
         let text_vaddr = text_sec.address();
         let text_bytes = match text_sec.data() {
@@ -3346,7 +4020,9 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
         };
         for sec in obj.sections() {
             let sec_name = sec.name().unwrap_or("");
-            if !crate::arch::is_code_section(sec_name) { continue; }
+            if !crate::arch::is_code_section(sec_name) {
+                continue;
+            }
             let sec_vaddr = sec.address();
             let sec_bytes = match sec.data() {
                 Ok(d) => d,
@@ -3355,7 +4031,7 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
             if let Ok(insns) = cs.disasm_all(sec_bytes, sec_vaddr) {
                 for insn in insns.as_ref() {
                     let mnemonic = insn.mnemonic().unwrap_or("");
-                    let op_str   = insn.op_str().unwrap_or("");
+                    let op_str = insn.op_str().unwrap_or("");
                     if crate::arch::is_direct_call(arch_class, mnemonic, op_str) {
                         if let Some(tgt) = crate::arch::parse_branch_target(op_str) {
                             let caller = find_fn(insn.address());
@@ -3368,7 +4044,9 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
     }
 
     if edges.is_empty() {
-        return ToolResult::ok("No direct calls found in .text (binary may use indirect calls only)");
+        return ToolResult::ok(
+            "No direct calls found in .text (binary may use indirect calls only)",
+        );
     }
 
     let mut out = format!("Call graph ({} callers):\n\n", edges.len());
@@ -3389,8 +4067,12 @@ fn call_graph(path: &str, _max_depth: usize) -> ToolResult {
 // ─── Tool: cfg_view ──────────────────────────────────────────────────────────
 
 fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -3402,11 +4084,16 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
 
     let arch_class = crate::arch::ArchClass::from_object(obj.architecture());
 
-    struct Block { start: u64, end: u64, instr_count: usize, succs: Vec<u64> }
+    struct Block {
+        start: u64,
+        end: u64,
+        instr_count: usize,
+        succs: Vec<u64>,
+    }
 
     let mut to_visit: Vec<u64> = vec![vaddr];
-    let mut visited:  HashSet<u64> = HashSet::new();
-    let mut blocks:   Vec<Block> = Vec::new();
+    let mut visited: HashSet<u64> = HashSet::new();
+    let mut blocks: Vec<Block> = Vec::new();
 
     if arch_class.is_x86() {
         use iced_x86::{Decoder, DecoderOptions, FlowControl};
@@ -3416,13 +4103,17 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
         };
 
         while let Some(addr) = to_visit.pop() {
-            if !visited.insert(addr) { continue; }
+            if !visited.insert(addr) {
+                continue;
+            }
 
             let file_off = match vaddr_to_file_offset(&data, addr) {
                 Some(o) => o,
-                None    => continue,
+                None => continue,
             };
-            if file_off >= data.len() { continue; }
+            if file_off >= data.len() {
+                continue;
+            }
 
             let slice = &data[file_off..data.len().min(file_off + 1024)];
             let mut dec = Decoder::with_ip(bitness, slice, addr, DecoderOptions::NONE);
@@ -3431,9 +4122,11 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
             let mut succs: Vec<u64> = Vec::new();
 
             for instr in &mut dec {
-                if instr.is_invalid() { break; }
+                if instr.is_invalid() {
+                    break;
+                }
                 last_ip = instr.ip();
-                count  += 1;
+                count += 1;
                 match instr.flow_control() {
                     FlowControl::Next | FlowControl::Call | FlowControl::IndirectCall => {}
                     FlowControl::UnconditionalBranch => {
@@ -3445,18 +4138,33 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
                         break;
                     }
                     FlowControl::ConditionalBranch => {
-                        let tgt  = instr.near_branch64();
+                        let tgt = instr.near_branch64();
                         let fall = instr.next_ip();
-                        if tgt  != 0 { to_visit.push(tgt);  succs.push(tgt);  }
-                        if fall != 0 { to_visit.push(fall); succs.push(fall); }
+                        if tgt != 0 {
+                            to_visit.push(tgt);
+                            succs.push(tgt);
+                        }
+                        if fall != 0 {
+                            to_visit.push(fall);
+                            succs.push(fall);
+                        }
                         break;
                     }
-                    _ => { break; }
+                    _ => {
+                        break;
+                    }
                 }
-                if count >= 200 { break; }
+                if count >= 200 {
+                    break;
+                }
             }
 
-            blocks.push(Block { start: addr, end: last_ip, instr_count: count, succs });
+            blocks.push(Block {
+                start: addr,
+                end: last_ip,
+                instr_count: count,
+                succs,
+            });
         }
     } else {
         // Capstone path for non-x86
@@ -3467,13 +4175,17 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
         let align = arch_class.insn_align().max(1) as u64;
 
         while let Some(addr) = to_visit.pop() {
-            if !visited.insert(addr) { continue; }
+            if !visited.insert(addr) {
+                continue;
+            }
 
             let file_off = match vaddr_to_file_offset(&data, addr) {
                 Some(o) => o,
-                None    => continue,
+                None => continue,
             };
-            if file_off >= data.len() { continue; }
+            if file_off >= data.len() {
+                continue;
+            }
 
             let slice = &data[file_off..data.len().min(file_off + 1024)];
             let mut count = 0usize;
@@ -3483,9 +4195,9 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
             if let Ok(insns) = cs.disasm_all(slice, addr) {
                 for insn in insns.as_ref() {
                     let mnemonic = insn.mnemonic().unwrap_or("");
-                    let op_str   = insn.op_str().unwrap_or("");
+                    let op_str = insn.op_str().unwrap_or("");
                     last_ip = insn.address();
-                    count  += 1;
+                    count += 1;
 
                     if crate::arch::is_return(arch_class, mnemonic, op_str) {
                         break;
@@ -3509,11 +4221,18 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
                     } else if crate::arch::is_direct_call(arch_class, mnemonic, op_str) {
                         // calls don't end a block
                     }
-                    if count >= 200 { break; }
+                    if count >= 200 {
+                        break;
+                    }
                 }
             }
 
-            blocks.push(Block { start: addr, end: last_ip, instr_count: count, succs });
+            blocks.push(Block {
+                start: addr,
+                end: last_ip,
+                instr_count: count,
+                succs,
+            });
         }
     }
 
@@ -3523,11 +4242,17 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
     blocks.sort_by_key(|b| b.start);
 
     // Assign block indices
-    let block_idx: HashMap<u64, usize> = blocks.iter().enumerate()
+    let block_idx: HashMap<u64, usize> = blocks
+        .iter()
+        .enumerate()
         .map(|(i, b)| (b.start, i))
         .collect();
 
-    let mut out = format!("CFG for function at 0x{:x} ({} basic blocks):\n\n", vaddr, blocks.len());
+    let mut out = format!(
+        "CFG for function at 0x{:x} ({} basic blocks):\n\n",
+        vaddr,
+        blocks.len()
+    );
     for (i, b) in blocks.iter().enumerate() {
         out.push_str(&format!(
             "  Block {:>3}: 0x{:x} → 0x{:x}  ({} instrs)\n",
@@ -3536,12 +4261,20 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
         if b.succs.is_empty() {
             out.push_str("              Successors: (return / indirect)\n");
         } else {
-            let succ_labels: Vec<String> = b.succs.iter()
-                .map(|a| block_idx.get(a)
-                    .map(|i| format!("Block {}", i))
-                    .unwrap_or_else(|| format!("0x{:x}", a)))
+            let succ_labels: Vec<String> = b
+                .succs
+                .iter()
+                .map(|a| {
+                    block_idx
+                        .get(a)
+                        .map(|i| format!("Block {}", i))
+                        .unwrap_or_else(|| format!("0x{:x}", a))
+                })
                 .collect();
-            out.push_str(&format!("              Successors: {}\n", succ_labels.join(", ")));
+            out.push_str(&format!(
+                "              Successors: {}\n",
+                succ_labels.join(", ")
+            ));
         }
     }
     ToolResult::ok(out)
@@ -3552,7 +4285,9 @@ fn cfg_view(path: &str, vaddr: u64) -> ToolResult {
 /// Scan every .pdata function for large stack frames (sub sp, sp, #N) that lack
 /// PACI or __security_cookie protection — classic stack buffer-overflow targets.
 fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
@@ -3562,27 +4297,39 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
         _ => return ToolResult::err("Not a PE binary"),
     };
     let image_base = pe.image_base as u64;
-    let min_frame = if min_frame_bytes == 0 { 256 } else { min_frame_bytes };
+    let min_frame = if min_frame_bytes == 0 {
+        256
+    } else {
+        min_frame_bytes
+    };
 
     // Build text section map: vaddr → file offset
-    let sections: Vec<_> = pe.sections.iter().map(|s| {
-        let va    = image_base + s.virtual_address as u64;
-        let foff  = s.pointer_to_raw_data as usize;
-        let fsize = s.size_of_raw_data as usize;
-        (va, s.virtual_size as u64, foff, fsize)
-    }).collect();
+    let sections: Vec<_> = pe
+        .sections
+        .iter()
+        .map(|s| {
+            let va = image_base + s.virtual_address as u64;
+            let foff = s.pointer_to_raw_data as usize;
+            let fsize = s.size_of_raw_data as usize;
+            (va, s.virtual_size as u64, foff, fsize)
+        })
+        .collect();
     let va_to_foff = |va: u64| -> Option<usize> {
         for &(sec_va, sec_vsz, sec_foff, sec_fsz) in &sections {
             if va >= sec_va && va < sec_va + sec_vsz {
                 let off = sec_foff + (va - sec_va) as usize;
-                if off < sec_foff + sec_fsz { return Some(off); }
+                if off < sec_foff + sec_fsz {
+                    return Some(off);
+                }
             }
         }
         None
     };
 
     // Iterate .pdata entries
-    let pdata = match pe.sections.iter()
+    let pdata = match pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
         .and_then(|s| s.data(&data).ok().flatten())
     {
@@ -3596,19 +4343,25 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
     let n = pdata.len() / 8;
     for i in 0..n {
         let off = i * 8;
-        let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
-        if begin_rva == 0 { continue; }
+        let begin_rva = u32::from_le_bytes(pdata[off..off + 4].try_into().unwrap_or([0; 4])) as u64;
+        if begin_rva == 0 {
+            continue;
+        }
         let fn_va = image_base + begin_rva;
-        let foff = match va_to_foff(fn_va) { Some(o) => o, None => continue };
+        let foff = match va_to_foff(fn_va) {
+            Some(o) => o,
+            None => continue,
+        };
         let end = (foff + 128).min(data.len());
-        if end <= foff { continue; }
+        if end <= foff {
+            continue;
+        }
         let bytes = &data[foff..end];
 
         // Check for PACI: 7f 23 03 d5 (pacibsp) or 5f 24 03 d5 (paciasp)
-        let has_paci = bytes.len() >= 4 && (
-            (bytes[0] == 0x7f && bytes[1] == 0x23 && bytes[2] == 0x03 && bytes[3] == 0xd5) ||
-            (bytes[0] == 0x5f && bytes[1] == 0x24 && bytes[2] == 0x03 && bytes[3] == 0xd5)
-        );
+        let has_paci = bytes.len() >= 4
+            && ((bytes[0] == 0x7f && bytes[1] == 0x23 && bytes[2] == 0x03 && bytes[3] == 0xd5)
+                || (bytes[0] == 0x5f && bytes[1] == 0x24 && bytes[2] == 0x03 && bytes[3] == 0xd5));
 
         // Check for __security_cookie canary: ADRP + LDR x8, [x8, #offset]
         // Pattern: look for `str x8, [sp, #N]` following `ldr x8, [xREG, #cookie_off]`
@@ -3625,14 +4378,21 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
             let mut j = 0usize;
             while j + 4 <= bytes.len() {
                 // STR x8, [sp, #offset]: word & 0xFFC003FF == 0xF90003E8
-                let w = u32::from_le_bytes([bytes[j], bytes[j+1], bytes[j+2], bytes[j+3]]);
+                let w = u32::from_le_bytes([bytes[j], bytes[j + 1], bytes[j + 2], bytes[j + 3]]);
                 if (w & 0xFFC003FF) == 0xF90003E8 {
                     // Check if preceded by LDR (not store) from .data-like page:
                     // ADRP within previous 8 instructions
                     let search_start = j.saturating_sub(32);
                     for k in (search_start..j).step_by(4) {
-                        if k + 4 > bytes.len() { break; }
-                        let wk = u32::from_le_bytes([bytes[k], bytes[k+1], bytes[k+2], bytes[k+3]]);
+                        if k + 4 > bytes.len() {
+                            break;
+                        }
+                        let wk = u32::from_le_bytes([
+                            bytes[k],
+                            bytes[k + 1],
+                            bytes[k + 2],
+                            bytes[k + 3],
+                        ]);
                         // ADRP: top 7 bits must be 0b1001000 = 0x48 (bits 31-24 = 0x90 or 0xb0 etc.)
                         // AArch64 ADRP encoding: op=1, 1 0 0 0 0, immhi, Rd — bits 28-31 = 1001
                         if (wk >> 24) & 0x9f == 0x90 {
@@ -3640,7 +4400,9 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
                             break;
                         }
                     }
-                    if found { break; }
+                    if found {
+                        break;
+                    }
                 }
                 j += 4;
             }
@@ -3652,16 +4414,20 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
         let mut frame_size: u64 = 0;
         let mut j = 0usize;
         while j + 4 <= bytes.len() {
-            let w = u32::from_le_bytes([bytes[j], bytes[j+1], bytes[j+2], bytes[j+3]]);
+            let w = u32::from_le_bytes([bytes[j], bytes[j + 1], bytes[j + 2], bytes[j + 3]]);
             // SUB SP, SP, #imm12 (shift=0): 0xD10003FF | (imm12 << 10)
             if (w & 0xFF0003FF) == 0xD10003FF {
                 let imm12 = ((w >> 10) & 0xFFF) as u64;
-                if imm12 > frame_size { frame_size = imm12; }
+                if imm12 > frame_size {
+                    frame_size = imm12;
+                }
             }
             // SUB SP, SP, #imm12 (shift=1, lsl 12): 0xD1400000 | (imm12 << 10) | 0x3FF
             if (w & 0xFF0003FF) == 0xD14003FF {
                 let imm12 = ((w >> 10) & 0xFFF) as u64;
-                if imm12 * 4096 > frame_size { frame_size = imm12 * 4096; }
+                if imm12 * 4096 > frame_size {
+                    frame_size = imm12 * 4096;
+                }
             }
             j += 4;
         }
@@ -3673,7 +4439,8 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
 
     if candidates.is_empty() {
         return ToolResult::ok(format!(
-            "No stack BOF candidates found (min_frame={} bytes, PACI/cookie excluded).", min_frame
+            "No stack BOF candidates found (min_frame={} bytes, PACI/cookie excluded).",
+            min_frame
         ));
     }
 
@@ -3682,16 +4449,24 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
         "Stack BOF candidates: {} function(s) with frame ≥ {} bytes and NO PACI/canary:\n\
          (Sorted by frame size descending. These functions have no return-address protection.)\n\n\
          {:<20}  {:>10}  {}\n{}\n",
-        candidates.len(), min_frame,
-        "Address", "Frame(B)", "Name",
+        candidates.len(),
+        min_frame,
+        "Address",
+        "Frame(B)",
+        "Name",
         "─".repeat(60)
     );
     for (va, fsz, _) in candidates.iter().take(50) {
-        let name = project.get_name(*va).unwrap_or_else(|| format!("FUN_{:016x}", va));
+        let name = project
+            .get_name(*va)
+            .unwrap_or_else(|| format!("FUN_{:016x}", va));
         out.push_str(&format!("  0x{:016x}  {:>10}  {}\n", va, fsz, name));
     }
     if candidates.len() > 50 {
-        out.push_str(&format!("\n  … and {} more (use min_frame_bytes to narrow)\n", candidates.len() - 50));
+        out.push_str(&format!(
+            "\n  … and {} more (use min_frame_bytes to narrow)\n",
+            candidates.len() - 50
+        ));
     }
     ToolResult::ok(out)
 }
@@ -3701,7 +4476,9 @@ fn stack_bof_candidates(path: &str, min_frame_bytes: u64) -> ToolResult {
 /// Map writable IAT slots to callers — shows which functions call through
 /// pointers that live in writable sections (exploitable without VirtualProtect).
 fn writable_iat_hijack_surface(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
@@ -3713,7 +4490,9 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
     let image_base = pe.image_base as u64;
 
     // Build set of writable section ranges
-    let writable_ranges: Vec<(u64, u64)> = pe.sections.iter()
+    let writable_ranges: Vec<(u64, u64)> = pe
+        .sections
+        .iter()
         .filter(|s| s.characteristics & 0x80000000 != 0) // IMAGE_SCN_MEM_WRITE
         .map(|s| {
             let va = image_base + s.virtual_address as u64;
@@ -3727,13 +4506,25 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
 
     // Filter to writable slots and prioritize by danger
     const HIGH_RISK: &[&str] = &[
-        "createremotethread", "writeprocessmemory", "virtualallocex", "virtualalloc",
-        "loadlibrary", "getprocaddress", "createprocess", "shellexecute", "winexec",
-        "connectnamedpipe", "createnamedpipe", "readprocessmemory",
-        "regsetvalueex", "cryptencrypt", "cryptdecrypt",
+        "createremotethread",
+        "writeprocessmemory",
+        "virtualallocex",
+        "virtualalloc",
+        "loadlibrary",
+        "getprocaddress",
+        "createprocess",
+        "shellexecute",
+        "winexec",
+        "connectnamedpipe",
+        "createnamedpipe",
+        "readprocessmemory",
+        "regsetvalueex",
+        "cryptencrypt",
+        "cryptdecrypt",
     ];
 
-    let mut writable_slots: Vec<(u64, String, bool)> = iat_map.iter()
+    let mut writable_slots: Vec<(u64, String, bool)> = iat_map
+        .iter()
         .filter(|(&va, _)| is_writable(va))
         .map(|(&va, name)| {
             let low = name.to_ascii_lowercase();
@@ -3745,18 +4536,24 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
 
     // Always report writable sections (even if IAT isn't in them — they may contain
     // function-pointer tables or read-only data that is exploitable without VirtualProtect).
-    let writable_sec_names: Vec<String> = pe.sections.iter()
+    let writable_sec_names: Vec<String> = pe
+        .sections
+        .iter()
         .filter(|s| s.characteristics & 0x80000000 != 0)
-        .filter_map(|s| s.name().ok().map(|n| {
-            let va = image_base + s.virtual_address as u64;
-            format!("{} (VA=0x{:x}, VSize=0x{:x})", n, va, s.virtual_size)
-        }))
+        .filter_map(|s| {
+            s.name().ok().map(|n| {
+                let va = image_base + s.virtual_address as u64;
+                format!("{} (VA=0x{:x}, VSize=0x{:x})", n, va, s.virtual_size)
+            })
+        })
         .collect();
 
     if writable_slots.is_empty() {
         let mut out = String::from("IAT is in read-only section — no writable IAT slots.\n\n");
         if !writable_sec_names.is_empty() {
-            out.push_str("WARNING: The following sections are writable (IMAGE_SCN_MEM_WRITE set).\n");
+            out.push_str(
+                "WARNING: The following sections are writable (IMAGE_SCN_MEM_WRITE set).\n",
+            );
             out.push_str("If they contain function pointers, vtables, or jump tables, those can\n");
             out.push_str("be overwritten without VirtualProtect:\n\n");
             for n in &writable_sec_names {
@@ -3770,34 +4567,45 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
     // We use the raw BL-scanner approach: scan for ADRP page matching the slot's upper bits,
     // then LDR from that page+offset, then BLR.
     // For efficiency: build a set of (adrp_page, ldr_offset) → slot_va pairs
-    let mut slot_callers: std::collections::HashMap<u64, Vec<u64>> = std::collections::HashMap::new();
+    let mut slot_callers: std::collections::HashMap<u64, Vec<u64>> =
+        std::collections::HashMap::new();
 
-    let text_sec = pe.sections.iter().find(|s| s.name().ok().map_or(false, |n| n == ".text"));
+    let text_sec = pe
+        .sections
+        .iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".text"));
     if let Some(text) = text_sec {
-        let text_va  = image_base + text.virtual_address as u64;
+        let text_va = image_base + text.virtual_address as u64;
         let text_foff = text.pointer_to_raw_data as usize;
-        let text_fsz  = text.size_of_raw_data as usize;
+        let text_fsz = text.size_of_raw_data as usize;
         if text_foff + text_fsz <= data.len() {
-            let text_bytes = &data[text_foff .. text_foff + text_fsz];
+            let text_bytes = &data[text_foff..text_foff + text_fsz];
             let n = text_bytes.len() & !3;
             // State machine: track ADRP page per register (simplified: track x8)
             // We only track the most common caller pattern: ADRP xN + LDR xN, [xN, #off] + BLR xN
             // Use a small per-position register file: reg_page[0..32]
             let mut adrp_page = [0u64; 32];
-            let mut reg_iat   = [0u64; 32]; // IAT slot VA if loaded from writable IAT
+            let mut reg_iat = [0u64; 32]; // IAT slot VA if loaded from writable IAT
             for i in (0..n).step_by(4) {
-                let w = u32::from_le_bytes([text_bytes[i], text_bytes[i+1], text_bytes[i+2], text_bytes[i+3]]);
+                let w = u32::from_le_bytes([
+                    text_bytes[i],
+                    text_bytes[i + 1],
+                    text_bytes[i + 2],
+                    text_bytes[i + 3],
+                ]);
                 let insn_va = text_va + i as u64;
                 let op31_24 = (w >> 24) as u8;
-                let rd  = (w & 0x1f) as usize;
-                let rn  = ((w >> 5) & 0x1f) as usize;
+                let rd = (w & 0x1f) as usize;
+                let rn = ((w >> 5) & 0x1f) as usize;
                 // ADRP: bits 31 = 1, 29-28 = 10, 24 = 1 → high nibble 1001xxxx (0x90-0x9f,0xb0-0xbf)
                 if (op31_24 & 0x9f) == 0x90 {
                     // ADRP Rd, #page: page = PC_aligned + signed_offset (pc-relative page)
                     // imm = immhi:immlo, sign-extended, << 12
                     let immlo = (w >> 29) & 0x3;
                     let immhi = (w >> 5) & 0x7FFFF;
-                    let imm = ((immhi << 2 | immlo) as i64).wrapping_shl(64 - 21).wrapping_shr(64 - 21 - 12);
+                    let imm = ((immhi << 2 | immlo) as i64)
+                        .wrapping_shl(64 - 21)
+                        .wrapping_shr(64 - 21 - 12);
                     let page = (insn_va & !0xfff).wrapping_add(imm as u64);
                     adrp_page[rd] = page;
                     reg_iat[rd] = 0;
@@ -3805,7 +4613,7 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
                 }
                 // LDR (unsigned offset, 64-bit): 0xF9400000 | (imm12 << 10) | (rn << 5) | rt
                 if (w & 0xFFC00000) == 0xF9400000 {
-                    let rt   = (w & 0x1f) as usize;
+                    let rt = (w & 0x1f) as usize;
                     let rn_l = ((w >> 5) & 0x1f) as usize;
                     let imm12 = ((w >> 10) & 0xfff) as u64;
                     let off = imm12 * 8; // size=8 (64-bit LDR) → offset = imm12 << 3
@@ -3845,29 +4653,49 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
         "Writable IAT hijack surface: {} total slots ({} HIGH-RISK)\n\
          An attacker with any write-what-where primitive can overwrite these IAT\n\
          slots (in writable sections) to redirect execution without VirtualProtect.\n\n",
-        writable_slots.len(), high_count
+        writable_slots.len(),
+        high_count
     );
 
     // Show high-risk slots with callers first
-    let sections_label = writable_ranges.iter()
+    let sections_label = writable_ranges
+        .iter()
         .filter_map(|&(lo, _)| {
-            pe.sections.iter().find(|s| image_base + s.virtual_address as u64 == lo)
-                .and_then(|s| s.name().ok()).map(|n| n.to_string())
+            pe.sections
+                .iter()
+                .find(|s| image_base + s.virtual_address as u64 == lo)
+                .and_then(|s| s.name().ok())
+                .map(|n| n.to_string())
         })
-        .collect::<Vec<_>>().join(", ");
-    out.push_str(&format!("  Writable sections containing IAT: {}\n\n", sections_label));
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.push_str(&format!(
+        "  Writable sections containing IAT: {}\n\n",
+        sections_label
+    ));
 
     for (slot_va, imp_name, high_risk) in &writable_slots {
-        let risk_label = if *high_risk { "[HIGH-RISK]" } else { "[  normal ]" };
-        out.push_str(&format!("  {} 0x{:016x}  {}\n", risk_label, slot_va, imp_name));
+        let risk_label = if *high_risk {
+            "[HIGH-RISK]"
+        } else {
+            "[  normal ]"
+        };
+        out.push_str(&format!(
+            "  {} 0x{:016x}  {}\n",
+            risk_label, slot_va, imp_name
+        ));
         if let Some(callers) = slot_callers.get(slot_va) {
             for &site in callers.iter().take(4) {
-                let fn_name = project.get_name(site)
+                let fn_name = project
+                    .get_name(site)
                     .unwrap_or_else(|| format!("FUN_{:016x}", site));
                 out.push_str(&format!("        called from 0x{:x} ({})\n", site, fn_name));
             }
             if callers.len() > 4 {
-                out.push_str(&format!("        … and {} more call sites\n", callers.len() - 4));
+                out.push_str(&format!(
+                    "        … and {} more call sites\n",
+                    callers.len() - 4
+                ));
             }
         }
     }
@@ -3880,7 +4708,9 @@ fn writable_iat_hijack_surface(path: &str) -> ToolResult {
 /// write/execute primitives (WriteProcessMemory/CreateRemoteThread) — process
 /// injection chains. Also reports functions containing any single high-risk combo.
 fn find_injection_chains(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read: {}", e)),
@@ -3893,18 +4723,29 @@ fn find_injection_chains(path: &str) -> ToolResult {
 
     // Categorise IAT slots into injection-phase buckets
     let iat_map = build_pe_iat_map(&data);
-    let mut alloc_slots: std::collections::HashSet<u64>  = std::collections::HashSet::new();
-    let mut write_slots: std::collections::HashSet<u64>  = std::collections::HashSet::new();
-    let mut exec_slots:  std::collections::HashSet<u64>  = std::collections::HashSet::new();
-    let mut pipe_slots:  std::collections::HashSet<u64>  = std::collections::HashSet::new();
+    let mut alloc_slots: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut write_slots: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut exec_slots: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut pipe_slots: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     for (&va, name) in &iat_map {
         let low = name.to_ascii_lowercase();
-        if low.contains("virtualalloc") || low.contains("heapalloc") { alloc_slots.insert(va); }
-        if low.contains("writeprocessmemory") || low.contains("ntwritevirtualmemory") { write_slots.insert(va); }
-        if low.contains("createremotethread") || low.contains("ntcreatethreadex")
-            || low.contains("rtlcreateuserthread") || low.contains("queueuserapc") { exec_slots.insert(va); }
-        if low.contains("namedpipe") || low.contains("connectnamedpipe") { pipe_slots.insert(va); }
+        if low.contains("virtualalloc") || low.contains("heapalloc") {
+            alloc_slots.insert(va);
+        }
+        if low.contains("writeprocessmemory") || low.contains("ntwritevirtualmemory") {
+            write_slots.insert(va);
+        }
+        if low.contains("createremotethread")
+            || low.contains("ntcreatethreadex")
+            || low.contains("rtlcreateuserthread")
+            || low.contains("queueuserapc")
+        {
+            exec_slots.insert(va);
+        }
+        if low.contains("namedpipe") || low.contains("connectnamedpipe") {
+            pipe_slots.insert(va);
+        }
     }
 
     if alloc_slots.is_empty() && write_slots.is_empty() && exec_slots.is_empty() {
@@ -3912,7 +4753,9 @@ fn find_injection_chains(path: &str) -> ToolResult {
     }
 
     // Scan .text for ADRP+LDR+BLR patterns, tracking which injection slots each function uses
-    let pdata = match pe.sections.iter()
+    let pdata = match pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
         .and_then(|s| s.data(&data).ok().flatten())
     {
@@ -3921,16 +4764,20 @@ fn find_injection_chains(path: &str) -> ToolResult {
     };
 
     // Build pdata function index: start_rva → end_rva
-    let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+    let rdata_range: Option<(u64, usize)> = pe
+        .sections
+        .iter()
         .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
         .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
     let mut fn_ranges: Vec<(u64, u64)> = Vec::new(); // (start_va, end_va)
     let num_pdata = pdata.len() / 8;
     for i in 0..num_pdata {
         let off = i * 8;
-        let begin_rva = u32::from_le_bytes(pdata[off..off+4].try_into().unwrap_or([0;4])) as u64;
-        if begin_rva == 0 { continue; }
-        let unwind_raw = u32::from_le_bytes(pdata[off+4..off+8].try_into().unwrap_or([0;4]));
+        let begin_rva = u32::from_le_bytes(pdata[off..off + 4].try_into().unwrap_or([0; 4])) as u64;
+        if begin_rva == 0 {
+            continue;
+        }
+        let unwind_raw = u32::from_le_bytes(pdata[off + 4..off + 8].try_into().unwrap_or([0; 4]));
         let flag = unwind_raw & 0x3;
         let fn_size: u64 = if flag != 0 {
             ((unwind_raw >> 2) & 0x7FF) as u64 * 4
@@ -3939,52 +4786,79 @@ fn find_injection_chains(path: &str) -> ToolResult {
             if ui_rva >= rdata_va {
                 let ui_off = rdata_foff + (ui_rva - rdata_va) as usize;
                 if ui_off + 4 <= data.len() {
-                    let ui_word = u32::from_le_bytes(data[ui_off..ui_off+4].try_into().unwrap_or([0;4]));
+                    let ui_word =
+                        u32::from_le_bytes(data[ui_off..ui_off + 4].try_into().unwrap_or([0; 4]));
                     (ui_word & 0x3_FFFF) as u64 * 4
-                } else { 512 }
-            } else { 512 }
-        } else { 512 };
+                } else {
+                    512
+                }
+            } else {
+                512
+            }
+        } else {
+            512
+        };
         let start_va = image_base + begin_rva;
-        let end_va   = start_va + fn_size.max(64);
+        let end_va = start_va + fn_size.max(64);
         fn_ranges.push((start_va, end_va));
     }
 
-    let text_sec = pe.sections.iter().find(|s| s.name().ok().map_or(false, |n| n == ".text"));
+    let text_sec = pe
+        .sections
+        .iter()
+        .find(|s| s.name().ok().map_or(false, |n| n == ".text"));
     let (text_va_base, text_foff, text_fsz) = match text_sec {
-        Some(s) => (image_base + s.virtual_address as u64, s.pointer_to_raw_data as usize, s.size_of_raw_data as usize),
+        Some(s) => (
+            image_base + s.virtual_address as u64,
+            s.pointer_to_raw_data as usize,
+            s.size_of_raw_data as usize,
+        ),
         None => return ToolResult::err("No .text section"),
     };
-    if text_foff + text_fsz > data.len() { return ToolResult::err("Truncated .text"); }
-    let text_bytes = &data[text_foff .. text_foff + text_fsz];
+    if text_foff + text_fsz > data.len() {
+        return ToolResult::err("Truncated .text");
+    }
+    let text_bytes = &data[text_foff..text_foff + text_fsz];
 
     // For each function, scan its bytes for injection-related BLR targets
     let project = Project::load_for(path);
     let mut injection_fns: Vec<(u64, Vec<String>, String)> = Vec::new(); // (fn_va, used_imports, chain_kind)
 
     for &(fn_va, fn_end) in &fn_ranges {
-        if fn_va < text_va_base || fn_end <= fn_va { continue; }
+        if fn_va < text_va_base || fn_end <= fn_va {
+            continue;
+        }
         let fn_foff = (fn_va - text_va_base) as usize;
         let fn_size = ((fn_end - fn_va) as usize).min(65536);
-        if fn_foff + fn_size > text_bytes.len() { continue; }
-        let fn_bytes = &text_bytes[fn_foff .. fn_foff + fn_size];
+        if fn_foff + fn_size > text_bytes.len() {
+            continue;
+        }
+        let fn_bytes = &text_bytes[fn_foff..fn_foff + fn_size];
 
         let mut adrp_page = [0u64; 32];
-        let mut reg_iat   = [0u64; 32];
+        let mut reg_iat = [0u64; 32];
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let n = fn_bytes.len() & !3;
         for i in (0..n).step_by(4) {
-            let w = u32::from_le_bytes([fn_bytes[i], fn_bytes[i+1], fn_bytes[i+2], fn_bytes[i+3]]);
+            let w = u32::from_le_bytes([
+                fn_bytes[i],
+                fn_bytes[i + 1],
+                fn_bytes[i + 2],
+                fn_bytes[i + 3],
+            ]);
             let insn_va = fn_va + i as u64;
             let op31_24 = (w >> 24) as u8;
-            let rd  = (w & 0x1f) as usize;
-            let rn  = ((w >> 5) & 0x1f) as usize;
+            let rd = (w & 0x1f) as usize;
+            let rn = ((w >> 5) & 0x1f) as usize;
 
             // ADRP
             if (op31_24 & 0x9f) == 0x90 {
                 let immlo = (w >> 29) & 0x3;
                 let immhi = (w >> 5) & 0x7FFFF;
-                let imm = ((immhi << 2 | immlo) as i64).wrapping_shl(64 - 21).wrapping_shr(64 - 21 - 12);
+                let imm = ((immhi << 2 | immlo) as i64)
+                    .wrapping_shl(64 - 21)
+                    .wrapping_shr(64 - 21 - 12);
                 let page = (insn_va & !0xfff).wrapping_add(imm as u64);
                 adrp_page[rd] = page;
                 reg_iat[rd] = 0;
@@ -3992,11 +4866,15 @@ fn find_injection_chains(path: &str) -> ToolResult {
             }
             // LDR 64-bit unsigned offset
             if (w & 0xFFC00000) == 0xF9400000 {
-                let rt   = (w & 0x1f) as usize;
+                let rt = (w & 0x1f) as usize;
                 let rn_l = ((w >> 5) & 0x1f) as usize;
                 let imm12 = ((w >> 10) & 0xfff) as u64;
                 let slot_va = adrp_page[rn_l].wrapping_add(imm12 * 8);
-                reg_iat[rt] = if iat_map.contains_key(&slot_va) { slot_va } else { 0 };
+                reg_iat[rt] = if iat_map.contains_key(&slot_va) {
+                    slot_va
+                } else {
+                    0
+                };
                 continue;
             }
             // BLR
@@ -4014,39 +4892,67 @@ fn find_injection_chains(path: &str) -> ToolResult {
                 let imm26 = w & 0x3FF_FFFF;
                 let signed_off: i64 = if imm26 & 0x200_0000 != 0 {
                     (imm26 as i64) | (-1i64 << 26)
-                } else { imm26 as i64 };
+                } else {
+                    imm26 as i64
+                };
                 let tgt = fn_va.wrapping_add((i as u64).wrapping_add((signed_off * 4) as u64));
-                if let Some(imp) = iat_map.get(&tgt) { used.insert(imp.clone()); }
+                if let Some(imp) = iat_map.get(&tgt) {
+                    used.insert(imp.clone());
+                }
                 continue;
             }
             // Clear iat tracking on write
-            if rd < 32 { reg_iat[rd] = 0; }
+            if rd < 32 {
+                reg_iat[rd] = 0;
+            }
             let _ = rn;
         }
 
-        if used.is_empty() { continue; }
+        if used.is_empty() {
+            continue;
+        }
         // Check for injection-phase combinations.
         // Require at least TWO distinct phases to avoid false-positives on
         // browser/IPC code that legitimately uses individual primitives in
         // isolation (e.g. a sandbox bootstrap that only allocates, or a pipe
         // function that only uses named-pipe APIs without any exec primitive).
-        let has_alloc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("virtualallocex") || l.contains("ntalloc") });
-        let has_write = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("writeprocessmemory") || l.contains("ntwritevirtualmemory") });
-        let has_exec  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("createremotethread") || l.contains("ntcreatethreadex") || l.contains("rtlcreateuserthread") || l.contains("queueuserapc") });
+        let has_alloc = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("virtualallocex") || l.contains("ntalloc")
+        });
+        let has_write = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("writeprocessmemory") || l.contains("ntwritevirtualmemory")
+        });
+        let has_exec = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("createremotethread")
+                || l.contains("ntcreatethreadex")
+                || l.contains("rtlcreateuserthread")
+                || l.contains("queueuserapc")
+        });
         // Named-pipe alone is not an injection chain; only flag if combined
         // with a memory-write or exec primitive (e.g. pipe + LoadLibrary + OpenProcess).
-        let has_pipe  = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("namedpipe") || l.contains("connectnamedpipe") });
-        let has_loadlib = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("loadlibrary") });
-        let has_openproc = used.iter().any(|u| { let l = u.to_ascii_lowercase(); l.contains("openprocess") });
+        let has_pipe = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("namedpipe") || l.contains("connectnamedpipe")
+        });
+        let has_loadlib = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("loadlibrary")
+        });
+        let has_openproc = used.iter().any(|u| {
+            let l = u.to_ascii_lowercase();
+            l.contains("openprocess")
+        });
 
         // True injection chain: must involve at least two of alloc/write/exec,
         // OR a pipe broker that combines OpenProcess + LoadLibrary (dynamic
         // library loading into a foreign process via IPC).
-        let is_injection =
-            (has_alloc && has_write) ||
-            (has_alloc && has_exec)  ||
-            (has_write && has_exec)  ||
-            (has_pipe && has_loadlib && has_openproc);
+        let is_injection = (has_alloc && has_write)
+            || (has_alloc && has_exec)
+            || (has_write && has_exec)
+            || (has_pipe && has_loadlib && has_openproc);
         if is_injection {
             // Annotate the kind of chain
             let chain_kind = if has_alloc && has_write && has_exec {
@@ -4075,15 +4981,24 @@ fn find_injection_chains(path: &str) -> ToolResult {
         out.push_str("No direct injection chains found in individual functions.\n");
         out.push_str("(Injection may be split across multiple callers — check call_graph.)\n\n");
         out.push_str("IAT entries available for injection:\n");
-        for va in alloc_slots.iter().chain(write_slots.iter()).chain(exec_slots.iter()) {
+        for va in alloc_slots
+            .iter()
+            .chain(write_slots.iter())
+            .chain(exec_slots.iter())
+        {
             if let Some(n) = iat_map.get(va) {
                 out.push_str(&format!("  0x{:016x}  {}\n", va, n));
             }
         }
     } else {
-        out.push_str(&format!("{} function(s) contain injection-capable API combinations:\n\n", injection_fns.len()));
+        out.push_str(&format!(
+            "{} function(s) contain injection-capable API combinations:\n\n",
+            injection_fns.len()
+        ));
         for (va, apis, kind) in &injection_fns {
-            let name = project.get_name(*va).unwrap_or_else(|| format!("FUN_{:016x}", va));
+            let name = project
+                .get_name(*va)
+                .unwrap_or_else(|| format!("FUN_{:016x}", va));
             out.push_str(&format!("  0x{:016x}  {}  {}\n", va, kind, name));
             for api in apis {
                 out.push_str(&format!("      {}\n", api));
@@ -4096,7 +5011,9 @@ fn find_injection_chains(path: &str) -> ToolResult {
 // ─── Tool: scan_vulnerabilities ──────────────────────────────────────────────
 
 fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -4108,8 +5025,13 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
     };
 
     // ── Determine .text section bounds for filtering library code ────────────
-    let (text_vaddr, text_end) = obj.sections()
-        .find(|s| s.name().ok().map_or(false, |n| n == ".text" || n == "__text" || n.ends_with(",__text")))
+    let (text_vaddr, text_end) = obj
+        .sections()
+        .find(|s| {
+            s.name().ok().map_or(false, |n| {
+                n == ".text" || n == "__text" || n.ends_with(",__text")
+            })
+        })
         .map(|s| (s.address(), s.address() + s.size()))
         .unwrap_or((0, u64::MAX));
 
@@ -4123,8 +5045,11 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
             }
             // Skip obvious libc/runtime symbols in statically-linked binaries
             let name = s.name().unwrap_or("");
-            if name.starts_with("__") || name.starts_with("_dl_") || name.starts_with("_IO_")
-                || name.starts_with("_obstack") || name.starts_with("_nss_")
+            if name.starts_with("__")
+                || name.starts_with("_dl_")
+                || name.starts_with("_IO_")
+                || name.starts_with("_obstack")
+                || name.starts_with("_nss_")
             {
                 return false;
             }
@@ -4132,7 +5057,8 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         })
         .map(|s| {
             let addr = s.address();
-            let name = project.get_name(addr)
+            let name = project
+                .get_name(addr)
                 .or_else(|| s.name().ok().map(|n| n.to_string()))
                 .unwrap_or_else(|| format!("FUN_{:x}", addr));
             (addr, name)
@@ -4151,10 +5077,14 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
     if fn_addrs.is_empty() {
         if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
             let image_base = pe.image_base as u64;
-            let rdata_range: Option<(u64, usize)> = pe.sections.iter()
+            let rdata_range: Option<(u64, usize)> = pe
+                .sections
+                .iter()
                 .find(|s| s.name().ok().map_or(false, |n| n == ".rdata"))
                 .map(|s| (s.virtual_address as u64, s.pointer_to_raw_data as usize));
-            if let Some(pdata_bytes) = pe.sections.iter()
+            if let Some(pdata_bytes) = pe
+                .sections
+                .iter()
                 .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
                 .and_then(|s| s.data(&data).ok().flatten())
             {
@@ -4162,15 +5092,20 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
                 let mut pdata_fns: Vec<u64> = Vec::with_capacity(num);
                 for i in 0..num {
                     let off = i * 8;
-                    let begin_rva = u32::from_le_bytes(pdata_bytes[off..off+4].try_into().unwrap_or([0;4])) as u64;
-                    if begin_rva == 0 { continue; }
+                    let begin_rva =
+                        u32::from_le_bytes(pdata_bytes[off..off + 4].try_into().unwrap_or([0; 4]))
+                            as u64;
+                    if begin_rva == 0 {
+                        continue;
+                    }
                     pdata_fns.push(image_base + begin_rva);
                 }
                 pdata_fns.dedup();
                 pdata_fns.truncate(max_fns);
                 let _ = rdata_range; // used in list_functions path
                 for addr in pdata_fns {
-                    let name = project.get_name(addr)
+                    let name = project
+                        .get_name(addr)
                         .unwrap_or_else(|| format!("FUN_{:016x}", addr));
                     fn_addrs.push((addr, name));
                 }
@@ -4181,7 +5116,9 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
     // ── Prologue scan fallback (stripped ELF / Mach-O) ────────────────────────
     if fn_addrs.is_empty() {
         let text_sec_opt = obj.sections().find(|s| {
-            s.name().ok().map_or(false, |n| n == ".text" || n == "__text" || n.ends_with(",__text"))
+            s.name().ok().map_or(false, |n| {
+                n == ".text" || n == "__text" || n.ends_with(",__text")
+            })
         });
         if let Some(ts) = text_sec_opt {
             if let Ok(text_bytes) = ts.data() {
@@ -4213,9 +5150,7 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
                     }
                     i += if matches!(
                         arch,
-                        Architecture::Aarch64
-                            | Architecture::Aarch64_Ilp32
-                            | Architecture::Arm
+                        Architecture::Aarch64 | Architecture::Aarch64_Ilp32 | Architecture::Arm
                     ) {
                         4
                     } else {
@@ -4224,7 +5159,8 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
                 }
                 found.truncate(max_fns);
                 for addr in found {
-                    let name = project.get_name(addr)
+                    let name = project
+                        .get_name(addr)
                         .unwrap_or_else(|| format!("FUN_{:x}", addr));
                     fn_addrs.push((addr, name));
                 }
@@ -4248,18 +5184,22 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         return ToolResult::ok(match pe_audit {
             Some(audit) => format!(
                 "No functions found to scan (no symbols / prologues detected).\n\
-                 Running PE security audit instead:\n\n{}", audit),
-            None => "No functions found to scan (no symbols and no recognised prologues in .text). \
-                     Try running list_functions first.".to_string(),
+                 Running PE security audit instead:\n\n{}",
+                audit
+            ),
+            None => {
+                "No functions found to scan (no symbols and no recognised prologues in .text). \
+                     Try running list_functions first."
+                    .to_string()
+            }
         });
     }
 
     // Dangerous function patterns to watch for
     const DANGEROUS: &[&str] = &[
-        "gets", "strcpy", "strcat", "sprintf", "vsprintf", "scanf", "fscanf",
-        "sscanf", "memcpy", "memmove", "strncpy", "strncat", "snprintf",
-        "printf", "fprintf", "system", "popen", "exec", "execve",
-        "malloc", "free", "realloc",
+        "gets", "strcpy", "strcat", "sprintf", "vsprintf", "scanf", "fscanf", "sscanf", "memcpy",
+        "memmove", "strncpy", "strncat", "snprintf", "printf", "fprintf", "system", "popen",
+        "exec", "execve", "malloc", "free", "realloc",
     ];
 
     // For PE binaries always prepend the header-level hardening audit.
@@ -4289,15 +5229,31 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
          For each function, call set_vuln_score(path, vaddr, score) with:\n\
            0 = clean, 1-3 = low risk, 4-6 = medium, 7-9 = high, 10 = critical\n\n\
          {}\n\n",
-        pe_audit_prefix, path, fn_addrs.len(), "═".repeat(72)
+        pe_audit_prefix,
+        path,
+        fn_addrs.len(),
+        "═".repeat(72)
     );
 
     // Windows API danger patterns (function name substrings, case-insensitive)
     const DANGEROUS_WIN: &[&str] = &[
-        "createremotethread", "virtualalloc", "writeprocessmemory", "readprocessmemory",
-        "createprocess", "shellexecute", "winexec", "loadlibrary", "getprocaddress",
-        "connectnamedpipe", "createnamedpipe", "wsastartup", "connect",
-        "regsetvalue", "regopenkey", "cryptencrypt", "cryptdecrypt",
+        "createremotethread",
+        "virtualalloc",
+        "writeprocessmemory",
+        "readprocessmemory",
+        "createprocess",
+        "shellexecute",
+        "winexec",
+        "loadlibrary",
+        "getprocaddress",
+        "connectnamedpipe",
+        "createnamedpipe",
+        "wsastartup",
+        "connect",
+        "regsetvalue",
+        "regopenkey",
+        "cryptencrypt",
+        "cryptdecrypt",
     ];
 
     for (vaddr, name) in &fn_addrs {
@@ -4319,14 +5275,22 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
         // Scan for C-library dangerous functions
         let c_hits: Vec<&&str> = DANGEROUS.iter().filter(|&&d| lower.contains(d)).collect();
         // Scan for Windows API dangerous functions
-        let win_hits: Vec<&&str> = DANGEROUS_WIN.iter().filter(|&&d| lower.contains(d)).collect();
+        let win_hits: Vec<&&str> = DANGEROUS_WIN
+            .iter()
+            .filter(|&&d| lower.contains(d))
+            .collect();
 
         if !c_hits.is_empty() || !win_hits.is_empty() {
-            let all: Vec<&str> = c_hits.iter().map(|s| **s)
+            let all: Vec<&str> = c_hits
+                .iter()
+                .map(|s| **s)
                 .chain(win_hits.iter().map(|s| **s))
                 .collect();
-            out.push_str(&format!("  ⚠ Static flags (from {}): [{}]\n",
-                source, all.join(", ")));
+            out.push_str(&format!(
+                "  ⚠ Static flags (from {}): [{}]\n",
+                source,
+                all.join(", ")
+            ));
         } else {
             out.push_str(&format!("  [source: {}]\n", source));
         }
@@ -4340,13 +5304,19 @@ fn scan_vulnerabilities(path: &str, max_fns: usize) -> ToolResult {
 // ─── Tool: set_vuln_score ────────────────────────────────────────────────────
 
 fn set_vuln_score(path: &str, vaddr: u64, score: u8) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
     let mut p = Project::load_for(path);
     p.set_vuln_score(vaddr, score);
     match p.save() {
-        Ok(_)  => ToolResult::ok(format!(
-            "Vulnerability score for 0x{:x} set to {}/10", vaddr, score.min(10)
+        Ok(_) => ToolResult::ok(format!(
+            "Vulnerability score for 0x{:x} set to {}/10",
+            vaddr,
+            score.min(10)
         )),
         Err(e) => ToolResult::err(format!("Could not save project: {}", e)),
     }
@@ -4355,12 +5325,17 @@ fn set_vuln_score(path: &str, vaddr: u64, score: u8) -> ToolResult {
 // ─── Tool: explain_function ──────────────────────────────────────────────────
 
 fn explain_function(path: &str, vaddr: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let pseudo_c = decompile_safe(path, vaddr);
-    let project  = Project::load_for(path);
-    let fn_name  = project.get_name(vaddr)
+    let project = Project::load_for(path);
+    let fn_name = project
+        .get_name(vaddr)
         .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
 
     // ── Gather callers ────────────────────────────────────────────────────────
@@ -4369,24 +5344,43 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
         if xr.is_empty() {
             String::new()
         } else {
-            let lines: Vec<String> = xr.iter().take(10).map(|(caller_addr, site)| {
-                let caller_name = project.get_name(*caller_addr)
-                    .unwrap_or_else(|| format!("FUN_{:x}", caller_addr));
-                format!("  0x{:x}  {}  (caller: {})", site, caller_name, caller_name)
-            }).collect();
+            let lines: Vec<String> = xr
+                .iter()
+                .take(10)
+                .map(|(caller_addr, site)| {
+                    let caller_name = project
+                        .get_name(*caller_addr)
+                        .unwrap_or_else(|| format!("FUN_{:x}", caller_addr));
+                    format!("  0x{:x}  {}  (caller: {})", site, caller_name, caller_name)
+                })
+                .collect();
             format!("\nCallers ({}):\n{}\n", xr.len(), lines.join("\n"))
         }
     };
 
     // ── Existing signature context ────────────────────────────────────────────
     let sig_section = if let Some(sig) = project.get_signature(vaddr) {
-        let ret  = sig.return_type.as_deref().unwrap_or("?");
-        let params: Vec<String> = sig.param_types.iter().enumerate().map(|(i, pt)| {
-            let t = pt.as_deref().unwrap_or("?");
-            let n = sig.param_names.get(i).and_then(|x| x.as_deref()).unwrap_or("_");
-            format!("{} {}", t, n)
-        }).collect();
-        format!("\nKnown signature: {} {}({})\n", ret, fn_name, params.join(", "))
+        let ret = sig.return_type.as_deref().unwrap_or("?");
+        let params: Vec<String> = sig
+            .param_types
+            .iter()
+            .enumerate()
+            .map(|(i, pt)| {
+                let t = pt.as_deref().unwrap_or("?");
+                let n = sig
+                    .param_names
+                    .get(i)
+                    .and_then(|x| x.as_deref())
+                    .unwrap_or("_");
+                format!("{} {}", t, n)
+            })
+            .collect();
+        format!(
+            "\nKnown signature: {} {}({})\n",
+            ret,
+            fn_name,
+            params.join(", ")
+        )
     } else {
         String::new()
     };
@@ -4411,10 +5405,18 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
          to persist all annotations in one call.\n\
          Then call decompile(path='{}', vaddr={}) to confirm the renamed output.\n\
          Then call set_vuln_score(path='{}', vaddr={}, score=<0-10>).\n",
-        fn_name, vaddr, path,
-        sig_section, callers_section,
+        fn_name,
+        vaddr,
+        path,
+        sig_section,
+        callers_section,
         pseudo_c,
-        path, vaddr, path, vaddr, path, vaddr
+        path,
+        vaddr,
+        path,
+        vaddr,
+        path,
+        vaddr
     );
     ToolResult::ok(out)
 }
@@ -4423,17 +5425,23 @@ fn explain_function(path: &str, vaddr: u64) -> ToolResult {
 /// Extracted so explain_function can use it without re-parsing the text output.
 fn xrefs_to_inner(path: &str, target: u64) -> Vec<(u64, u64)> {
     let result = xrefs_to(path, target);
-    if result.output.starts_with("Error:") { return Vec::new(); }
+    if result.output.starts_with("Error:") {
+        return Vec::new();
+    }
     let mut pairs = Vec::new();
     for line in result.output.lines() {
         // Lines look like: "  0xSITE  FUN_XXXXXXXXXXXXXXXX  direct BL"
         let line = line.trim();
-        if !line.starts_with("0x") { continue; }
+        if !line.starts_with("0x") {
+            continue;
+        }
         let mut tokens = line.split_whitespace();
-        let site_str  = tokens.next().unwrap_or("");
-        let fn_token  = tokens.next().unwrap_or("");
+        let site_str = tokens.next().unwrap_or("");
+        let fn_token = tokens.next().unwrap_or("");
         let site = u64::from_str_radix(site_str.trim_start_matches("0x"), 16).unwrap_or(0);
-        if site == 0 { continue; }
+        if site == 0 {
+            continue;
+        }
         let fn_vaddr = if fn_token.to_ascii_uppercase().starts_with("FUN_") {
             u64::from_str_radix(&fn_token[4..], 16).unwrap_or(0)
         } else {
@@ -4451,33 +5459,55 @@ fn xrefs_to_inner(path: &str, target: u64) -> Vec<(u64, u64)> {
 /// Patterns use 0xFF as a wildcard nibble pair (match any byte).
 const LIB_SIGS: &[(&str, &[u8], usize)] = &[
     // (name, first_bytes, match_len)  — 0xFF = wildcard
-    ("__stack_chk_fail",       &[0xf3,0x0f,0x1e,0xfa,0x48,0x8b,0x05], 7),
-    ("__libc_start_main",      &[0xf3,0x0f,0x1e,0xfa,0x41,0x57,0x49], 7),
+    (
+        "__stack_chk_fail",
+        &[0xf3, 0x0f, 0x1e, 0xfa, 0x48, 0x8b, 0x05],
+        7,
+    ),
+    (
+        "__libc_start_main",
+        &[0xf3, 0x0f, 0x1e, 0xfa, 0x41, 0x57, 0x49],
+        7,
+    ),
     // endbr64 + sub rsp,N prologues common in glibc leaf fns
-    ("memset",                  &[0xf3,0x0f,0x1e,0xfa,0x49,0x89,0xfa], 7),
-    ("memcpy",                  &[0xf3,0x0f,0x1e,0xfa,0x49,0x89,0xd1], 7),
-    ("strlen",                  &[0xf3,0x0f,0x1e,0xfa,0x48,0x85,0xff], 7),
-    ("strcmp",                  &[0xf3,0x0f,0x1e,0xfa,0x48,0x85,0xd2], 7),
-    ("malloc_usable_size",      &[0xf3,0x0f,0x1e,0xfa,0x48,0x85,0xff,0x74], 8),
+    ("memset", &[0xf3, 0x0f, 0x1e, 0xfa, 0x49, 0x89, 0xfa], 7),
+    ("memcpy", &[0xf3, 0x0f, 0x1e, 0xfa, 0x49, 0x89, 0xd1], 7),
+    ("strlen", &[0xf3, 0x0f, 0x1e, 0xfa, 0x48, 0x85, 0xff], 7),
+    ("strcmp", &[0xf3, 0x0f, 0x1e, 0xfa, 0x48, 0x85, 0xd2], 7),
+    (
+        "malloc_usable_size",
+        &[0xf3, 0x0f, 0x1e, 0xfa, 0x48, 0x85, 0xff, 0x74],
+        8,
+    ),
     // Thunk stubs from compiler
-    ("__x86_get_pc_thunk_bx",   &[0x8b,0x1c,0x24,0xc3], 4),
-    ("__x86_get_pc_thunk_cx",   &[0x8b,0x0c,0x24,0xc3], 4),
+    ("__x86_get_pc_thunk_bx", &[0x8b, 0x1c, 0x24, 0xc3], 4),
+    ("__x86_get_pc_thunk_cx", &[0x8b, 0x0c, 0x24, 0xc3], 4),
     // Common CRT patterns
-    ("_start",                  &[0x31,0xed,0x49,0x89,0xd1], 5),
-    ("__do_global_dtors_aux",   &[0xf3,0x0f,0x1e,0xfa,0x80,0x3d], 6),
-    ("frame_dummy",             &[0xf3,0x0f,0x1e,0xfa,0xe9], 5),
+    ("_start", &[0x31, 0xed, 0x49, 0x89, 0xd1], 5),
+    (
+        "__do_global_dtors_aux",
+        &[0xf3, 0x0f, 0x1e, 0xfa, 0x80, 0x3d],
+        6,
+    ),
+    ("frame_dummy", &[0xf3, 0x0f, 0x1e, 0xfa, 0xe9], 5),
 ];
 
 fn matches_sig(fn_bytes: &[u8], pattern: &[u8], len: usize) -> bool {
-    if fn_bytes.len() < len { return false; }
+    if fn_bytes.len() < len {
+        return false;
+    }
     for i in 0..len {
-        if pattern[i] != 0xff && fn_bytes[i] != pattern[i] { return false; }
+        if pattern[i] != 0xff && fn_bytes[i] != pattern[i] {
+            return false;
+        }
     }
     true
 }
 
 fn identify_library_functions(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => return ToolResult::err(format!("Cannot read '{}': {}", path, e)),
@@ -4523,8 +5553,8 @@ fn identify_library_functions(path: &str) -> ToolResult {
         if arch_class.is_x86() {
             while i + 4 <= len {
                 let b = &text_bytes[i..];
-                if (b[0]==0xf3&&b[1]==0x0f&&b[2]==0x1e&&b[3]==0xfa)
-                   || (b[0]==0x55&&b[1]==0x48&&b[2]==0x89&&b[3]==0xe5)
+                if (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
+                    || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
                 {
                     candidates.push(text_vaddr + i as u64);
                 }
@@ -4533,8 +5563,8 @@ fn identify_library_functions(path: &str) -> ToolResult {
         } else {
             // Use arch-specific prologue patterns from arch module
             let prologue_patterns: &[([u8; 4], [u8; 4])] = match arch_class {
-                crate::arch::ArchClass::Arm64   => crate::arch::AARCH64_PROLOGUES,
-                crate::arch::ArchClass::Arm     => crate::arch::ARM32_PROLOGUES,
+                crate::arch::ArchClass::Arm64 => crate::arch::AARCH64_PROLOGUES,
+                crate::arch::ArchClass::Arm => crate::arch::ARM32_PROLOGUES,
                 crate::arch::ArchClass::Mips { .. } => crate::arch::MIPS_PROLOGUES,
                 crate::arch::ArchClass::RiscV { .. } => crate::arch::RISCV_PROLOGUES,
                 _ => &[],
@@ -4562,14 +5592,24 @@ fn identify_library_functions(path: &str) -> ToolResult {
     }
 
     if matches.is_empty() {
-        return ToolResult::ok("No known library function signatures matched. \
-            This binary may use a different glibc version or is statically linked differently.");
+        return ToolResult::ok(
+            "No known library function signatures matched. \
+            This binary may use a different glibc version or is statically linked differently.",
+        );
     }
 
     let _ = project.save();
 
-    let mut out = format!("Identified {} library functions (saved to project):\n\n", matches.len());
-    out.push_str(&format!("  {:<20}  {}\n  {}\n", "Address", "Identified as", "─".repeat(50)));
+    let mut out = format!(
+        "Identified {} library functions (saved to project):\n\n",
+        matches.len()
+    );
+    out.push_str(&format!(
+        "  {:<20}  {}\n  {}\n",
+        "Address",
+        "Identified as",
+        "─".repeat(50)
+    ));
     for (vaddr, name) in &matches {
         out.push_str(&format!("  0x{:016x}  {}\n", vaddr, name));
     }
@@ -4593,20 +5633,34 @@ fn binary_fn_hash(data: &[u8], vaddr: u64, size: u64) -> u64 {
 }
 
 fn diff_binary(path_a: &str, path_b: &str) -> ToolResult {
-    if path_a.is_empty() { return ToolResult::err("'path_a' is required"); }
-    if path_b.is_empty() { return ToolResult::err("'path_b' is required"); }
+    if path_a.is_empty() {
+        return ToolResult::err("'path_a' is required");
+    }
+    if path_b.is_empty() {
+        return ToolResult::err("'path_b' is required");
+    }
 
     let read = |p: &str| std::fs::read(p).map_err(|e| format!("Cannot read '{}': {}", p, e));
-    let data_a = match read(path_a) { Ok(d) => d, Err(e) => return ToolResult::err(e) };
-    let data_b = match read(path_b) { Ok(d) => d, Err(e) => return ToolResult::err(e) };
+    let data_a = match read(path_a) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(e),
+    };
+    let data_b = match read(path_b) {
+        Ok(d) => d,
+        Err(e) => return ToolResult::err(e),
+    };
 
     let obj_a = match object::File::parse(data_a.as_slice())
-        .map_err(|e| format!("Cannot parse '{}': {}", path_a, e)) {
-        Ok(o) => o, Err(e) => return ToolResult::err(e)
+        .map_err(|e| format!("Cannot parse '{}': {}", path_a, e))
+    {
+        Ok(o) => o,
+        Err(e) => return ToolResult::err(e),
     };
     let obj_b = match object::File::parse(data_b.as_slice())
-        .map_err(|e| format!("Cannot parse '{}': {}", path_b, e)) {
-        Ok(o) => o, Err(e) => return ToolResult::err(e)
+        .map_err(|e| format!("Cannot parse '{}': {}", path_b, e))
+    {
+        Ok(o) => o,
+        Err(e) => return ToolResult::err(e),
     };
 
     let fns = |obj: &object::File, data: &[u8]| -> HashMap<String, (u64, u64, u64)> {
@@ -4623,7 +5677,7 @@ fn diff_binary(path_a: &str, path_b: &str) -> ToolResult {
     let map_a = fns(&obj_a, &data_a);
     let map_b = fns(&obj_b, &data_b);
 
-    let mut added:   Vec<&str> = Vec::new();
+    let mut added: Vec<&str> = Vec::new();
     let mut removed: Vec<&str> = Vec::new();
     let mut changed: Vec<(&str, u64, u64)> = Vec::new(); // name, addr_a, addr_b
 
@@ -4649,12 +5703,19 @@ fn diff_binary(path_a: &str, path_b: &str) -> ToolResult {
     let mut out = format!(
         "Binary diff: '{}' vs '{}'\n\
          A: {} functions  |  B: {} functions\n\n",
-        path_a, path_b, map_a.len(), map_b.len()
+        path_a,
+        path_b,
+        map_a.len(),
+        map_b.len()
     );
     out.push_str(&format!("Added   ({}):\n", added.len()));
-    for n in &added { out.push_str(&format!("  + {}\n", n)); }
+    for n in &added {
+        out.push_str(&format!("  + {}\n", n));
+    }
     out.push_str(&format!("\nRemoved ({}):\n", removed.len()));
-    for n in &removed { out.push_str(&format!("  - {}\n", n)); }
+    for n in &removed {
+        out.push_str(&format!("  - {}\n", n));
+    }
     out.push_str(&format!("\nChanged ({}):\n", changed.len()));
     for (n, a, b) in &changed {
         out.push_str(&format!("  ~ {}  (A: 0x{:x}  B: 0x{:x})\n", n, a, b));
@@ -4669,12 +5730,15 @@ fn diff_binary(path_a: &str, path_b: &str) -> ToolResult {
 // ─── Tool: auto_analyze ──────────────────────────────────────────────────────
 
 fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     // ── Guard: refuse on large statically-linked binaries to prevent OOM ────
     // Do a cheap function count (max=1) before doing anything expensive.
     let quick = list_functions(path, 1, true);
-    let quick_total = serde_json::from_str::<serde_json::Value>(&quick.output).ok()
+    let quick_total = serde_json::from_str::<serde_json::Value>(&quick.output)
+        .ok()
         .and_then(|v| v["total"].as_u64())
         .unwrap_or(0) as usize;
     if quick_total > 500 {
@@ -4706,7 +5770,8 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
 
     // Parse JSON to get vaddrs and total function count
     let fn_json: Option<serde_json::Value> = serde_json::from_str(&fns.output).ok();
-    let total_fns = fn_json.as_ref()
+    let total_fns = fn_json
+        .as_ref()
         .and_then(|v| v["total"].as_u64())
         .unwrap_or(0) as usize;
     let fn_addrs: Vec<u64> = fn_json
@@ -4768,7 +5833,8 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
         };
         for vaddr in &addrs_to_decompile {
             let project = Project::load_for(path);
-            let name = project.get_name(*vaddr)
+            let name = project
+                .get_name(*vaddr)
                 .unwrap_or_else(|| format!("FUN_{:x}", vaddr));
             out.push_str(&format!("\n── {} (0x{:x}) ──\n", name, vaddr));
             let decomp = decompile_safe(path, *vaddr);
@@ -4791,7 +5857,9 @@ fn auto_analyze(path: &str, top_n: usize) -> ToolResult {
 // ─── Tool: export_report ────────────────────────────────────────────────────
 
 fn export_report(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let project = Project::load_for(path);
     let info = file_info(path);
@@ -4808,7 +5876,8 @@ fn export_report(path: &str) -> ToolResult {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let mut html = format!(r#"<!DOCTYPE html>
+    let mut html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -4835,8 +5904,8 @@ fn export_report(path: &str) -> ToolResult {
 <p><strong>Binary:</strong> {bin} &nbsp; <strong>Generated:</strong> {ts}</p>
 <pre>{info}</pre>
 "#,
-        bin  = html_escape(bin_name),
-        ts   = now,
+        bin = html_escape(bin_name),
+        ts = now,
         info = html_escape(&info.output),
     );
 
@@ -4847,12 +5916,12 @@ fn export_report(path: &str) -> ToolResult {
         addrs.sort();
         for addr in addrs {
             let name = &project.renames[&addr];
-            let cmt  = project.get_comment(addr).unwrap_or("");
+            let cmt = project.get_comment(addr).unwrap_or("");
             let score = project.get_vuln_score(addr);
             let score_html = match score {
                 Some(s) if s >= 7 => format!(" <span class='score-hi badge'>[!!] {}/10</span>", s),
                 Some(s) if s >= 4 => format!(" <span class='score-med badge'>[!] {}/10</span>", s),
-                Some(s) if s > 0  => format!(" <span class='score-low badge'>{}/10</span>", s),
+                Some(s) if s > 0 => format!(" <span class='score-low badge'>{}/10</span>", s),
                 _ => String::new(),
             };
             html.push_str(&format!(
@@ -4873,11 +5942,22 @@ fn export_report(path: &str) -> ToolResult {
         addrs.sort();
         for addr in addrs {
             let score = project.vuln_scores[&addr];
-            let name  = project.get_name(addr).unwrap_or_else(|| format!("FUN_{:x}", addr));
-            let cls   = if score >= 7 { "score-hi" } else if score >= 4 { "score-med" } else { "score-low" };
+            let name = project
+                .get_name(addr)
+                .unwrap_or_else(|| format!("FUN_{:x}", addr));
+            let cls = if score >= 7 {
+                "score-hi"
+            } else if score >= 4 {
+                "score-med"
+            } else {
+                "score-low"
+            };
             html.push_str(&format!(
                 "<tr><td><code>0x{:016x}</code></td><td>{}</td><td class='{}'>{}/10</td></tr>\n",
-                addr, html_escape(&name), cls, score
+                addr,
+                html_escape(&name),
+                cls,
+                score
             ));
         }
         html.push_str("</table>\n");
@@ -4903,8 +5983,10 @@ fn export_report(path: &str) -> ToolResult {
     ));
 
     match std::fs::write(&report_path, &html) {
-        Ok(_)  => ToolResult::ok(format!(
-            "Report written to '{}' ({} bytes)", report_path, html.len()
+        Ok(_) => ToolResult::ok(format!(
+            "Report written to '{}' ({} bytes)",
+            report_path,
+            html.len()
         )),
         Err(e) => ToolResult::err(format!("Cannot write report: {}", e)),
     }
@@ -4912,44 +5994,55 @@ fn export_report(path: &str) -> ToolResult {
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 // ─── Tool: load_pdb ──────────────────────────────────────────────────────────
 
 fn load_pdb(binary_path: &str, pdb_path: &str) -> ToolResult {
-    if binary_path.is_empty() { return ToolResult::err("'binary_path' is required"); }
-    if pdb_path.is_empty()    { return ToolResult::err("'pdb_path' is required"); }
+    if binary_path.is_empty() {
+        return ToolResult::err("'binary_path' is required");
+    }
+    if pdb_path.is_empty() {
+        return ToolResult::err("'pdb_path' is required");
+    }
 
     let file = match std::fs::File::open(pdb_path) {
-        Ok(f)  => f,
+        Ok(f) => f,
         Err(e) => return ToolResult::err(format!("Cannot open PDB '{}': {}", pdb_path, e)),
     };
     let mut pdb = match pdb::PDB::open(file) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return ToolResult::err(format!("Cannot parse PDB '{}': {}", pdb_path, e)),
     };
 
     let symbol_table = match pdb.global_symbols() {
-        Ok(t)  => t,
+        Ok(t) => t,
         Err(e) => return ToolResult::err(format!("Cannot read PDB symbol table: {}", e)),
     };
     let address_map = match pdb.address_map() {
-        Ok(m)  => m,
+        Ok(m) => m,
         Err(e) => return ToolResult::err(format!("Cannot build PDB address map: {}", e)),
     };
 
     // Get PE image base for absolute VA calculation
     let binary_data = std::fs::read(binary_path).unwrap_or_default();
-    let image_base: u64 = goblin::Object::parse(&binary_data).ok()
-        .and_then(|o| if let goblin::Object::PE(pe) = o { Some(pe.image_base as u64) } else { None })
+    let image_base: u64 = goblin::Object::parse(&binary_data)
+        .ok()
+        .and_then(|o| {
+            if let goblin::Object::PE(pe) = o {
+                Some(pe.image_base as u64)
+            } else {
+                None
+            }
+        })
         .unwrap_or(0x400000);
 
     let mut project = Project::load_for(binary_path);
     let mut count = 0usize;
-    let mut out   = String::new();
+    let mut out = String::new();
 
     use pdb::FallibleIterator;
     let mut iter = symbol_table.iter();
@@ -4960,7 +6053,7 @@ fn load_pdb(binary_path: &str, pdb_path: &str) -> ToolResult {
                     if data.code || data.function {
                         if let Some(rva) = data.offset.to_rva(&address_map) {
                             let vaddr = image_base + rva.0 as u64;
-                            let name  = data.name.to_string().into_owned();
+                            let name = data.name.to_string().into_owned();
                             if !name.is_empty() {
                                 out.push_str(&format!("  0x{:016x}  {}\n", vaddr, name));
                                 project.rename(vaddr, name);
@@ -4971,30 +6064,39 @@ fn load_pdb(binary_path: &str, pdb_path: &str) -> ToolResult {
                 }
             }
             Ok(None) => break,
-            Err(_)   => break,
+            Err(_) => break,
         }
     }
 
     if count == 0 {
         return ToolResult::ok(format!(
             "No public code symbols found in PDB '{}'. \
-             The PDB may contain type info only.", pdb_path
+             The PDB may contain type info only.",
+            pdb_path
         ));
     }
 
     match project.save() {
-        Ok(_)  => ToolResult::ok(format!(
-            "Loaded {} symbols from '{}' (saved to project):\n\n{}", count, pdb_path, out
+        Ok(_) => ToolResult::ok(format!(
+            "Loaded {} symbols from '{}' (saved to project):\n\n{}",
+            count, pdb_path, out
         )),
-        Err(e) => ToolResult::err(format!("Loaded {} symbols but could not save: {}", count, e)),
+        Err(e) => ToolResult::err(format!(
+            "Loaded {} symbols but could not save: {}",
+            count, e
+        )),
     }
 }
 
 // ─── Tool: decompile_flat ────────────────────────────────────────────────────
 
 fn decompile_flat(path: &str, base_addr: u64, vaddr: u64, arch: &str) -> ToolResult {
-    if path.is_empty()  { return ToolResult::err("'path' is required"); }
-    if vaddr == 0       { return ToolResult::err("'vaddr' is required (virtual address to decompile)"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required (virtual address to decompile)");
+    }
     let result = crate::decompiler::decompile_function_flat(path, base_addr, vaddr, arch);
     if result.starts_with("Decompiler error:") {
         ToolResult::err(result)
@@ -5014,120 +6116,126 @@ fn decompile_flat(path: &str, base_addr: u64, vaddr: u64, arch: &str) -> ToolRes
 // O(file_size * num_patterns) — fast even on large PE/ELF files.
 
 struct CryptoSig {
-    algorithm:   &'static str,
-    detail:      &'static str,
+    algorithm: &'static str,
+    detail: &'static str,
     /// Byte sequence to search for (first N bytes of constant table)
-    pattern:     &'static [u8],
+    pattern: &'static [u8],
     /// Optional second sequence that must appear immediately after `pattern`
     /// (extra bytes used for disambiguation)
-    confirm:     &'static [u8],
+    confirm: &'static [u8],
 }
 
 const CRYPTO_SIGS: &[CryptoSig] = &[
     // AES forward S-box (first 16 bytes)
     CryptoSig {
         algorithm: "AES",
-        detail:    "Forward S-box (63 7c 77 7b f2 6b 6f c5 ...)",
-        pattern:   &[0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,
-                     0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76],
-        confirm:   &[],
+        detail: "Forward S-box (63 7c 77 7b f2 6b 6f c5 ...)",
+        pattern: &[
+            0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7,
+            0xab, 0x76,
+        ],
+        confirm: &[],
     },
     // AES inverse S-box (first 8 bytes)
     CryptoSig {
         algorithm: "AES",
-        detail:    "Inverse S-box (52 09 6a d5 30 36 a5 38 ...)",
-        pattern:   &[0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38],
-        confirm:   &[],
+        detail: "Inverse S-box (52 09 6a d5 30 36 a5 38 ...)",
+        pattern: &[0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38],
+        confirm: &[],
     },
     // ChaCha20 / Salsa20 "expand 32-byte k"
     CryptoSig {
         algorithm: "ChaCha20 / Salsa20",
-        detail:    "\"expand 32-byte k\" sigma constant",
-        pattern:   b"expand 32-byte k",
-        confirm:   &[],
+        detail: "\"expand 32-byte k\" sigma constant",
+        pattern: b"expand 32-byte k",
+        confirm: &[],
     },
     // ChaCha20 / Salsa20 "expand 16-byte k"
     CryptoSig {
         algorithm: "ChaCha20 / Salsa20",
-        detail:    "\"expand 16-byte k\" tau constant",
-        pattern:   b"expand 16-byte k",
-        confirm:   &[],
+        detail: "\"expand 16-byte k\" tau constant",
+        pattern: b"expand 16-byte k",
+        confirm: &[],
     },
     // SHA-256 init hash H0-H1 (LE): 6a09e667 bb67ae85
     CryptoSig {
         algorithm: "SHA-256",
-        detail:    "Init hash values H0=0x6a09e667, H1=0xbb67ae85, ...",
-        pattern:   &[0x67,0xe6,0x09,0x6a],
-        confirm:   &[0x85,0xae,0x67,0xbb],
+        detail: "Init hash values H0=0x6a09e667, H1=0xbb67ae85, ...",
+        pattern: &[0x67, 0xe6, 0x09, 0x6a],
+        confirm: &[0x85, 0xae, 0x67, 0xbb],
     },
     // SHA-512 init hash H0 (LE): 6a09e667f3bcc908
     CryptoSig {
         algorithm: "SHA-512 / SHA-384",
-        detail:    "Init hash H0=0x6a09e667f3bcc908",
-        pattern:   &[0x08,0xc9,0xbc,0xf3,0x67,0xe6,0x09,0x6a],
-        confirm:   &[],
+        detail: "Init hash H0=0x6a09e667f3bcc908",
+        pattern: &[0x08, 0xc9, 0xbc, 0xf3, 0x67, 0xe6, 0x09, 0x6a],
+        confirm: &[],
     },
     // SHA-1 init H0-H1 (LE): 67452301 efcdab89
     CryptoSig {
         algorithm: "SHA-1",
-        detail:    "Init hash H0=0x67452301, H1=0xEFCDAB89, ...",
-        pattern:   &[0x01,0x23,0x45,0x67],
-        confirm:   &[0x89,0xab,0xcd,0xef],
+        detail: "Init hash H0=0x67452301, H1=0xEFCDAB89, ...",
+        pattern: &[0x01, 0x23, 0x45, 0x67],
+        confirm: &[0x89, 0xab, 0xcd, 0xef],
     },
     // MD5 round constant T[1-2] (LE): d76aa478 e8c7b756
     CryptoSig {
         algorithm: "MD5",
-        detail:    "Round constants T[1]=0xd76aa478, T[2]=0xe8c7b756",
-        pattern:   &[0x78,0xa4,0x6a,0xd7],
-        confirm:   &[0x56,0xb7,0xc7,0xe8],
+        detail: "Round constants T[1]=0xd76aa478, T[2]=0xe8c7b756",
+        pattern: &[0x78, 0xa4, 0x6a, 0xd7],
+        confirm: &[0x56, 0xb7, 0xc7, 0xe8],
     },
     // CRC32 reflected polynomial
     CryptoSig {
         algorithm: "CRC32",
-        detail:    "Reflected polynomial 0xEDB88320",
-        pattern:   &[0x20,0x83,0xb8,0xed],
-        confirm:   &[],
+        detail: "Reflected polynomial 0xEDB88320",
+        pattern: &[0x20, 0x83, 0xb8, 0xed],
+        confirm: &[],
     },
     // CRC32 normal polynomial
     CryptoSig {
         algorithm: "CRC32",
-        detail:    "Normal polynomial 0x04C11DB7",
-        pattern:   &[0x04,0xc1,0x1d,0xb7],
-        confirm:   &[],
+        detail: "Normal polynomial 0x04C11DB7",
+        pattern: &[0x04, 0xc1, 0x1d, 0xb7],
+        confirm: &[],
     },
     // Blowfish P-array (from digits of pi): 243f6a88 85a308d3
     CryptoSig {
         algorithm: "Blowfish",
-        detail:    "P-array start 0x243F6A88, 0x85A308D3 (from pi)",
-        pattern:   &[0x24,0x3f,0x6a,0x88],
-        confirm:   &[0x85,0xa3,0x08,0xd3],
+        detail: "P-array start 0x243F6A88, 0x85A308D3 (from pi)",
+        pattern: &[0x24, 0x3f, 0x6a, 0x88],
+        confirm: &[0x85, 0xa3, 0x08, 0xd3],
     },
     // RC4 identity permutation start (00 01 02 03 ... in .data)
     CryptoSig {
         algorithm: "RC4 (possible)",
-        detail:    "Identity permutation S[0..15] = 00 01 02 03 ... 0f",
-        pattern:   &[0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
-                     0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f],
-        confirm:   &[0x10,0x11,0x12,0x13], // next 4 must also be sequential
+        detail: "Identity permutation S[0..15] = 00 01 02 03 ... 0f",
+        pattern: &[
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ],
+        confirm: &[0x10, 0x11, 0x12, 0x13], // next 4 must also be sequential
     },
     // TEA/XTEA magic constant 0x9E3779B9 (golden ratio)
     CryptoSig {
         algorithm: "TEA / XTEA",
-        detail:    "Delta constant 0x9E3779B9 (golden ratio)",
-        pattern:   &[0xb9,0x79,0x37,0x9e],
-        confirm:   &[],
+        detail: "Delta constant 0x9E3779B9 (golden ratio)",
+        pattern: &[0xb9, 0x79, 0x37, 0x9e],
+        confirm: &[],
     },
     // Keccak/SHA-3 round constant RC[0] = 0x0000000000000001
     CryptoSig {
         algorithm: "SHA-3 / Keccak",
-        detail:    "Round constant RC[0]=1 followed by RC[1]=0x8082",
-        pattern:   &[0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00],
-        confirm:   &[0x82,0x80,0x00,0x00,0x00,0x00,0x00,0x00],
+        detail: "Round constant RC[0]=1 followed by RC[1]=0x8082",
+        pattern: &[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        confirm: &[0x82, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     },
 ];
 
 fn crypto_identify(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -5138,18 +6246,21 @@ fn crypto_identify(path: &str) -> ToolResult {
     let sections: Vec<(u64, usize, usize)> = match goblin::Object::parse(&data) {
         Ok(goblin::Object::PE(pe)) => {
             let base = pe.image_base as u64;
-            pe.sections.iter().map(|s| {
-                let va     = base + s.virtual_address as u64;
-                let foff   = s.pointer_to_raw_data as usize;
-                let fsize  = s.size_of_raw_data as usize;
-                (va, foff, fsize)
-            }).collect()
+            pe.sections
+                .iter()
+                .map(|s| {
+                    let va = base + s.virtual_address as u64;
+                    let foff = s.pointer_to_raw_data as usize;
+                    let fsize = s.size_of_raw_data as usize;
+                    (va, foff, fsize)
+                })
+                .collect()
         }
-        Ok(goblin::Object::Elf(elf)) => {
-            elf.section_headers.iter().map(|s| {
-                (s.sh_addr, s.sh_offset as usize, s.sh_size as usize)
-            }).collect()
-        }
+        Ok(goblin::Object::Elf(elf)) => elf
+            .section_headers
+            .iter()
+            .map(|s| (s.sh_addr, s.sh_offset as usize, s.sh_size as usize))
+            .collect(),
         _ => vec![],
     };
 
@@ -5163,57 +6274,83 @@ fn crypto_identify(path: &str) -> ToolResult {
     };
 
     // Search for each signature
-    struct Hit { algo: &'static str, detail: &'static str, vas: Vec<u64> }
+    struct Hit {
+        algo: &'static str,
+        detail: &'static str,
+        vas: Vec<u64>,
+    }
     let mut hits: Vec<Hit> = Vec::new();
 
     for sig in CRYPTO_SIGS {
         let pat = sig.pattern;
         let pat_len = pat.len();
-        if pat_len == 0 || pat_len > data.len() { continue; }
+        if pat_len == 0 || pat_len > data.len() {
+            continue;
+        }
 
         let mut found_vas: Vec<u64> = Vec::new();
         'scan: for i in 0..=(data.len() - pat_len) {
-            if data[i..i + pat_len] != *pat { continue; }
+            if data[i..i + pat_len] != *pat {
+                continue;
+            }
             // Check confirm sequence if present
             if !sig.confirm.is_empty() {
                 let c = sig.confirm;
                 let end = i + pat_len + c.len();
-                if end > data.len() { continue; }
+                if end > data.len() {
+                    continue;
+                }
                 for (j, &b) in c.iter().enumerate() {
-                    if data[i + pat_len + j] != b { continue 'scan; }
+                    if data[i + pat_len + j] != b {
+                        continue 'scan;
+                    }
                 }
             }
             found_vas.push(offset_to_va(i));
-            if found_vas.len() >= 8 { break; } // cap per-sig matches
+            if found_vas.len() >= 8 {
+                break;
+            } // cap per-sig matches
         }
 
         if !found_vas.is_empty() {
             // Deduplicate into prior hit for same algorithm if exists
-            if let Some(existing) = hits.iter_mut().find(|h| {
-                h.algo == sig.algorithm && h.detail == sig.detail
-            }) {
+            if let Some(existing) = hits
+                .iter_mut()
+                .find(|h| h.algo == sig.algorithm && h.detail == sig.detail)
+            {
                 existing.vas.extend_from_slice(&found_vas);
             } else {
-                hits.push(Hit { algo: sig.algorithm, detail: sig.detail, vas: found_vas });
+                hits.push(Hit {
+                    algo: sig.algorithm,
+                    detail: sig.detail,
+                    vas: found_vas,
+                });
             }
         }
     }
 
-    let mut out = format!("Cryptographic constant scan: '{}'\n{}\n\n", path, "═".repeat(60));
+    let mut out = format!(
+        "Cryptographic constant scan: '{}'\n{}\n\n",
+        path,
+        "═".repeat(60)
+    );
 
     if hits.is_empty() {
         out.push_str("No known cryptographic constants found.\n");
         out.push_str("(Scanned for: AES, ChaCha20/Salsa20, SHA-256/512, SHA-1, SHA-3, MD5,\n");
         out.push_str(" CRC32, Blowfish, TEA/XTEA, RC4 identity permutation)\n");
-        out.push_str("\nNote: custom or obfuscated crypto will not be detected by constant scanning.\n");
-        out.push_str("Use section_entropy to find high-entropy regions that may be custom crypto.\n");
+        out.push_str(
+            "\nNote: custom or obfuscated crypto will not be detected by constant scanning.\n",
+        );
+        out.push_str(
+            "Use section_entropy to find high-entropy regions that may be custom crypto.\n",
+        );
     } else {
         out.push_str(&format!("{} signature(s) found:\n\n", hits.len()));
         for h in &hits {
             out.push_str(&format!("  [+] {}\n", h.algo));
             out.push_str(&format!("      {}\n", h.detail));
-            let va_list: Vec<String> = h.vas.iter().take(5)
-                .map(|v| format!("0x{:x}", v)).collect();
+            let va_list: Vec<String> = h.vas.iter().take(5).map(|v| format!("0x{:x}", v)).collect();
             out.push_str(&format!("      Location(s): {}", va_list.join("  ")));
             if h.vas.len() > 5 {
                 out.push_str(&format!("  (+{} more)", h.vas.len() - 5));
@@ -5235,17 +6372,24 @@ fn crypto_identify(path: &str) -> ToolResult {
 // separately and lets the LLM reason about a function holistically.
 
 fn function_context(path: &str, vaddr: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0     { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let project = Project::load_for(path);
-    let fn_name = project.get_name(vaddr)
+    let fn_name = project
+        .get_name(vaddr)
         .unwrap_or_else(|| format!("FUN_{:016x}", vaddr));
 
     let sep = "─".repeat(60);
     let mut out = format!(
         "Function context: {} @ 0x{:x}\n{}\n\n",
-        fn_name, vaddr, "═".repeat(60)
+        fn_name,
+        vaddr,
+        "═".repeat(60)
     );
 
     // ── 1. Decompilation ────────────────────────────────────────────────────
@@ -5255,25 +6399,37 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
     out.push_str("\n\n");
 
     // ── 2. Callers ──────────────────────────────────────────────────────────
-    out.push_str(&format!("{}\n[2] Callers (who calls this function)\n{}\n", sep, sep));
+    out.push_str(&format!(
+        "{}\n[2] Callers (who calls this function)\n{}\n",
+        sep, sep
+    ));
     let caller_pairs = xrefs_to_inner(path, vaddr);
     if caller_pairs.is_empty() {
         out.push_str("  (no callers found — may be an entry point or exported function)\n");
     } else {
         for (caller_va, call_site) in caller_pairs.iter().take(10) {
-            let caller_name = project.get_name(*caller_va)
+            let caller_name = project
+                .get_name(*caller_va)
                 .unwrap_or_else(|| format!("FUN_{:016x}", caller_va));
-            out.push_str(&format!("  0x{:016x}  {}  (call site: 0x{:x})\n",
-                caller_va, caller_name, call_site));
+            out.push_str(&format!(
+                "  0x{:016x}  {}  (call site: 0x{:x})\n",
+                caller_va, caller_name, call_site
+            ));
         }
         if caller_pairs.len() > 10 {
-            out.push_str(&format!("  ... and {} more callers\n", caller_pairs.len() - 10));
+            out.push_str(&format!(
+                "  ... and {} more callers\n",
+                caller_pairs.len() - 10
+            ));
         }
     }
     out.push('\n');
 
     // ── 3. Callees (parse CALL/BL/BLR from disassembly) ───────────────────
-    out.push_str(&format!("{}\n[3] Callees (functions this function calls)\n{}\n", sep, sep));
+    out.push_str(&format!(
+        "{}\n[3] Callees (functions this function calls)\n{}\n",
+        sep, sep
+    ));
     // Use auto-sized disassembly (pe_pdata_fn_size resolves full function body)
     let asm_result = disassemble(path, None, 256, Some(vaddr));
     let mut callees: Vec<(u64, String)> = Vec::new();
@@ -5303,14 +6459,23 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
             let tok_start = stripped[byte_offset..].find(tok)? + byte_offset;
             let tok_end = tok_start + tok.len();
             let all_hex = tok.chars().all(|c| c.is_ascii_hexdigit());
-            let starts_letter = tok.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false);
+            let starts_letter = tok
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false);
             if !saw_addr {
-                if all_hex { saw_addr = true; }
+                if all_hex {
+                    saw_addr = true;
+                }
                 byte_offset = tok_end;
                 continue;
             }
             // skip instruction byte tokens (exactly 2 hex chars)
-            if all_hex && tok.len() == 2 { byte_offset = tok_end; continue; }
+            if all_hex && tok.len() == 2 {
+                byte_offset = tok_end;
+                continue;
+            }
             // first non-byte non-address token starting with a letter = mnemonic
             if starts_letter {
                 mnemonic_in_str = Some((tok_start, tok_end));
@@ -5322,12 +6487,19 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
         let mnm = stripped[mnm_start..mnm_end].to_ascii_lowercase();
         // Operands: everything after mnemonic (trimmed), up to '; ' comment marker
         let rest = stripped[mnm_end..].trim();
-        let ops = rest.splitn(2, " ; ").next().unwrap_or("").trim().to_ascii_lowercase();
+        let ops = rest
+            .splitn(2, " ; ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         Some((mnm, ops))
     }
 
     for line in asm_result.output.lines() {
-        let Some((mnemonic, operands)) = parse_mnemonic_operands(line) else { continue };
+        let Some((mnemonic, operands)) = parse_mnemonic_operands(line) else {
+            continue;
+        };
 
         // Track ADRP: "adrp xN, #0xPAGE"
         if mnemonic == "adrp" {
@@ -5341,15 +6513,22 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
             }
         }
         // Track LDR/LDRB/LDRH from [xN, #offset] — check ADRP page + offset vs IAT
-        else if mnemonic == "ldr" || mnemonic == "ldrb" || mnemonic == "ldrh" || mnemonic == "ldrw" {
+        else if mnemonic == "ldr"
+            || mnemonic == "ldrb"
+            || mnemonic == "ldrh"
+            || mnemonic == "ldrw"
+        {
             let parts: Vec<&str> = operands.splitn(2, ',').collect();
             if parts.len() >= 2 {
                 let dst_reg = parts[0].trim().to_string();
                 let src = parts[1].trim();
                 if src.starts_with('[') {
                     // "[ xB, #offset ]" or "[xB, #offset]!"
-                    let inner = src.trim_start_matches('[').trim_end_matches('!')
-                        .trim_end_matches(']').trim();
+                    let inner = src
+                        .trim_start_matches('[')
+                        .trim_end_matches('!')
+                        .trim_end_matches(']')
+                        .trim();
                     let src_parts: Vec<&str> = inner.splitn(2, ',').collect();
                     if src_parts.len() >= 2 {
                         let base_reg = src_parts[0].trim().to_string();
@@ -5393,7 +6572,8 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
             let tgt_s = operands.trim().trim_start_matches('#');
             if let Ok(addr) = u64::from_str_radix(tgt_s.trim_start_matches("0x"), 16) {
                 if addr > 0 && !callees.iter().any(|(a, _)| *a == addr) {
-                    let name = project.get_name(addr)
+                    let name = project
+                        .get_name(addr)
                         .unwrap_or_else(|| format!("FUN_{:016x}", addr));
                     callees.push((addr, name));
                 }
@@ -5408,7 +6588,10 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
             out.push_str(&format!("  0x{:016x}  {}\n", addr, name));
         }
         if callees.len() > 15 {
-            out.push_str(&format!("  ... and {} more direct callees\n", callees.len() - 15));
+            out.push_str(&format!(
+                "  ... and {} more direct callees\n",
+                callees.len() - 15
+            ));
         }
         for imp in &iat_callees {
             out.push_str(&format!("  [IAT] {}\n", imp));
@@ -5440,8 +6623,13 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
             out.push_str(&format!("  return_type: {}\n", rt));
             has_annotations = true;
         }
-        for (n, (pt, pn)) in sig.param_types.iter().zip(sig.param_names.iter()).enumerate() {
-            let ty   = pt.as_deref().unwrap_or("");
+        for (n, (pt, pn)) in sig
+            .param_types
+            .iter()
+            .zip(sig.param_names.iter())
+            .enumerate()
+        {
+            let ty = pt.as_deref().unwrap_or("");
             let name = pn.as_deref().unwrap_or("");
             if !ty.is_empty() || !name.is_empty() {
                 out.push_str(&format!("  param[{}]: {} {}\n", n + 1, ty, name));
@@ -5450,7 +6638,9 @@ fn function_context(path: &str, vaddr: u64) -> ToolResult {
         }
     }
     if !has_annotations {
-        out.push_str("  (no annotations yet — use batch_annotate to add names, types, and comments)\n");
+        out.push_str(
+            "  (no annotations yet — use batch_annotate to add names, types, and comments)\n",
+        );
     }
 
     ToolResult::ok(out)
@@ -5476,8 +6666,12 @@ fn angr_find(
     stdin_bytes: u64,
     timeout_secs: u64,
 ) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if find_addr == 0     { return ToolResult::err("'find_addr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if find_addr == 0 {
+        return ToolResult::err("'find_addr' is required");
+    }
 
     let timeout = timeout_secs.clamp(10, 120);
     let stdin_n = stdin_bytes.clamp(1, 256);
@@ -5497,7 +6691,7 @@ fn angr_find(
     };
 
     let script = format!(
-r###"import angr, claripy, os, sys, signal, time
+        r###"import angr, claripy, os, sys, signal, time
 
 binary = os.environ.get('KAIJU_BINARY', '')
 if not binary:
@@ -5714,11 +6908,14 @@ fn run_python(
         }
         let bin = std::path::Path::new(&effective_binary);
         let stem = bin.file_name()?;
-        let scripts_dir = bin.parent().unwrap_or(std::path::Path::new("."))
+        let scripts_dir = bin
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
             .join(format!("{}.kaiju_scripts", stem.to_string_lossy()));
         std::fs::create_dir_all(&scripts_dir).ok()?;
         // Auto-increment based on all .py files (including _ok/_err variants)
-        let n = std::fs::read_dir(&scripts_dir).ok()?
+        let n = std::fs::read_dir(&scripts_dir)
+            .ok()?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("py"))
             .count();
@@ -5817,10 +7014,14 @@ fn run_python(
                     {
                         // child.id() is the pgid we set with process_group(0)
                         let pgid = child.id() as i32;
-                        unsafe { libc::killpg(pgid, libc::SIGKILL); }
+                        unsafe {
+                            libc::killpg(pgid, libc::SIGKILL);
+                        }
                     }
                     #[cfg(not(unix))]
-                    { let _ = child.kill(); }
+                    {
+                        let _ = child.kill();
+                    }
                     let _ = child.wait();
                     break true;
                 }
@@ -5899,7 +7100,8 @@ fn run_python(
     let succeeded = !timed_out && stderr_bytes.is_empty();
     if let Some(ref path) = saved_script_path {
         let suffix = if succeeded { "_ok" } else { "_err" };
-        let new_name = path.file_stem()
+        let new_name = path
+            .file_stem()
             .map(|s| format!("{}{}.py", s.to_string_lossy(), suffix));
         if let Some(name) = new_name {
             let new_path = path.with_file_name(name);
@@ -5946,7 +7148,9 @@ fn run_python(
 /// Scan .rdata/.rodata for sequences of pointers that all point into .text —
 /// the canonical layout of a C++ vtable on x86/x64 PE and ELF binaries.
 fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let min_methods = min_methods.max(2).min(64);
     let data = match std::fs::read(path) {
@@ -5964,9 +7168,13 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
             let ptr_sz: usize = if pe.is_64 { 8 } else { 4 };
             let base = pe.image_base as u64;
 
-            let text_ranges = pe.sections.iter()
+            let text_ranges = pe
+                .sections
+                .iter()
                 .filter(|s| {
-                    let n = std::str::from_utf8(&s.name).unwrap_or("").trim_matches('\0');
+                    let n = std::str::from_utf8(&s.name)
+                        .unwrap_or("")
+                        .trim_matches('\0');
                     n == ".text" || n.contains("text")
                 })
                 .map(|s| {
@@ -5976,17 +7184,23 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
                 .collect();
 
             // vtables live in .rdata; also check .data for hand-assembled code
-            let scan = pe.sections.iter()
+            let scan = pe
+                .sections
+                .iter()
                 .filter(|s| {
-                    let n = std::str::from_utf8(&s.name).unwrap_or("").trim_matches('\0');
+                    let n = std::str::from_utf8(&s.name)
+                        .unwrap_or("")
+                        .trim_matches('\0');
                     n == ".rdata" || n == ".data"
                 })
                 .filter_map(|s| {
-                    let n = std::str::from_utf8(&s.name).unwrap_or("?")
-                        .trim_matches('\0').to_string();
-                    let va  = base + s.virtual_address as u64;
+                    let n = std::str::from_utf8(&s.name)
+                        .unwrap_or("?")
+                        .trim_matches('\0')
+                        .to_string();
+                    let va = base + s.virtual_address as u64;
                     let off = s.pointer_to_raw_data as usize;
-                    let sz  = s.size_of_raw_data as usize;
+                    let sz = s.size_of_raw_data as usize;
                     Some((n, va, data.get(off..off + sz)?.to_vec()))
                 })
                 .collect();
@@ -5996,23 +7210,35 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
         Ok(goblin::Object::Elf(elf)) => {
             let ptr_sz: usize = if elf.is_64 { 8 } else { 4 };
 
-            let text_ranges = elf.section_headers.iter()
-                .filter(|sh| matches!(
-                    elf.shdr_strtab.get_at(sh.sh_name),
-                    Some(".text") | Some("__text")
-                ))
+            let text_ranges = elf
+                .section_headers
+                .iter()
+                .filter(|sh| {
+                    matches!(
+                        elf.shdr_strtab.get_at(sh.sh_name),
+                        Some(".text") | Some("__text")
+                    )
+                })
                 .map(|sh| (sh.sh_addr, sh.sh_addr + sh.sh_size))
                 .collect();
 
-            let scan = elf.section_headers.iter()
-                .filter(|sh| matches!(
-                    elf.shdr_strtab.get_at(sh.sh_name),
-                    Some(".rodata") | Some(".data.rel.ro") | Some(".data")
-                ))
+            let scan = elf
+                .section_headers
+                .iter()
+                .filter(|sh| {
+                    matches!(
+                        elf.shdr_strtab.get_at(sh.sh_name),
+                        Some(".rodata") | Some(".data.rel.ro") | Some(".data")
+                    )
+                })
                 .filter_map(|sh| {
-                    let n = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("?").to_string();
+                    let n = elf
+                        .shdr_strtab
+                        .get_at(sh.sh_name)
+                        .unwrap_or("?")
+                        .to_string();
                     let off = sh.sh_offset as usize;
-                    let sz  = sh.sh_size as usize;
+                    let sz = sh.sh_size as usize;
                     Some((n, sh.sh_addr, data.get(off..off + sz)?.to_vec()))
                 })
                 .collect();
@@ -6028,10 +7254,12 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
 
     let read_ptr = |bytes: &[u8], off: usize| -> Option<u64> {
         if ptr_sz == 8 {
-            bytes.get(off..off + 8)
+            bytes
+                .get(off..off + 8)
                 .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
         } else {
-            bytes.get(off..off + 4)
+            bytes
+                .get(off..off + 4)
                 .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as u64)
         }
     };
@@ -6042,16 +7270,29 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
         let n = sec_bytes.len() / ptr_sz;
         let mut i = 0;
         while i < n {
-            let Some(ptr) = read_ptr(sec_bytes, i * ptr_sz) else { i += 1; continue; };
-            if !is_in_text(ptr) { i += 1; continue; }
+            let Some(ptr) = read_ptr(sec_bytes, i * ptr_sz) else {
+                i += 1;
+                continue;
+            };
+            if !is_in_text(ptr) {
+                i += 1;
+                continue;
+            }
 
             // Collect the run of consecutive valid .text pointers
             let vtable_va = sec_va + (i * ptr_sz) as u64;
             let mut methods = vec![ptr];
             let mut j = i + 1;
             while j < n {
-                let Some(p2) = read_ptr(sec_bytes, j * ptr_sz) else { break; };
-                if is_in_text(p2) { methods.push(p2); j += 1; } else { break; }
+                let Some(p2) = read_ptr(sec_bytes, j * ptr_sz) else {
+                    break;
+                };
+                if is_in_text(p2) {
+                    methods.push(p2);
+                    j += 1;
+                } else {
+                    break;
+                }
             }
 
             if methods.len() >= min_methods {
@@ -6073,7 +7314,10 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
 
     let project = Project::load_for(path);
     let resolve = |addr: u64| -> String {
-        project.renames.get(&addr).cloned()
+        project
+            .renames
+            .get(&addr)
+            .cloned()
             .unwrap_or_else(|| format!("FUN_{:016x}", addr))
     };
 
@@ -6086,7 +7330,11 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
         sep,
     );
     for (vt_va, methods) in &vtables {
-        out.push_str(&format!("vtable @ 0x{:016x}  ({} methods)\n", vt_va, methods.len()));
+        out.push_str(&format!(
+            "vtable @ 0x{:016x}  ({} methods)\n",
+            vt_va,
+            methods.len()
+        ));
         for (idx, m) in methods.iter().enumerate() {
             out.push_str(&format!("  [{}]  0x{:016x}  {}\n", idx, m, resolve(*m)));
         }
@@ -6109,7 +7357,9 @@ fn recover_vtables(path: &str, min_methods: usize) -> ToolResult {
 fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
     use iced_x86::{Decoder, DecoderOptions, FlowControl, Mnemonic, OpKind};
 
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -6123,16 +7373,22 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
     let bitness: u32 = match obj.architecture() {
         Architecture::X86_64 | Architecture::X86_64_X32 => 64,
         Architecture::I386 => 32,
-        other => return ToolResult::err(format!(
-            "find_string_decoders requires x86/x86-64 (got {:?})", other
-        )),
+        other => {
+            return ToolResult::err(format!(
+                "find_string_decoders requires x86/x86-64 (got {:?})",
+                other
+            ))
+        }
     };
 
-    let text_sec = obj.sections()
-        .find(|s| s.name().ok().map_or(false, |n| n == ".text" || n == "__text"));
+    let text_sec = obj.sections().find(|s| {
+        s.name()
+            .ok()
+            .map_or(false, |n| n == ".text" || n == "__text")
+    });
     let (text_vaddr, text_end, text_bytes) = match text_sec {
         Some(s) => {
-            let va  = s.address();
+            let va = s.address();
             let end = va + s.size();
             let bytes = s.data().unwrap_or(&[]).to_vec();
             (va, end, bytes)
@@ -6142,7 +7398,8 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
 
     // Collect function start addresses from the symbol table
     let project = Project::load_for(path);
-    let mut fn_addrs: Vec<u64> = obj.symbols()
+    let mut fn_addrs: Vec<u64> = obj
+        .symbols()
         .filter(|s| {
             s.kind() == object::SymbolKind::Text
                 && s.address() >= text_vaddr
@@ -6165,7 +7422,9 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
             } else {
                 b[0] == 0x55 && b[1] == 0x89 && b[2] == 0xe5
             };
-            if hit { fn_addrs.push(text_vaddr + i as u64); }
+            if hit {
+                fn_addrs.push(text_vaddr + i as u64);
+            }
             i += 1;
         }
     }
@@ -6174,13 +7433,17 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
     if fn_addrs.is_empty() {
         if let Ok(goblin::Object::PE(pe)) = goblin::Object::parse(&data) {
             let base = pe.image_base as u64;
-            if let Some(pdata) = pe.sections.iter()
+            if let Some(pdata) = pe
+                .sections
+                .iter()
                 .find(|s| s.name().ok().map_or(false, |n| n == ".pdata"))
                 .and_then(|s| s.data(&data).ok().flatten())
             {
                 for chunk in pdata.chunks_exact(12) {
                     let rva = u32::from_le_bytes(chunk[0..4].try_into().unwrap()) as u64;
-                    if rva != 0 { fn_addrs.push(base + rva); }
+                    if rva != 0 {
+                        fn_addrs.push(base + rva);
+                    }
                 }
             }
         }
@@ -6193,39 +7456,51 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
     let mut candidates: Vec<(u64, u32, String)> = Vec::new();
 
     for &fn_va in &fn_addrs {
-        if fn_va < text_vaddr || fn_va >= text_end { continue; }
+        if fn_va < text_vaddr || fn_va >= text_end {
+            continue;
+        }
         let fn_off = (fn_va - text_vaddr) as usize;
-        if fn_off >= text_bytes.len() { continue; }
+        if fn_off >= text_bytes.len() {
+            continue;
+        }
 
         // Cap at 512 bytes — real decoder stubs are small
         let window = text_bytes[fn_off..].len().min(512);
-        let slice  = &text_bytes[fn_off..fn_off + window];
+        let slice = &text_bytes[fn_off..fn_off + window];
         let mut decoder = Decoder::with_ip(bitness, slice, fn_va, DecoderOptions::NONE);
 
         let mut score: u32 = 0;
         let mut instr_count: u32 = 0;
-        let mut has_xor_imm       = false;
-        let mut has_arith_imm     = false;
-        let mut has_byte_mem      = false;
-        let mut has_back_branch   = false;
-        let mut has_loop_insn     = false;
+        let mut has_xor_imm = false;
+        let mut has_arith_imm = false;
+        let mut has_byte_mem = false;
+        let mut has_back_branch = false;
+        let mut has_loop_insn = false;
         let mut xor_keys: Vec<u64> = Vec::new();
         let mut tags: Vec<&'static str> = Vec::new();
 
         for instr in &mut decoder {
-            if instr.is_invalid() { continue; }
+            if instr.is_invalid() {
+                continue;
+            }
             instr_count += 1;
-            if instr_count > 100 { break; }
+            if instr_count > 100 {
+                break;
+            }
 
-            let m  = instr.mnemonic();
+            let m = instr.mnemonic();
             let ip = instr.ip();
 
             // XOR reg/mem, imm  (most common single-byte XOR key)
             if m == Mnemonic::Xor
                 && matches!(
                     instr.op1_kind(),
-                    OpKind::Immediate8 | OpKind::Immediate8to32 | OpKind::Immediate8to64
-                    | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate32to64
+                    OpKind::Immediate8
+                        | OpKind::Immediate8to32
+                        | OpKind::Immediate8to64
+                        | OpKind::Immediate16
+                        | OpKind::Immediate32
+                        | OpKind::Immediate32to64
                 )
                 && instr.immediate(1) != 0
             {
@@ -6234,19 +7509,21 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
             }
 
             // ADD / SUB / ROL / ROR with immediate (alternative obfuscation ops)
-            if matches!(m, Mnemonic::Add | Mnemonic::Sub | Mnemonic::Rol | Mnemonic::Ror)
-                && matches!(
-                    instr.op1_kind(),
-                    OpKind::Immediate8 | OpKind::Immediate8to32 | OpKind::Immediate16
+            if matches!(
+                m,
+                Mnemonic::Add | Mnemonic::Sub | Mnemonic::Rol | Mnemonic::Ror
+            ) && matches!(
+                instr.op1_kind(),
+                OpKind::Immediate8
+                    | OpKind::Immediate8to32
+                    | OpKind::Immediate16
                     | OpKind::Immediate32
-                )
-            {
+            ) {
                 has_arith_imm = true;
             }
 
             // Byte memory read (MOVZX/MOVSX from [mem], or MOV AL/CL/DL…)
-            if matches!(m, Mnemonic::Movzx | Mnemonic::Movsx)
-                && instr.op1_kind() == OpKind::Memory
+            if matches!(m, Mnemonic::Movzx | Mnemonic::Movsx) && instr.op1_kind() == OpKind::Memory
             {
                 has_byte_mem = true;
             }
@@ -6272,30 +7549,60 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
                 has_loop_insn = true;
             }
 
-            if instr.flow_control() == FlowControl::Return { break; }
+            if instr.flow_control() == FlowControl::Return {
+                break;
+            }
         }
 
-        if has_xor_imm         { score += 30; tags.push("xor-imm"); }
-        if has_arith_imm       { score += 10; tags.push("arith-imm"); }
-        if has_byte_mem        { score += 20; tags.push("byte-mem"); }
-        if has_back_branch     { score += 25; tags.push("back-branch"); }
-        if has_loop_insn       { score += 30; tags.push("LOOP-insn"); }
+        if has_xor_imm {
+            score += 30;
+            tags.push("xor-imm");
+        }
+        if has_arith_imm {
+            score += 10;
+            tags.push("arith-imm");
+        }
+        if has_byte_mem {
+            score += 20;
+            tags.push("byte-mem");
+        }
+        if has_back_branch {
+            score += 25;
+            tags.push("back-branch");
+        }
+        if has_loop_insn {
+            score += 30;
+            tags.push("LOOP-insn");
+        }
         // Size bonus: true stubs are tiny
-        if instr_count <= 15 && score > 0 { score += 25; }
-        else if instr_count <= 30 && score > 0 { score += 10; }
+        if instr_count <= 15 && score > 0 {
+            score += 25;
+        } else if instr_count <= 30 && score > 0 {
+            score += 10;
+        }
 
         if score >= 50 {
             let keys_str = if !xor_keys.is_empty() {
-                let ks: Vec<String> = xor_keys.iter().take(4)
-                    .map(|k| format!("0x{:x}", k)).collect();
+                let ks: Vec<String> = xor_keys
+                    .iter()
+                    .take(4)
+                    .map(|k| format!("0x{:x}", k))
+                    .collect();
                 format!(" key={}", ks.join(","))
             } else {
                 String::new()
             };
-            candidates.push((fn_va, score, format!(
-                "score={} insns={}{} [{}]",
-                score, instr_count, keys_str, tags.join(" ")
-            )));
+            candidates.push((
+                fn_va,
+                score,
+                format!(
+                    "score={} insns={}{} [{}]",
+                    score,
+                    instr_count,
+                    keys_str,
+                    tags.join(" ")
+                ),
+            ));
         }
     }
 
@@ -6312,10 +7619,15 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
     let sep = "─".repeat(56);
     let mut out = format!(
         "string decoder candidates — {} found ({} functions scanned)\n{}\n\n",
-        candidates.len(), fn_addrs.len(), sep
+        candidates.len(),
+        fn_addrs.len(),
+        sep
     );
     for (va, _score, desc) in &candidates {
-        let name = project.renames.get(va).cloned()
+        let name = project
+            .renames
+            .get(va)
+            .cloned()
             .unwrap_or_else(|| format!("FUN_{:016x}", va));
         out.push_str(&format!("  0x{:016x}  {:<32}  {}\n", va, name, desc));
     }
@@ -6334,34 +7646,40 @@ fn find_string_decoders(path: &str, max_fns: usize) -> ToolResult {
 /// names, and return the call log (function, args, return value).
 /// Requires the `frida` Python package (`pip install frida frida-tools`).
 fn frida_trace(path: &str, hooks: &[String], timeout_secs: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if hooks.is_empty() { return ToolResult::err("'hooks' must contain at least one address or function name"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if hooks.is_empty() {
+        return ToolResult::err("'hooks' must contain at least one address or function name");
+    }
     if !std::path::Path::new(path).exists() {
         return ToolResult::err(format!("Binary '{}' not found", path));
     }
 
     // Detect architecture from the binary so the JS script reads the right registers
     let arch_hint = std::fs::read(path).ok().and_then(|d| {
-        object::File::parse(d.as_slice()).ok().map(|f| f.architecture())
+        object::File::parse(d.as_slice())
+            .ok()
+            .map(|f| f.architecture())
     });
     let (arg_regs, _ret_reg) = match arch_hint {
-        Some(Architecture::X86_64 | Architecture::X86_64_X32) =>
-            (r#"["rdi","rsi","rdx","rcx","r8","r9"]"#, "rax"),
-        Some(Architecture::Aarch64 | Architecture::Aarch64_Ilp32) =>
-            (r#"["x0","x1","x2","x3","x4","x5"]"#, "x0"),
-        Some(Architecture::Arm) =>
-            (r#"["r0","r1","r2","r3"]"#, "r0"),
-        Some(Architecture::I386) =>
-            (r#"[]"# , "eax"),   // x86-32: args are on stack, skip for now
-        _ =>
-            (r#"["rdi","rsi","rdx","rcx"]"#, "rax"),
+        Some(Architecture::X86_64 | Architecture::X86_64_X32) => {
+            (r#"["rdi","rsi","rdx","rcx","r8","r9"]"#, "rax")
+        }
+        Some(Architecture::Aarch64 | Architecture::Aarch64_Ilp32) => {
+            (r#"["x0","x1","x2","x3","x4","x5"]"#, "x0")
+        }
+        Some(Architecture::Arm) => (r#"["r0","r1","r2","r3"]"#, "r0"),
+        Some(Architecture::I386) => (r#"[]"#, "eax"), // x86-32: args are on stack, skip for now
+        _ => (r#"["rdi","rsi","rdx","rcx"]"#, "rax"),
     };
 
     // Build hook attachment JS for each requested target
     let mut hook_js = String::new();
     for hook in hooks {
         let trimmed = hook.trim();
-        let attach_expr = if trimmed.starts_with("0x") || trimmed.starts_with("0X")
+        let attach_expr = if trimmed.starts_with("0x")
+            || trimmed.starts_with("0X")
             || trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
         {
             // Numeric address
@@ -6395,8 +7713,8 @@ fn frida_trace(path: &str, hooks: &[String], timeout_secs: u64) -> ToolResult {
         ));
     }
 
-
-    let script = format!(r#"
+    let script = format!(
+        r#"
 import frida, sys, json, os, time
 
 BINARY = os.environ.get('KAIJU_BINARY', '')
@@ -6447,7 +7765,7 @@ for ev in events:
     else:
         print(' ', ev)
 "#,
-        hook_js      = hook_js,
+        hook_js = hook_js,
         timeout_secs = timeout_secs.clamp(2, 30),
     );
 
@@ -6467,7 +7785,9 @@ fn run_binary(
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
     if !std::path::Path::new(path).exists() {
         return ToolResult::err(format!("Binary '{}' not found", path));
     }
@@ -6476,7 +7796,9 @@ fn run_binary(
     let timeout = timeout_secs.clamp(1, 30);
 
     let mut cmd = Command::new(path);
-    for a in argv { cmd.arg(a); }
+    for a in argv {
+        cmd.arg(a);
+    }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin_data.is_some() {
         cmd.stdin(Stdio::piped());
@@ -6530,10 +7852,14 @@ fn run_binary(
                     #[cfg(unix)]
                     {
                         let pgid = child.id() as i32;
-                        unsafe { libc::killpg(pgid, libc::SIGKILL); }
+                        unsafe {
+                            libc::killpg(pgid, libc::SIGKILL);
+                        }
                     }
                     #[cfg(not(unix))]
-                    { let _ = child.kill(); }
+                    {
+                        let _ = child.kill();
+                    }
                     let _ = child.wait();
                     break true;
                 }
@@ -6543,14 +7869,18 @@ fn run_binary(
         }
     };
 
-    let exit_status = if !timed_out { child.try_wait().ok().flatten() } else { None };
+    let exit_status = if !timed_out {
+        child.try_wait().ok().flatten()
+    } else {
+        None
+    };
     let stdout_bytes = stdout_thread.join().unwrap_or_default();
     let stderr_bytes = stderr_thread.join().unwrap_or_default();
 
     let stdout_str = String::from_utf8_lossy(&stdout_bytes);
     let stderr_str = String::from_utf8_lossy(&stderr_bytes);
-    let trunc_out  = stdout_bytes.len() as u64 >= MAX_STREAM;
-    let trunc_err  = stderr_bytes.len() as u64 >= MAX_STREAM;
+    let trunc_out = stdout_bytes.len() as u64 >= MAX_STREAM;
+    let trunc_err = stderr_bytes.len() as u64 >= MAX_STREAM;
 
     let exit_label = if timed_out {
         format!("TIMEOUT ({}s) — process killed", timeout)
@@ -6572,15 +7902,23 @@ fn run_binary(
     if !stdout_str.is_empty() {
         out.push_str(&stdout_str);
         if trunc_out {
-            out.push_str(&format!("\n[stdout truncated at {} KiB]", MAX_STREAM / 1024));
+            out.push_str(&format!(
+                "\n[stdout truncated at {} KiB]",
+                MAX_STREAM / 1024
+            ));
         }
     }
     if !stderr_str.is_empty() {
-        if !out.ends_with('\n') { out.push('\n'); }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
         out.push_str("--- stderr ---\n");
         out.push_str(&stderr_str);
         if trunc_err {
-            out.push_str(&format!("\n[stderr truncated at {} KiB]", MAX_STREAM / 1024));
+            out.push_str(&format!(
+                "\n[stderr truncated at {} KiB]",
+                MAX_STREAM / 1024
+            ));
         }
     }
     if stdout_str.is_empty() && stderr_str.is_empty() {
@@ -6593,7 +7931,6 @@ fn run_binary(
         ToolResult::ok(out)
     }
 }
-
 
 // ─── Decompile helper: runs on a large stack to prevent stack overflow ────────
 
@@ -6621,7 +7958,7 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
     if vaddr == 0 {
         return ToolResult::err(
             "'vaddr' is required — pass the virtual address of the function entry point \
-             (e.g. from list_functions or file_info entry point)"
+             (e.g. from list_functions or file_info entry point)",
         );
     }
     let result = decompile_safe(path, vaddr);
@@ -6662,11 +7999,20 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
     // Signature / rename line
     if let Some(sig) = project.signatures.get(&vaddr) {
         let ret = sig.return_type.as_deref().unwrap_or("?");
-        let fname = project.renames.get(&vaddr).map(|s| s.as_str()).unwrap_or("fn");
-        let params: Vec<String> = sig.param_types.iter().enumerate()
+        let fname = project
+            .renames
+            .get(&vaddr)
+            .map(|s| s.as_str())
+            .unwrap_or("fn");
+        let params: Vec<String> = sig
+            .param_types
+            .iter()
+            .enumerate()
             .map(|(i, pt)| {
                 let t = pt.as_deref().unwrap_or("?");
-                let n = sig.param_names.get(i)
+                let n = sig
+                    .param_names
+                    .get(i)
                     .and_then(|x| x.as_deref())
                     .unwrap_or("_");
                 format!("{} {}", t, n)
@@ -6685,17 +8031,26 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
     // Callers summary (lightweight — just a count + first few sites)
     let xr = xrefs_to_inner(path, vaddr);
     if !xr.is_empty() {
-        let caller_sites: Vec<String> = xr.iter().take(5)
+        let caller_sites: Vec<String> = xr
+            .iter()
+            .take(5)
             .map(|(_, site)| format!("0x{:x}", site))
             .collect();
-        let extra = if xr.len() > 5 { format!(" +{} more", xr.len() - 5) } else { String::new() };
+        let extra = if xr.len() > 5 {
+            format!(" +{} more", xr.len() - 5)
+        } else {
+            String::new()
+        };
         header.push_str(&format!(
             "/* called from: {}{} */\n",
-            caller_sites.join(", "), extra
+            caller_sites.join(", "),
+            extra
         ));
     }
 
-    if !header.is_empty() { header.push('\n'); }
+    if !header.is_empty() {
+        header.push('\n');
+    }
 
     ToolResult::ok(format!(
         "Decompiled function at 0x{:x} in '{}':\n\n{}{}",
@@ -6705,19 +8060,31 @@ fn decompile(path: &str, vaddr: u64) -> ToolResult {
 
 /// Replace whole-word occurrences of `from` with `to` (word boundaries = not alphanumeric/_).
 fn replace_whole_word(text: &str, from: &str, to: &str) -> String {
-    if from.is_empty() || from == to { return text.to_string(); }
+    if from.is_empty() || from == to {
+        return text.to_string();
+    }
     let mut result = String::with_capacity(text.len() + 16);
     let mut start = 0usize;
     while let Some(rel) = text[start..].find(from) {
         let pos = start + rel;
         let prev_ok = pos == 0 || {
-            text[..pos].chars().last().map_or(true, |c| !c.is_alphanumeric() && c != '_')
+            text[..pos]
+                .chars()
+                .last()
+                .map_or(true, |c| !c.is_alphanumeric() && c != '_')
         };
         let next_ok = pos + from.len() >= text.len() || {
-            text[pos + from.len()..].chars().next().map_or(true, |c| !c.is_alphanumeric() && c != '_')
+            text[pos + from.len()..]
+                .chars()
+                .next()
+                .map_or(true, |c| !c.is_alphanumeric() && c != '_')
         };
         result.push_str(&text[start..pos]);
-        if prev_ok && next_ok { result.push_str(to); } else { result.push_str(from); }
+        if prev_ok && next_ok {
+            result.push_str(to);
+        } else {
+            result.push_str(from);
+        }
         start = pos + from.len();
     }
     result.push_str(&text[start..]);
@@ -6728,8 +8095,12 @@ fn replace_whole_word(text: &str, from: &str, to: &str) -> String {
 
 /// Search for a hex byte pattern (with `??` wildcards) throughout a binary file.
 fn search_bytes(path: &str, pattern: &str) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if pattern.is_empty() { return ToolResult::err("'pattern' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if pattern.is_empty() {
+        return ToolResult::err("'pattern' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -6745,15 +8116,20 @@ fn search_bytes(path: &str, pattern: &str) -> ToolResult {
             } else {
                 match u8::from_str_radix(tok, 16) {
                     Ok(b) => v.push(Some(b)),
-                    Err(_) => return ToolResult::err(format!(
-                        "Invalid token '{}' — use hex bytes (e.g. 'E8') or '??' for wildcards", tok
-                    )),
+                    Err(_) => {
+                        return ToolResult::err(format!(
+                            "Invalid token '{}' — use hex bytes (e.g. 'E8') or '??' for wildcards",
+                            tok
+                        ))
+                    }
                 }
             }
         }
         v
     };
-    if pat.is_empty() { return ToolResult::err("Empty pattern"); }
+    if pat.is_empty() {
+        return ToolResult::err("Empty pattern");
+    }
 
     let plen = pat.len();
     let mut matches: Vec<(usize, u64)> = Vec::new();
@@ -6761,26 +8137,39 @@ fn search_bytes(path: &str, pattern: &str) -> ToolResult {
     'outer: for i in 0..data.len().saturating_sub(plen - 1) {
         for (j, p) in pat.iter().enumerate() {
             if let Some(b) = p {
-                if data[i + j] != *b { continue 'outer; }
+                if data[i + j] != *b {
+                    continue 'outer;
+                }
             }
         }
         let vaddr = file_offset_to_vaddr(&data, i).unwrap_or(i as u64);
         matches.push((i, vaddr));
-        if matches.len() >= 1000 { break; } // cap at 1 K results
+        if matches.len() >= 1000 {
+            break;
+        } // cap at 1 K results
     }
 
     let total = matches.len();
-    let show  = 50.min(total);
+    let show = 50.min(total);
     let mut out = format!(
         "Byte-pattern search: '{}'\nFile: '{}'\nMatches: {}{}\n\n",
-        pattern, path, total,
-        if total > show { format!(" (showing first {})", show) } else { String::new() }
+        pattern,
+        path,
+        total,
+        if total > show {
+            format!(" (showing first {})", show)
+        } else {
+            String::new()
+        }
     );
 
     for (file_off, vaddr) in matches.iter().take(show) {
         let end = (file_off + 16).min(data.len());
         let ctx: String = data[*file_off..end]
-            .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
         out.push_str(&format!(
             "  file=0x{:08x}  vaddr=0x{:016x}  bytes: {}\n",
             file_off, vaddr, ctx
@@ -6802,8 +8191,12 @@ fn search_bytes(path: &str, pattern: &str) -> ToolResult {
 /// case-insensitive and the mnemonic part is compared by prefix (so `"pop"`
 /// matches `"pop rdi"`, `"pop rbx"`, etc.).
 fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
-    if path.is_empty()    { return ToolResult::err("'path' is required"); }
-    if pattern.is_empty() { return ToolResult::err("'pattern' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if pattern.is_empty() {
+        return ToolResult::err("'pattern' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -6818,10 +8211,12 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
     let bitness: u32 = match obj.architecture() {
         Architecture::X86_64 | Architecture::X86_64_X32 => 64,
         Architecture::I386 => 32,
-        _ => return ToolResult::err(
-            "search_gadgets only supports x86 / x86-64 binaries; \
-             use search_bytes with raw hex patterns for other architectures"
-        ),
+        _ => {
+            return ToolResult::err(
+                "search_gadgets only supports x86 / x86-64 binaries; \
+             use search_bytes with raw hex patterns for other architectures",
+            )
+        }
     };
 
     // Parse pattern: semicolon-separated tokens, each is a prefix to match
@@ -6834,7 +8229,9 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
         .collect();
 
     if tokens.is_empty() {
-        return ToolResult::err("Empty gadget pattern — use '; ' to separate instructions, e.g. 'pop rdi; ret'");
+        return ToolResult::err(
+            "Empty gadget pattern — use '; ' to separate instructions, e.g. 'pop rdi; ret'",
+        );
     }
 
     use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
@@ -6851,7 +8248,9 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
                 matches!(name, ".text" | ".init" | ".plt" | "__text" | ".fini")
             }
         };
-        if !is_exec { continue; }
+        if !is_exec {
+            continue;
+        }
 
         let sec_data = match section.data() {
             Ok(d) => d,
@@ -6872,19 +8271,27 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
             // Decode exactly n instructions from this offset
             let mut window: Vec<(u64, String)> = Vec::with_capacity(n);
             for instr in decoder.iter() {
-                if instr.is_invalid() { continue 'offset; }
+                if instr.is_invalid() {
+                    continue 'offset;
+                }
                 let vaddr = instr.ip();
                 let mut s = String::new();
                 fmt.format(&instr, &mut s);
                 window.push((vaddr, s.to_lowercase()));
-                if window.len() == n { break; }
+                if window.len() == n {
+                    break;
+                }
             }
-            if window.len() < n { continue; }
+            if window.len() < n {
+                continue;
+            }
 
             // Match each token against the corresponding instruction
             let mut ok = true;
             for (j, tok) in tokens.iter().enumerate() {
-                if tok == "*" { continue; }
+                if tok == "*" {
+                    continue;
+                }
                 // Prefix match: "pop" matches "pop rdi", "pop rdi" matches exactly "pop rdi"
                 if !window[j].1.starts_with(tok.as_str()) {
                     ok = false;
@@ -6892,23 +8299,34 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
                 }
             }
             if ok {
-                let gadget: String = window.iter()
+                let gadget: String = window
+                    .iter()
                     .map(|(_, s)| s.as_str())
                     .collect::<Vec<_>>()
                     .join(" ; ");
                 all_matches.push((window[0].0, gadget));
-                if all_matches.len() >= 100 { break; }
+                if all_matches.len() >= 100 {
+                    break;
+                }
             }
         }
-        if all_matches.len() >= 100 { break; }
+        if all_matches.len() >= 100 {
+            break;
+        }
     }
 
     let total = all_matches.len();
-    let show  = 50.min(total);
+    let show = 50.min(total);
     let mut out = format!(
         "Gadget search: pattern='{}'\nFile: '{}'\nMatches: {}{}\n\n",
-        pattern, path, total,
-        if total > show { format!(" (showing first {})", show) } else { String::new() }
+        pattern,
+        path,
+        total,
+        if total > show {
+            format!(" (showing first {})", show)
+        } else {
+            String::new()
+        }
     );
     for (vaddr, gadget) in all_matches.iter().take(show) {
         out.push_str(&format!("  0x{:016x}  {}\n", vaddr, gadget));
@@ -6926,8 +8344,12 @@ fn search_gadgets(path: &str, pattern: &str) -> ToolResult {
 /// Hex-dump a range of bytes at a virtual address, automatically translating
 /// vaddr → file offset using the binary's LOAD segment table.
 fn dump_range(path: &str, vaddr: u64, size: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let size = size.clamp(1, 4096);
 
@@ -6938,11 +8360,13 @@ fn dump_range(path: &str, vaddr: u64, size: usize) -> ToolResult {
 
     let file_off = match vaddr_to_file_offset(&data, vaddr) {
         Some(off) => off,
-        None => return ToolResult::err(format!(
-            "Virtual address 0x{:x} is not covered by any LOAD segment — \
+        None => {
+            return ToolResult::err(format!(
+                "Virtual address 0x{:x} is not covered by any LOAD segment — \
              run file_info to inspect the segment layout",
-            vaddr
-        )),
+                vaddr
+            ))
+        }
     };
 
     let end = (file_off + size).min(data.len());
@@ -6953,19 +8377,39 @@ fn dump_range(path: &str, vaddr: u64, size: usize) -> ToolResult {
     let bytes = &data[file_off..end];
     let mut out = format!(
         "Hex dump: vaddr=0x{:x}  file_offset=0x{:x}  length={} bytes\n\n",
-        vaddr, file_off, bytes.len()
+        vaddr,
+        file_off,
+        bytes.len()
     );
 
     for (row, chunk) in bytes.chunks(16).enumerate() {
         let cur_vaddr = vaddr + (row * 16) as u64;
         let first8 = &chunk[..chunk.len().min(8)];
-        let rest   = if chunk.len() > 8 { &chunk[8..] } else { &[] };
-        let hex_a: String = first8.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-        let hex_b: String = rest.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-        let ascii: String = chunk.iter()
-            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+        let rest = if chunk.len() > 8 { &chunk[8..] } else { &[] };
+        let hex_a: String = first8
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hex_b: String = rest
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii: String = chunk
+            .iter()
+            .map(|&b| {
+                if (0x20..0x7f).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
-        out.push_str(&format!("0x{:016x}  {:<23}  {:<23}  |{}|\n", cur_vaddr, hex_a, hex_b, ascii));
+        out.push_str(&format!(
+            "0x{:016x}  {:<23}  {:<23}  |{}|\n",
+            cur_vaddr, hex_a, hex_b, ascii
+        ));
     }
 
     ToolResult::ok(out)
@@ -6981,8 +8425,12 @@ fn patch_bytes(
     vaddr_hint: Option<u64>,
     hex_bytes: &str,
 ) -> ToolResult {
-    if path.is_empty()      { return ToolResult::err("'path' is required"); }
-    if hex_bytes.is_empty() { return ToolResult::err("'hex_bytes' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if hex_bytes.is_empty() {
+        return ToolResult::err("'hex_bytes' is required");
+    }
     if file_offset.is_none() && vaddr_hint.is_none() {
         return ToolResult::err("Either 'offset' or 'vaddr' is required");
     }
@@ -7008,9 +8456,12 @@ fn patch_bytes(
         (Some(o), _) => o,
         (None, Some(va)) => match vaddr_to_file_offset(&data, va) {
             Some(o) => o,
-            None => return ToolResult::err(format!(
-                "vaddr 0x{:x} not mapped in segment table — use file_info to check", va
-            )),
+            None => {
+                return ToolResult::err(format!(
+                    "vaddr 0x{:x} not mapped in segment table — use file_info to check",
+                    va
+                ))
+            }
         },
         _ => unreachable!(),
     };
@@ -7018,12 +8469,17 @@ fn patch_bytes(
     if off + new_bytes.len() > data.len() {
         return ToolResult::err(format!(
             "Patch at 0x{:x} + {} bytes would exceed file size {} — aborting",
-            off, new_bytes.len(), data.len()
+            off,
+            new_bytes.len(),
+            data.len()
         ));
     }
 
     let orig: String = data[off..off + new_bytes.len()]
-        .iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     data[off..off + new_bytes.len()].copy_from_slice(&new_bytes);
 
@@ -7042,7 +8498,9 @@ fn patch_bytes(
          The original file is untouched. Analyse '{}' to verify the patch.",
         path,
         off,
-        vaddr_hint.map(|v| format!(" (vaddr 0x{:x})", v)).unwrap_or_default(),
+        vaddr_hint
+            .map(|v| format!(" (vaddr 0x{:x})", v))
+            .unwrap_or_default(),
         orig,
         hex_bytes.trim(),
         out_path,
@@ -7054,9 +8512,15 @@ fn patch_bytes(
 
 /// Hash the function at `vaddr` and store it under `name` in the global DB.
 fn register_function_hash(path: &str, vaddr: u64, name: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
-    if name.is_empty() { return ToolResult::err("'name' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
+    if name.is_empty() {
+        return ToolResult::err("'name' is required");
+    }
 
     let (hash, byte_count) = match compute_fn_hash(path, vaddr) {
         Ok(v) => v,
@@ -7079,8 +8543,12 @@ fn register_function_hash(path: &str, vaddr: u64, name: &str) -> ToolResult {
 
 /// Hash the function at `vaddr` and return any known names from the global DB.
 fn lookup_function_hash(path: &str, vaddr: u64) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required");
+    }
 
     let (hash, byte_count) = match compute_fn_hash(path, vaddr) {
         Ok(v) => v,
@@ -7095,12 +8563,15 @@ fn lookup_function_hash(path: &str, vaddr: u64) -> ToolResult {
     match db.lookup(hash) {
         Err(e) => ToolResult::err(format!("DB query failed: {}", e)),
         Ok(matches) if matches.is_empty() => ToolResult::ok(format!(
-            "hash=0x{:016x} ({} bytes) — no matches in database", hash, byte_count
+            "hash=0x{:016x} ({} bytes) — no matches in database",
+            hash, byte_count
         )),
         Ok(matches) => {
             let mut out = format!(
                 "hash=0x{:016x} ({} bytes) — {} match(es):\n\n",
-                hash, byte_count, matches.len()
+                hash,
+                byte_count,
+                matches.len()
             );
             for (name, source) in &matches {
                 out.push_str(&format!("  {:<30}  from: {}\n", name, source));
@@ -7112,7 +8583,9 @@ fn lookup_function_hash(path: &str, vaddr: u64) -> ToolResult {
 
 /// Scan all functions in the binary and report any that match the global DB.
 fn match_all_functions(path: &str, max_results: usize) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -7140,14 +8613,18 @@ fn match_all_functions(path: &str, max_results: usize) -> ToolResult {
 
     if candidates.is_empty() {
         // Prologue scan (x86-64 only)
-        if let Some(sec) = obj.sections().find(|s| matches!(s.name().ok(), Some(".text") | Some("__text"))) {
+        if let Some(sec) = obj
+            .sections()
+            .find(|s| matches!(s.name().ok(), Some(".text") | Some("__text")))
+        {
             if let Ok(bytes) = sec.data() {
                 let base = sec.address();
                 let mut i = 0usize;
                 while i + 4 <= bytes.len() {
                     let b = &bytes[i..];
-                    if (b[0]==0xf3&&b[1]==0x0f&&b[2]==0x1e&&b[3]==0xfa)
-                     ||(b[0]==0x55&&b[1]==0x48&&b[2]==0x89&&b[3]==0xe5) {
+                    if (b[0] == 0xf3 && b[1] == 0x0f && b[2] == 0x1e && b[3] == 0xfa)
+                        || (b[0] == 0x55 && b[1] == 0x48 && b[2] == 0x89 && b[3] == 0xe5)
+                    {
                         candidates.push(base + i as u64);
                     }
                     i += 1;
@@ -7181,8 +8658,11 @@ fn match_all_functions(path: &str, max_results: usize) -> ToolResult {
     let total = hits.len();
     let mut out = format!(
         "Scanned {} functions — {} DB match(es):\n\n  {:<20}  {:<30}  {}\n  {}\n",
-        candidates.len(), total,
-        "Address", "Known as", "Source",
+        candidates.len(),
+        total,
+        "Address",
+        "Known as",
+        "Source",
         "─".repeat(75)
     );
     for (vaddr, name, source) in hits.iter().take(max_results) {
@@ -7197,10 +8677,10 @@ fn match_all_functions(path: &str, max_results: usize) -> ToolResult {
 /// Internal: hash the function at `vaddr` in `path`.
 /// Returns (hash, byte_count) or an error string.
 fn compute_fn_hash(path: &str, vaddr: u64) -> std::result::Result<(u64, usize), String> {
-    let data = std::fs::read(path)
-        .map_err(|e| format!("Cannot read '{}': {}", path, e))?;
+    let data = std::fs::read(path).map_err(|e| format!("Cannot read '{}': {}", path, e))?;
 
-    let bitness = object::File::parse(&*data).ok()
+    let bitness = object::File::parse(&*data)
+        .ok()
         .map(|o| if o.is_64() { 64u32 } else { 32u32 })
         .unwrap_or(64);
 
@@ -7234,8 +8714,12 @@ fn find_ret_boundary(bytes: &[u8], bitness: u32) -> usize {
 /// Position-dependent bytes (CALL/JMP rel32, RIP-relative LEA/MOV) are
 /// replaced with `??` wildcards so the rule matches even after relinking.
 fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
-    if vaddr == 0 { return ToolResult::err("'vaddr' is required (must be non-zero)"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
+    if vaddr == 0 {
+        return ToolResult::err("'vaddr' is required (must be non-zero)");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -7246,24 +8730,33 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
     let bitness: u32 = match arch {
         Some(Architecture::X86_64) | Some(Architecture::X86_64_X32) | None => 64,
         Some(Architecture::I386) => 32,
-        Some(other) => return ToolResult::err(format!(
-            "YARA rule generation requires x86/x86-64 (got {:?})", other
-        )),
+        Some(other) => {
+            return ToolResult::err(format!(
+                "YARA rule generation requires x86/x86-64 (got {:?})",
+                other
+            ))
+        }
     };
 
     let file_off = match vaddr_to_file_offset(&data, vaddr) {
         Some(off) => off,
-        None => return ToolResult::err(format!(
-            "Virtual address 0x{:x} not mapped in any segment", vaddr
-        )),
+        None => {
+            return ToolResult::err(format!(
+                "Virtual address 0x{:x} not mapped in any segment",
+                vaddr
+            ))
+        }
     };
 
     // Find function size from symbol table, default to a generous 512 bytes
-    let fn_size = object::File::parse(&*data).ok().and_then(|o| {
-        o.symbols()
-            .find(|s| s.address() == vaddr && s.size() > 0)
-            .map(|s| s.size() as usize)
-    }).unwrap_or(512);
+    let fn_size = object::File::parse(&*data)
+        .ok()
+        .and_then(|o| {
+            o.symbols()
+                .find(|s| s.address() == vaddr && s.size() > 0)
+                .map(|s| s.size() as usize)
+        })
+        .unwrap_or(512);
 
     let end = (file_off + fn_size).min(data.len());
     let fn_bytes = &data[file_off..end];
@@ -7277,18 +8770,25 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
     for instr in &mut decoder {
         let offset = (instr.ip() - vaddr) as usize;
         let len = instr.len();
-        if offset + len > fn_bytes.len() { break; }
+        if offset + len > fn_bytes.len() {
+            break;
+        }
         let raw = &fn_bytes[offset..offset + len];
 
         // Determine wildcard mask for this instruction
         let mut wildcard = vec![false; len];
 
         // Near-branch operands (CALL rel32, JMP rel32, Jcc rel32)
-        let has_rel_branch = (0..instr.op_count()).any(|i| matches!(
-            instr.op_kind(i),
-            OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
-            | OpKind::FarBranch16 | OpKind::FarBranch32
-        ));
+        let has_rel_branch = (0..instr.op_count()).any(|i| {
+            matches!(
+                instr.op_kind(i),
+                OpKind::NearBranch16
+                    | OpKind::NearBranch32
+                    | OpKind::NearBranch64
+                    | OpKind::FarBranch16
+                    | OpKind::FarBranch32
+            )
+        });
         if has_rel_branch && len > 1 {
             // Opcode is 1 byte (E8/E9/7x) or 2 bytes (0F 8x); displacement follows
             let opcode_len = if raw[0] == 0x0F { 2 } else { 1 };
@@ -7298,9 +8798,8 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
         }
 
         // RIP-relative memory operand (LEA/MOV [rip+disp32])
-        let has_rip_rel = (0..instr.op_count()).any(|i| {
-            instr.op_kind(i) == OpKind::Memory && instr.memory_base() == Register::RIP
-        });
+        let has_rip_rel = (0..instr.op_count())
+            .any(|i| instr.op_kind(i) == OpKind::Memory && instr.memory_base() == Register::RIP);
         if has_rip_rel && len >= 5 {
             // The 4-byte disp32 always occupies the last 4 bytes of the encoding
             for i in (len - 4)..len {
@@ -7327,25 +8826,41 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
 
     if yara_bytes.is_empty() {
         return ToolResult::err(format!(
-            "No instructions decoded at 0x{:x} — verify vaddr and architecture", vaddr
+            "No instructions decoded at 0x{:x} — verify vaddr and architecture",
+            vaddr
         ));
     }
 
     // Build hex string, 16 bytes per line
-    let hex_rows: Vec<String> = yara_bytes.chunks(16).map(|chunk| {
-        chunk.iter().map(|b| match b {
-            Some(v) => format!("{:02X}", v),
-            None    => "??".to_string(),
-        }).collect::<Vec<_>>().join(" ")
-    }).collect();
+    let hex_rows: Vec<String> = yara_bytes
+        .chunks(16)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .map(|b| match b {
+                    Some(v) => format!("{:02X}", v),
+                    None => "??".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
     let hex_body = hex_rows.join("\n             ");
 
     let wildcarded = yara_bytes.iter().filter(|b| b.is_none()).count();
-    let concrete   = yara_bytes.len() - wildcarded;
+    let concrete = yara_bytes.len() - wildcarded;
 
     let default_name = format!("fn_{:016x}", vaddr);
-    let name = rule_name.unwrap_or(&default_name)
-        .chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+    let name = rule_name
+        .unwrap_or(&default_name)
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
 
     let rule = format!(
@@ -7363,13 +8878,13 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
          }}\n",
         path,
         vaddr,
-        concrete   = concrete,
+        concrete = concrete,
         wildcarded = wildcarded,
-        name       = name,
-        path       = path,
-        vaddr      = vaddr,
-        total      = yara_bytes.len(),
-        hex_body   = hex_body,
+        name = name,
+        path = path,
+        vaddr = vaddr,
+        total = yara_bytes.len(),
+        hex_body = hex_body,
     );
 
     ToolResult::ok(rule)
@@ -7379,7 +8894,9 @@ fn generate_yara_rule(path: &str, vaddr: u64, rule_name: Option<&str>) -> ToolRe
 
 /// Compute Shannon entropy for each section and the whole file.
 fn section_entropy(path: &str) -> ToolResult {
-    if path.is_empty() { return ToolResult::err("'path' is required"); }
+    if path.is_empty() {
+        return ToolResult::err("'path' is required");
+    }
 
     let data = match std::fs::read(path) {
         Ok(d) => d,
@@ -7387,28 +8904,42 @@ fn section_entropy(path: &str) -> ToolResult {
     };
 
     fn shannon(bytes: &[u8]) -> f64 {
-        if bytes.is_empty() { return 0.0; }
+        if bytes.is_empty() {
+            return 0.0;
+        }
         let mut freq = [0u32; 256];
-        for &b in bytes { freq[b as usize] += 1; }
+        for &b in bytes {
+            freq[b as usize] += 1;
+        }
         let n = bytes.len() as f64;
-        freq.iter().filter(|&&c| c > 0)
-            .map(|&c| { let p = c as f64 / n; -p * p.log2() })
+        freq.iter()
+            .filter(|&&c| c > 0)
+            .map(|&c| {
+                let p = c as f64 / n;
+                -p * p.log2()
+            })
             .sum()
     }
 
     fn bar(e: f64) -> String {
         let filled = ((e / 8.0) * 24.0).round() as usize;
-        format!("{}{}",
+        format!(
+            "{}{}",
             "█".repeat(filled.min(24)),
             "░".repeat(24usize.saturating_sub(filled))
         )
     }
 
     fn label(e: f64) -> &'static str {
-        if e >= 7.5 { "⚠  encrypted/packed" }
-        else if e >= 7.0 { "▲  high (crypto/compress?)" }
-        else if e >= 5.0 { "~  normal code/data" }
-        else { "▼  low (text/sparse)" }
+        if e >= 7.5 {
+            "⚠  encrypted/packed"
+        } else if e >= 7.0 {
+            "▲  high (crypto/compress?)"
+        } else if e >= 5.0 {
+            "~  normal code/data"
+        } else {
+            "▼  low (text/sparse)"
+        }
     }
 
     let file_e = shannon(&data);
@@ -7416,17 +8947,26 @@ fn section_entropy(path: &str) -> ToolResult {
         "Entropy analysis: '{}'\nFile size: {} bytes\n\n\
          Whole file   {:.4}  [{}]  {}\n\n\
          Sections:\n\n",
-        path, data.len(), file_e, bar(file_e), label(file_e)
+        path,
+        data.len(),
+        file_e,
+        bar(file_e),
+        label(file_e)
     );
 
     match object::File::parse(&*data) {
         Ok(obj) => {
-            let mut rows: Vec<(String, u64, usize, f64)> = obj.sections()
+            let mut rows: Vec<(String, u64, usize, f64)> = obj
+                .sections()
                 .filter_map(|s| {
                     let name = s.name().ok()?.to_string();
-                    if name.is_empty() { return None; }
+                    if name.is_empty() {
+                        return None;
+                    }
                     let sec_data = s.data().ok()?;
-                    if sec_data.is_empty() { return None; }
+                    if sec_data.is_empty() {
+                        return None;
+                    }
                     Some((name, s.address(), sec_data.len(), shannon(sec_data)))
                 })
                 .collect();
@@ -7434,7 +8974,12 @@ fn section_entropy(path: &str) -> ToolResult {
             for (name, addr, size, e) in &rows {
                 out.push_str(&format!(
                     "  {:<16}  0x{:016x}  {:>8} B   {:.4}  [{}]  {}\n",
-                    name, addr, size, e, bar(*e), label(*e)
+                    name,
+                    addr,
+                    size,
+                    e,
+                    bar(*e),
+                    label(*e)
                 ));
             }
             if rows.is_empty() {
@@ -7459,11 +9004,14 @@ fn virustotal_check(path: &str) -> ToolResult {
 
     let api_key = match std::env::var("VIRUSTOTAL_API_KEY") {
         Ok(k) if !k.is_empty() => k,
-        _ => return ToolResult::ok(
-            "VirusTotal: no API key set.\n\
+        _ => {
+            return ToolResult::ok(
+                "VirusTotal: no API key set.\n\
              Export VIRUSTOTAL_API_KEY=<your_key> to enable hash lookups.\n\
-             Free API keys: https://www.virustotal.com/gui/join-us".to_string()
-        ),
+             Free API keys: https://www.virustotal.com/gui/join-us"
+                    .to_string(),
+            )
+        }
     };
 
     // Read and hash the file
@@ -7516,11 +9064,21 @@ fn virustotal_check(path: &str) -> ToolResult {
     };
 
     let attrs = &json["data"]["attributes"];
-    let malicious: u64 = attrs["last_analysis_stats"]["malicious"].as_u64().unwrap_or(0);
-    let suspicious: u64 = attrs["last_analysis_stats"]["suspicious"].as_u64().unwrap_or(0);
-    let undetected: u64 = attrs["last_analysis_stats"]["undetected"].as_u64().unwrap_or(0);
-    let total = malicious + suspicious + undetected
-        + attrs["last_analysis_stats"]["harmless"].as_u64().unwrap_or(0);
+    let malicious: u64 = attrs["last_analysis_stats"]["malicious"]
+        .as_u64()
+        .unwrap_or(0);
+    let suspicious: u64 = attrs["last_analysis_stats"]["suspicious"]
+        .as_u64()
+        .unwrap_or(0);
+    let undetected: u64 = attrs["last_analysis_stats"]["undetected"]
+        .as_u64()
+        .unwrap_or(0);
+    let total = malicious
+        + suspicious
+        + undetected
+        + attrs["last_analysis_stats"]["harmless"]
+            .as_u64()
+            .unwrap_or(0);
 
     let verdict = if malicious > 0 {
         format!("⚠  MALICIOUS  ({}/{} engines)", malicious, total)
@@ -7530,10 +9088,12 @@ fn virustotal_check(path: &str) -> ToolResult {
         format!("✓  CLEAN      (0/{} engines)", total)
     };
 
-    let names: Vec<&str> = attrs["names"].as_array()
+    let names: Vec<&str> = attrs["names"]
+        .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str()).take(5).collect())
         .unwrap_or_default();
-    let tags: Vec<&str> = attrs["tags"].as_array()
+    let tags: Vec<&str> = attrs["tags"]
+        .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str()).take(10).collect())
         .unwrap_or_default();
 
@@ -7560,7 +9120,10 @@ fn virustotal_check(path: &str) -> ToolResult {
                     let label = result["result"].as_str().unwrap_or("(unnamed)");
                     out.push_str(&format!("  {:<30} {}\n", engine, label));
                     count += 1;
-                    if count >= 20 { out.push_str("  … (truncated)\n"); break; }
+                    if count >= 20 {
+                        out.push_str("  … (truncated)\n");
+                        break;
+                    }
                 }
             }
         }
@@ -7580,8 +9143,8 @@ impl Sha256Hasher {
     fn new() -> Self {
         Sha256Hasher {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             buf: Vec::new(),
             len: 0,
@@ -7601,7 +9164,9 @@ impl Sha256Hasher {
     fn finish(mut self) -> String {
         let bit_len = self.len * 8;
         self.buf.push(0x80);
-        while (self.buf.len() % 64) != 56 { self.buf.push(0); }
+        while (self.buf.len() % 64) != 56 {
+            self.buf.push(0);
+        }
         self.buf.extend_from_slice(&bit_len.to_be_bytes());
         while self.buf.len() >= 64 {
             let block: [u8; 64] = self.buf[..64].try_into().unwrap();
@@ -7614,39 +9179,58 @@ impl Sha256Hasher {
 
 fn sha256_compress(state: &mut [u32; 8], block: &[u8; 64]) {
     const K: [u32; 64] = [
-        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
     let mut w = [0u32; 64];
     for i in 0..16 {
-        w[i] = u32::from_be_bytes(block[i*4..i*4+4].try_into().unwrap());
+        w[i] = u32::from_be_bytes(block[i * 4..i * 4 + 4].try_into().unwrap());
     }
     for i in 16..64 {
-        let s0 = w[i-15].rotate_right(7) ^ w[i-15].rotate_right(18) ^ (w[i-15] >> 3);
-        let s1 = w[i-2].rotate_right(17) ^ w[i-2].rotate_right(19) ^ (w[i-2] >> 10);
-        w[i] = w[i-16].wrapping_add(s0).wrapping_add(w[i-7]).wrapping_add(s1);
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
     }
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
     for i in 0..64 {
         let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
         let ch = (e & f) ^ ((!e) & g);
-        let tmp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+        let tmp1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
         let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
         let maj = (a & b) ^ (a & c) ^ (b & c);
         let tmp2 = s0.wrapping_add(maj);
-        h = g; g = f; f = e; e = d.wrapping_add(tmp1);
-        d = c; c = b; b = a; a = tmp1.wrapping_add(tmp2);
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(tmp1);
+        d = c;
+        c = b;
+        b = a;
+        a = tmp1.wrapping_add(tmp2);
     }
-    state[0] = state[0].wrapping_add(a); state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c); state[3] = state[3].wrapping_add(d);
-    state[4] = state[4].wrapping_add(e); state[5] = state[5].wrapping_add(f);
-    state[6] = state[6].wrapping_add(g); state[7] = state[7].wrapping_add(h);
+    state[0] = state[0].wrapping_add(a);
+    state[1] = state[1].wrapping_add(b);
+    state[2] = state[2].wrapping_add(c);
+    state[3] = state[3].wrapping_add(d);
+    state[4] = state[4].wrapping_add(e);
+    state[5] = state[5].wrapping_add(f);
+    state[6] = state[6].wrapping_add(g);
+    state[7] = state[7].wrapping_add(h);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -7662,52 +9246,107 @@ mod tests {
     #[test]
     fn file_info_has_segments() {
         let r = file_info(SAMPLE);
-        assert!(r.output.contains("Segments"), "expected Segments in output:\n{}", r.output);
-        assert!(r.output.contains("vaddr="), "expected vaddr= in segments:\n{}", r.output);
+        assert!(
+            r.output.contains("Segments"),
+            "expected Segments in output:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("vaddr="),
+            "expected vaddr= in segments:\n{}",
+            r.output
+        );
     }
 
     #[test]
     fn disassemble_vaddr_translates_entry_point() {
         // Entry point of 3x17 is 0x401a50 — should NOT disassemble ELF magic bytes
-        let r = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 32}));
+        let r = dispatch(
+            "disassemble",
+            &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 32}),
+        );
         // Must not start with the ELF magic byte disassembly (jg 0x401a97)
-        assert!(!r.output.contains("jg"), "got ELF-header garbage instead of real code:\n{}", r.output);
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(
+            !r.output.contains("jg"),
+            "got ELF-header garbage instead of real code:\n{}",
+            r.output
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
     }
 
     #[test]
     fn list_functions_prologue_scan_stripped() {
         // 3x17 is stripped
-        let r = dispatch("list_functions", &json!({"path": SAMPLE, "max_results": 10}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        let r = dispatch(
+            "list_functions",
+            &json!({"path": SAMPLE, "max_results": 10}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         assert!(
             r.output.contains("prologue scan") || r.output.contains("symbol table"),
-            "unexpected output:\n{}", r.output
+            "unexpected output:\n{}",
+            r.output
         );
     }
 
     #[test]
     fn resolve_plt_orw() {
         let r = dispatch("resolve_plt", &json!({"path": SAMPLE_ORW}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         // orw should import at least read/write/open
         let lower = r.output.to_lowercase();
         assert!(
             lower.contains("read") || lower.contains("write") || lower.contains("open"),
-            "expected libc imports in PLT:\n{}", r.output
+            "expected libc imports in PLT:\n{}",
+            r.output
         );
     }
 
     #[test]
     fn strings_extract_section_filter() {
-        let all = dispatch("strings_extract", &json!({"path": SAMPLE_ORW, "max_results": 200}));
-        let filtered = dispatch("strings_extract", &json!({"path": SAMPLE_ORW, "section": ".rodata", "max_results": 200}));
-        let all_count: usize = all.output
-            .lines().next().and_then(|l| l.split_whitespace().nth(1)).and_then(|n| n.parse().ok()).unwrap_or(0);
-        let filtered_count: usize = filtered.output
-            .lines().next().and_then(|l| l.split_whitespace().nth(1)).and_then(|n| n.parse().ok()).unwrap_or(0);
-        assert!(filtered_count <= all_count, "section filter returned MORE strings than full scan");
-        assert!(filtered.output.contains("in '.rodata'"), "section label missing:\n{}", filtered.output);
+        let all = dispatch(
+            "strings_extract",
+            &json!({"path": SAMPLE_ORW, "max_results": 200}),
+        );
+        let filtered = dispatch(
+            "strings_extract",
+            &json!({"path": SAMPLE_ORW, "section": ".rodata", "max_results": 200}),
+        );
+        let all_count: usize = all
+            .output
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0);
+        let filtered_count: usize = filtered
+            .output
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0);
+        assert!(
+            filtered_count <= all_count,
+            "section filter returned MORE strings than full scan"
+        );
+        assert!(
+            filtered.output.contains("in '.rodata'"),
+            "section label missing:\n{}",
+            filtered.output
+        );
     }
 
     // ── disassemble stops at ret ─────────────────────────────────────────────
@@ -7716,12 +9355,27 @@ mod tests {
     fn disassemble_stops_at_ret() {
         // Disassemble a large window; the output should end at the first ret,
         // not at the 60-instruction truncation marker.
-        let r = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 1024}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        let r = dispatch(
+            "disassemble",
+            &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 1024}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         // Should contain a ret instruction
-        assert!(r.output.contains(" ret"), "expected a ret instruction:\n{}", r.output);
+        assert!(
+            r.output.contains(" ret"),
+            "expected a ret instruction:\n{}",
+            r.output
+        );
         // Should NOT be truncated at 200 instructions (ret fires first for any real function)
-        assert!(!r.output.contains("truncated at 200"), "should have stopped at ret before 200 insns:\n{}", r.output);
+        assert!(
+            !r.output.contains("truncated at 200"),
+            "should have stopped at ret before 200 insns:\n{}",
+            r.output
+        );
     }
 
     // ── list_functions JSON output ───────────────────────────────────────────
@@ -7729,9 +9383,13 @@ mod tests {
     #[test]
     fn list_functions_json_output() {
         let r = dispatch("list_functions", &json!({"path": SAMPLE_ORW, "json": true}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        let v: serde_json::Value = serde_json::from_str(&r.output)
-            .expect("output should be valid JSON");
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&r.output).expect("output should be valid JSON");
         assert!(v["functions"].is_array(), "should have 'functions' array");
         assert!(v["total"].is_number(), "should have 'total' count");
     }
@@ -7742,8 +9400,16 @@ mod tests {
     fn xrefs_to_unknown_address_returns_no_refs() {
         // 0x1 is not a real function — no one calls it
         let r = dispatch("xrefs_to", &json!({"path": SAMPLE_ORW, "vaddr": 0x1_u64}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("No call"), "expected no-call message:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("No call"),
+            "expected no-call message:\n{}",
+            r.output
+        );
     }
 
     #[test]
@@ -7758,11 +9424,18 @@ mod tests {
     fn dwarf_info_stripped_binary_returns_no_entries() {
         // 3x17 and orw are stripped — no DWARF expected
         let r = dispatch("dwarf_info", &json!({"path": SAMPLE}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         // Either empty result or the "no DWARF" message, but no crash
         assert!(
-            r.output.contains("No DWARF") || r.output.contains("0 entries") || r.output.contains("functions"),
-            "unexpected output:\n{}", r.output
+            r.output.contains("No DWARF")
+                || r.output.contains("0 entries")
+                || r.output.contains("functions"),
+            "unexpected output:\n{}",
+            r.output
         );
     }
 
@@ -7782,9 +9455,20 @@ mod tests {
     fn rename_function_saves_and_loads() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        let r = dispatch("rename_function", &json!({"path": bin, "vaddr": 0x401000_u64, "name": "parse"}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("parse"), "name should appear in output:\n{}", r.output);
+        let r = dispatch(
+            "rename_function",
+            &json!({"path": bin, "vaddr": 0x401000_u64, "name": "parse"}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("parse"),
+            "name should appear in output:\n{}",
+            r.output
+        );
 
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(p.get_name(0x401000), Some("parse".to_string()));
@@ -7795,7 +9479,10 @@ mod tests {
     fn add_comment_saves_and_loads() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        dispatch("add_comment", &json!({"path": bin, "vaddr": 0x401010_u64, "comment": "stack pivot"}));
+        dispatch(
+            "add_comment",
+            &json!({"path": bin, "vaddr": 0x401010_u64, "comment": "stack pivot"}),
+        );
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(p.get_comment(0x401010), Some("stack pivot"));
         let _ = std::fs::remove_file(&sidecar);
@@ -7805,10 +9492,17 @@ mod tests {
     fn rename_variable_saves() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        let r = dispatch("rename_variable", &json!({
-            "path": bin, "fn_vaddr": 0x401000_u64, "old_name": "arg_1", "new_name": "buf"
-        }));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        let r = dispatch(
+            "rename_variable",
+            &json!({
+                "path": bin, "fn_vaddr": 0x401000_u64, "old_name": "arg_1", "new_name": "buf"
+            }),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(p.var_renames[&0x401000]["arg_1"], "buf");
         let _ = std::fs::remove_file(&sidecar);
@@ -7818,10 +9512,14 @@ mod tests {
     fn set_return_type_saves() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        dispatch("set_return_type", &json!({"path": bin, "fn_vaddr": 0x401000_u64, "type_str": "int"}));
+        dispatch(
+            "set_return_type",
+            &json!({"path": bin, "fn_vaddr": 0x401000_u64, "type_str": "int"}),
+        );
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(
-            p.get_signature(0x401000).and_then(|s| s.return_type.as_deref()),
+            p.get_signature(0x401000)
+                .and_then(|s| s.return_type.as_deref()),
             Some("int")
         );
         let _ = std::fs::remove_file(&sidecar);
@@ -7831,12 +9529,16 @@ mod tests {
     fn set_param_type_saves() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        dispatch("set_param_type", &json!({
-            "path": bin, "fn_vaddr": 0x401000_u64, "param_n": 1_u64, "type_str": "const char*"
-        }));
+        dispatch(
+            "set_param_type",
+            &json!({
+                "path": bin, "fn_vaddr": 0x401000_u64, "param_n": 1_u64, "type_str": "const char*"
+            }),
+        );
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(
-            p.get_signature(0x401000).and_then(|s| s.param_types[0].as_deref()),
+            p.get_signature(0x401000)
+                .and_then(|s| s.param_types[0].as_deref()),
             Some("const char*")
         );
         let _ = std::fs::remove_file(&sidecar);
@@ -7846,20 +9548,35 @@ mod tests {
     fn define_struct_saves_and_lists() {
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        let r = dispatch("define_struct", &json!({
-            "path": bin,
-            "struct_name": "header",
-            "total_size": 8,
-            "fields": [
-                {"offset": 0, "size": 4, "name": "magic", "type_str": "uint32_t"},
-                {"offset": 4, "size": 4, "name": "size",  "type_str": "uint32_t"}
-            ]
-        }));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("magic") && r.output.contains("size"), "fields should appear:\n{}", r.output);
+        let r = dispatch(
+            "define_struct",
+            &json!({
+                "path": bin,
+                "struct_name": "header",
+                "total_size": 8,
+                "fields": [
+                    {"offset": 0, "size": 4, "name": "magic", "type_str": "uint32_t"},
+                    {"offset": 4, "size": 4, "name": "size",  "type_str": "uint32_t"}
+                ]
+            }),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("magic") && r.output.contains("size"),
+            "fields should appear:\n{}",
+            r.output
+        );
 
         let list = dispatch("list_types", &json!({"path": bin}));
-        assert!(list.output.contains("header"), "struct name should appear in list_types:\n{}", list.output);
+        assert!(
+            list.output.contains("header"),
+            "struct name should appear in list_types:\n{}",
+            list.output
+        );
         let _ = std::fs::remove_file(&sidecar);
     }
 
@@ -7867,16 +9584,32 @@ mod tests {
     fn list_types_empty_project() {
         let bin = temp_bin();
         let r = dispatch("list_types", &json!({"path": bin}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("No type annotations"), "should report empty:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("No type annotations"),
+            "should report empty:\n{}",
+            r.output
+        );
     }
 
     #[test]
     fn load_project_nonexistent_reports_path() {
         let bin = temp_bin();
         let r = dispatch("load_project", &json!({"path": bin}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains(".kaiju.db"), "should mention sidecar path:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains(".kaiju.db"),
+            "should mention sidecar path:\n{}",
+            r.output
+        );
     }
 
     // ── hexdump ──────────────────────────────────────────────────────────────
@@ -7892,11 +9625,23 @@ mod tests {
         let data: Vec<u8> = (0u8..32).collect();
         let path = write_temp_file(&data);
         let r = dispatch("hexdump", &json!({"path": path, "offset": 0, "length": 32}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
         // First row should contain address 00000000
-        assert!(r.output.contains("00000000"), "address column missing:\n{}", r.output);
+        assert!(
+            r.output.contains("00000000"),
+            "address column missing:\n{}",
+            r.output
+        );
         // Should contain ASCII representation area
-        assert!(r.output.contains('|'), "ASCII column missing:\n{}", r.output);
+        assert!(
+            r.output.contains('|'),
+            "ASCII column missing:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7904,8 +9649,15 @@ mod tests {
     fn hexdump_offset_beyond_eof_errors() {
         let data = b"hello";
         let path = write_temp_file(data);
-        let r = dispatch("hexdump", &json!({"path": path, "offset": 9999, "length": 16}));
-        assert!(r.output.contains("Error:"), "should error for offset beyond EOF:\n{}", r.output);
+        let r = dispatch(
+            "hexdump",
+            &json!({"path": path, "offset": 9999, "length": 16}),
+        );
+        assert!(
+            r.output.contains("Error:"),
+            "should error for offset beyond EOF:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7914,8 +9666,15 @@ mod tests {
         let data: Vec<u8> = (0u8..20).collect();
         let path = write_temp_file(&data);
         // Request more bytes than exist — should not error, just return what's there
-        let r = dispatch("hexdump", &json!({"path": path, "offset": 0, "length": 1024}));
-        assert!(!r.output.contains("Error:"), "should not error for oversized length:\n{}", r.output);
+        let r = dispatch(
+            "hexdump",
+            &json!({"path": path, "offset": 0, "length": 1024}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "should not error for oversized length:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7925,9 +9684,20 @@ mod tests {
     fn search_bytes_finds_exact_pattern() {
         let data = b"\x00\x01\x02\xDE\xAD\xBE\xEF\x07\x08";
         let path = write_temp_file(data);
-        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "DE AD BE EF"}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("Matches: 1"), "expected 1 match:\n{}", r.output);
+        let r = dispatch(
+            "search_bytes",
+            &json!({"path": path, "pattern": "DE AD BE EF"}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("Matches: 1"),
+            "expected 1 match:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7935,9 +9705,20 @@ mod tests {
     fn search_bytes_no_match_reports_zero() {
         let data = b"\x00\x01\x02\x03";
         let path = write_temp_file(data);
-        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "FF FF FF FF"}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("no matches"), "expected no-match message:\n{}", r.output);
+        let r = dispatch(
+            "search_bytes",
+            &json!({"path": path, "pattern": "FF FF FF FF"}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("no matches"),
+            "expected no-match message:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7945,9 +9726,20 @@ mod tests {
     fn search_bytes_wildcard_matches_any_byte() {
         let data = b"\xDE\xAD\x01\xEF\xDE\xAD\x02\xEF";
         let path = write_temp_file(data);
-        let r = dispatch("search_bytes", &json!({"path": path, "pattern": "DE AD ?? EF"}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("Matches: 2"), "expected 2 wildcard matches:\n{}", r.output);
+        let r = dispatch(
+            "search_bytes",
+            &json!({"path": path, "pattern": "DE AD ?? EF"}),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("Matches: 2"),
+            "expected 2 wildcard matches:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7955,7 +9747,11 @@ mod tests {
     fn search_bytes_invalid_token_errors() {
         let path = write_temp_file(b"\x00");
         let r = dispatch("search_bytes", &json!({"path": path, "pattern": "ZZ"}));
-        assert!(r.output.contains("Error:"), "should error on invalid token:\n{}", r.output);
+        assert!(
+            r.output.contains("Error:"),
+            "should error on invalid token:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7963,7 +9759,11 @@ mod tests {
     fn search_bytes_empty_pattern_errors() {
         let path = write_temp_file(b"\x00");
         let r = dispatch("search_bytes", &json!({"path": path, "pattern": ""}));
-        assert!(r.output.contains("Error:"), "should error on empty pattern:\n{}", r.output);
+        assert!(
+            r.output.contains("Error:"),
+            "should error on empty pattern:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -7973,11 +9773,22 @@ mod tests {
     fn patch_bytes_creates_patched_file() {
         let data = b"\x90\x90\x90\x90\x90"; // 5 NOPs
         let path = write_temp_file(data);
-        let r = dispatch("patch_bytes", &json!({
-            "path": path, "offset": 0, "hex_bytes": "CC CC"
-        }));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
-        assert!(r.output.contains("Patch applied"), "expected success message:\n{}", r.output);
+        let r = dispatch(
+            "patch_bytes",
+            &json!({
+                "path": path, "offset": 0, "hex_bytes": "CC CC"
+            }),
+        );
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
+        assert!(
+            r.output.contains("Patch applied"),
+            "expected success message:\n{}",
+            r.output
+        );
 
         let patched_path = format!("{}.patched", path);
         let patched = std::fs::read(&patched_path).unwrap();
@@ -7997,10 +9808,17 @@ mod tests {
     fn patch_bytes_offset_beyond_file_errors() {
         let data = b"\x90\x90";
         let path = write_temp_file(data);
-        let r = dispatch("patch_bytes", &json!({
-            "path": path, "offset": 100, "hex_bytes": "CC"
-        }));
-        assert!(r.output.contains("Error:"), "should error when offset is out of bounds:\n{}", r.output);
+        let r = dispatch(
+            "patch_bytes",
+            &json!({
+                "path": path, "offset": 100, "hex_bytes": "CC"
+            }),
+        );
+        assert!(
+            r.output.contains("Error:"),
+            "should error when offset is out of bounds:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -8008,17 +9826,28 @@ mod tests {
     fn patch_bytes_requires_offset_or_vaddr() {
         let path = write_temp_file(b"\x90");
         let r = dispatch("patch_bytes", &json!({"path": path, "hex_bytes": "CC"}));
-        assert!(r.output.contains("Error:"), "should require offset or vaddr:\n{}", r.output);
+        assert!(
+            r.output.contains("Error:"),
+            "should require offset or vaddr:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn patch_bytes_invalid_hex_errors() {
         let path = write_temp_file(b"\x90\x90");
-        let r = dispatch("patch_bytes", &json!({
-            "path": path, "offset": 0, "hex_bytes": "ZZ"
-        }));
-        assert!(r.output.contains("Error:"), "should error on invalid hex:\n{}", r.output);
+        let r = dispatch(
+            "patch_bytes",
+            &json!({
+                "path": path, "offset": 0, "hex_bytes": "ZZ"
+            }),
+        );
+        assert!(
+            r.output.contains("Error:"),
+            "should error on invalid hex:\n{}",
+            r.output
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -8030,18 +9859,27 @@ mod tests {
         // (If the env var IS set in CI, the test still passes — it just won't
         //  exercise the no-key branch. That is acceptable.)
         let old_key = std::env::var("VIRUSTOTAL_API_KEY").ok();
-        unsafe { std::env::remove_var("VIRUSTOTAL_API_KEY"); }
+        unsafe {
+            std::env::remove_var("VIRUSTOTAL_API_KEY");
+        }
         let path = write_temp_file(b"\x7fELF");
         let r = dispatch("virustotal_check", &json!({"path": path}));
         // Restore
         if let Some(k) = old_key {
-            unsafe { std::env::set_var("VIRUSTOTAL_API_KEY", k); }
+            unsafe {
+                std::env::set_var("VIRUSTOTAL_API_KEY", k);
+            }
         }
         // When no key is set the tool should return usage instructions, NOT an Error:
-        assert!(!r.output.contains("Error:"), "no-key path should not return an error:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "no-key path should not return an error:\n{}",
+            r.output
+        );
         assert!(
             r.output.contains("VIRUSTOTAL_API_KEY") || r.output.contains("VirusTotal"),
-            "should mention how to set the API key:\n{}", r.output
+            "should mention how to set the API key:\n{}",
+            r.output
         );
         let _ = std::fs::remove_file(&path);
     }
@@ -8051,9 +9889,18 @@ mod tests {
     #[test]
     fn cache_hit_returns_same_result() {
         // Call the same cacheable tool twice — second call must be served from cache
-        let r1 = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}));
-        let r2 = dispatch("disassemble", &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}));
-        assert_eq!(r1.output, r2.output, "cache hit should return identical output");
+        let r1 = dispatch(
+            "disassemble",
+            &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}),
+        );
+        let r2 = dispatch(
+            "disassemble",
+            &json!({"path": SAMPLE, "vaddr": 0x401a50_u64, "length": 16}),
+        );
+        assert_eq!(
+            r1.output, r2.output,
+            "cache hit should return identical output"
+        );
     }
 
     #[test]
@@ -8062,7 +9909,10 @@ mod tests {
         // (We can't directly observe the cache, so instead we verify the rename is applied.)
         let bin = temp_bin();
         let sidecar = crate::project::Project::project_path(&bin);
-        dispatch("rename_function", &json!({"path": bin, "vaddr": 0x401000_u64, "name": "cached_fn"}));
+        dispatch(
+            "rename_function",
+            &json!({"path": bin, "vaddr": 0x401000_u64, "name": "cached_fn"}),
+        );
         let p = crate::project::Project::load_for(&bin);
         assert_eq!(p.get_name(0x401000), Some("cached_fn".to_string()));
         let _ = std::fs::remove_file(&sidecar);
@@ -8073,7 +9923,11 @@ mod tests {
     #[test]
     fn dispatch_unknown_tool_returns_error() {
         let r = dispatch("totally_unknown_tool_xyz", &json!({}));
-        assert!(r.output.contains("Error:"), "unknown tool should return Error:\n{}", r.output);
+        assert!(
+            r.output.contains("Error:"),
+            "unknown tool should return Error:\n{}",
+            r.output
+        );
     }
 
     // ── export_report ─────────────────────────────────────────────────────────
@@ -8087,11 +9941,19 @@ mod tests {
         let html_path = format!("{}.kaiju.html", bin);
 
         let r = dispatch("export_report", &json!({"path": bin}));
-        assert!(!r.output.contains("Error:"), "unexpected error:\n{}", r.output);
+        assert!(
+            !r.output.contains("Error:"),
+            "unexpected error:\n{}",
+            r.output
+        );
 
         if std::path::Path::new(&html_path).exists() {
             let html = std::fs::read_to_string(&html_path).unwrap();
-            assert!(html.contains("<!DOCTYPE html>"), "should be valid HTML:\n{}", &html[..200.min(html.len())]);
+            assert!(
+                html.contains("<!DOCTYPE html>"),
+                "should be valid HTML:\n{}",
+                &html[..200.min(html.len())]
+            );
             let _ = std::fs::remove_file(&html_path);
         }
 

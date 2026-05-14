@@ -2468,7 +2468,9 @@ mod test {
     use pcode::VarNode;
     use smallvec::{smallvec, SmallVec};
 
-    use super::{Expression, ExpressionOp, InstructionSize::U32, OpIdx, VariableSymbol, SMALLVEC_SIZE};
+    use super::{
+        Expression, ExpressionOp, InstructionSize::U32, OpIdx, VariableSymbol, SMALLVEC_SIZE,
+    };
 
     #[inline]
     fn var_reg(r: VarNode) -> ExpressionOp {
@@ -2652,7 +2654,8 @@ mod test {
             Add(OpIdx::from_idx(3), OpIdx::from_idx(6), U32)
         ]; // e = [?EAX + 20] := ?data@[?EAX + 20] + 1
 
-        let val_expr = crate::decompiler::ir::basic_block::DestinationKind::Concrete(4917232_u64.into());
+        let val_expr =
+            crate::decompiler::ir::basic_block::DestinationKind::Concrete(4917232_u64.into());
         let call_result = ExpressionOp::Variable(VariableSymbol::CallResult {
             call_from: crate::decompiler::ir::Address::NULL,
             call_to: Box::new(val_expr),

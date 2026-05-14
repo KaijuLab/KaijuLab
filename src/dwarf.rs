@@ -14,11 +14,10 @@ pub struct DwarfFunction {
 
 /// Parse DWARF subprogram entries from the binary at `path`.
 pub fn parse_dwarf_functions(path: &str) -> anyhow::Result<Vec<DwarfFunction>> {
-    let data = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
+    let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
 
-    let obj = object::File::parse(&*data)
-        .map_err(|e| anyhow::anyhow!("Cannot parse binary: {}", e))?;
+    let obj =
+        object::File::parse(&*data).map_err(|e| anyhow::anyhow!("Cannot parse binary: {}", e))?;
 
     let endian = if obj.is_little_endian() {
         gimli::RunTimeEndian::Little

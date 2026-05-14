@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter, Mnemonic, OpKind, Register};
 use object::{Architecture, Object, ObjectSection};
 use serde::Serialize;
@@ -1325,8 +1325,16 @@ fn kir_memory_location(
     let index = index
         .as_ref()
         .map(|name| kir_canonical_register(name, architecture));
-    let pointer = if architecture.contains("64") { "rsp" } else { "esp" };
-    let frame = if architecture.contains("64") { "rbp" } else { "ebp" };
+    let pointer = if architecture.contains("64") {
+        "rsp"
+    } else {
+        "esp"
+    };
+    let frame = if architecture.contains("64") {
+        "rbp"
+    } else {
+        "ebp"
+    };
     let (kind, name) = match (base.as_deref(), index.as_deref()) {
         (Some(reg), None) if reg == pointer || reg == frame => {
             let suffix = if *displacement < 0 {
@@ -1336,9 +1344,10 @@ fn kir_memory_location(
             };
             ("stack".to_string(), format!("stack_{reg}_{suffix}"))
         }
-        (None, None) if *displacement != 0 => {
-            ("global".to_string(), format!("global_{:x}", *displacement as u64))
-        }
+        (None, None) if *displacement != 0 => (
+            "global".to_string(),
+            format!("global_{:x}", *displacement as u64),
+        ),
         _ => {
             let mut parts = Vec::new();
             if let Some(base) = &base {
@@ -1557,8 +1566,7 @@ fn infer_kir_call_facts(kir_function: &kir::KirFunction) -> kir::KirCallFacts {
             target: kir_call_target(op),
             convention: convention.to_string(),
             arguments,
-            return_value: kir_call_return_register(&kir_function.architecture)
-                .map(str::to_string),
+            return_value: kir_call_return_register(&kir_function.architecture).map(str::to_string),
             source: op.instruction.clone(),
         });
     }
@@ -1617,7 +1625,11 @@ fn kir_call_argument_names(kind: &str, architecture: &str) -> Vec<&'static str> 
 }
 
 fn kir_call_return_register(architecture: &str) -> Option<&'static str> {
-    Some(if architecture.contains("64") { "rax" } else { "eax" })
+    Some(if architecture.contains("64") {
+        "rax"
+    } else {
+        "eax"
+    })
 }
 
 fn kir_call_target(op: &kir::KirOp) -> String {
@@ -1679,11 +1691,18 @@ fn kir_register_type_for_op(
         return ("ptr", "high");
     }
     if matches!(op.opcode, kir::KirOpcode::Load)
-        && op.inputs.iter().any(|input| matches!(input, kir::KirValue::Memory { .. }))
+        && op
+            .inputs
+            .iter()
+            .any(|input| matches!(input, kir::KirValue::Memory { .. }))
     {
         return ("scalar_or_ptr", "medium");
     }
-    if op.inputs.iter().any(|input| matches!(input, kir::KirValue::Memory { .. })) {
+    if op
+        .inputs
+        .iter()
+        .any(|input| matches!(input, kir::KirValue::Memory { .. }))
+    {
         return ("scalar_or_ptr", "medium");
     }
     if matches!(
@@ -3419,13 +3438,13 @@ fn kir_structured_preview(
         .iter()
         .map(|assignment| (assignment.op_id, assignment))
         .collect::<BTreeMap<_, _>>();
-    let successors = function
-        .edges
-        .iter()
-        .fold(BTreeMap::<String, Vec<&RecoveredEdge>>::new(), |mut acc, edge| {
+    let successors = function.edges.iter().fold(
+        BTreeMap::<String, Vec<&RecoveredEdge>>::new(),
+        |mut acc, edge| {
             acc.entry(edge.from.clone()).or_default().push(edge);
             acc
-        });
+        },
+    );
     let loop_headers = cfg.loop_headers.iter().cloned().collect::<BTreeSet<_>>();
     let mut lines = Vec::new();
     lines.push(format!("void {}_kir() {{", function.name));
@@ -3888,13 +3907,11 @@ mod tests {
         let analysis = decompile_analysis_path(path, 0x8048060).expect("structured analysis");
         assert!(analysis.dataflow.available);
         assert!(analysis.kir.available);
-        assert!(
-            analysis
-                .kir
-                .ops
-                .iter()
-                .any(|op| matches!(op.opcode, kir::KirOpcode::Syscall))
-        );
+        assert!(analysis
+            .kir
+            .ops
+            .iter()
+            .any(|op| matches!(op.opcode, kir::KirOpcode::Syscall)));
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.definition_count > 0);
         assert!(analysis.kir.memory_ssa.available);
@@ -3904,56 +3921,47 @@ mod tests {
         assert!(analysis.kir.expressions.available);
         assert!(analysis.kir.expressions.assignment_count > 0);
         assert!(!kir_render_preview(&analysis.kir, 8).is_empty());
-        assert!(!kir_structured_preview(&analysis.kir, &analysis.function, &analysis.cfg, 16).is_empty());
+        assert!(
+            !kir_structured_preview(&analysis.kir, &analysis.function, &analysis.cfg, 16)
+                .is_empty()
+        );
         assert!(analysis.kir.call_facts.available);
         assert_eq!(analysis.kir.call_facts.syscall_count, 2);
-        assert!(
-            analysis
-                .kir
-                .call_facts
-                .calls
-                .iter()
-                .any(|call| call.convention == "linux_i386_int80"
-                    && call.arguments.iter().any(|arg| arg.name == "eax"))
-        );
-        assert!(
-            analysis
-                .kir
-                .ssa
-                .definitions
-                .iter()
-                .any(|def| def.name == "eax")
-        );
-        assert!(
-            analysis
-                .kir
-                .ssa
-                .definitions
-                .iter()
-                .all(|def| !matches!(def.name.as_str(), "al" | "bl" | "dl" | "sp"))
-        );
-        assert!(
-            analysis
-                .kir
-                .ssa
-                .uses
-                .iter()
-                .all(|use_| !matches!(use_.name.as_str(), "al" | "bl" | "dl" | "sp"))
-        );
-        assert!(
-            analysis
-                .dataflow
-                .definitions
-                .iter()
-                .any(|def| def.register == "eax")
-        );
-        assert!(
-            analysis
-                .dataflow
-                .uses
-                .iter()
-                .any(|use_| use_.register == "esp")
-        );
+        assert!(analysis
+            .kir
+            .call_facts
+            .calls
+            .iter()
+            .any(|call| call.convention == "linux_i386_int80"
+                && call.arguments.iter().any(|arg| arg.name == "eax")));
+        assert!(analysis
+            .kir
+            .ssa
+            .definitions
+            .iter()
+            .any(|def| def.name == "eax"));
+        assert!(analysis
+            .kir
+            .ssa
+            .definitions
+            .iter()
+            .all(|def| !matches!(def.name.as_str(), "al" | "bl" | "dl" | "sp")));
+        assert!(analysis
+            .kir
+            .ssa
+            .uses
+            .iter()
+            .all(|use_| !matches!(use_.name.as_str(), "al" | "bl" | "dl" | "sp")));
+        assert!(analysis
+            .dataflow
+            .definitions
+            .iter()
+            .any(|def| def.register == "eax"));
+        assert!(analysis
+            .dataflow
+            .uses
+            .iter()
+            .any(|use_| use_.register == "esp"));
     }
 
     #[test]
@@ -3966,79 +3974,65 @@ mod tests {
         assert_eq!(analysis.function.start, "0x8048ee1");
         assert!(!analysis.dataflow.memory_accesses.is_empty());
         assert!(!analysis.dataflow.variable_candidates.is_empty());
-        assert!(
-            analysis
-                .kir
-                .ops
-                .iter()
-                .any(|op| matches!(op.opcode, kir::KirOpcode::Load))
-        );
+        assert!(analysis
+            .kir
+            .ops
+            .iter()
+            .any(|op| matches!(op.opcode, kir::KirOpcode::Load)));
         assert!(analysis.kir.ssa.available);
         assert!(analysis.kir.ssa.phi_count > 0);
         assert!(analysis.kir.memory_ssa.available);
         assert!(analysis.kir.memory_ssa.use_count > 0);
-        assert!(
-            analysis
-                .kir
-                .memory_ssa
-                .locations
-                .iter()
-                .any(|location| location.kind == "stack" || location.kind == "global")
-        );
-        assert!(
-            analysis
-                .kir
-                .memory_ssa
-                .definitions
-                .iter()
-                .all(|definition| definition.version > 0)
-        );
+        assert!(analysis
+            .kir
+            .memory_ssa
+            .locations
+            .iter()
+            .any(|location| location.kind == "stack" || location.kind == "global"));
+        assert!(analysis
+            .kir
+            .memory_ssa
+            .definitions
+            .iter()
+            .all(|definition| definition.version > 0));
         assert!(analysis.kir.type_facts.available);
         assert!(analysis.kir.type_facts.register_type_count > 0);
         assert!(analysis.kir.type_facts.memory_type_count > 0);
-        assert!(
-            analysis
-                .kir
-                .type_facts
-                .memory_types
-                .iter()
-                .any(|fact| fact.type_name == "local" || fact.type_name == "global")
-        );
+        assert!(analysis
+            .kir
+            .type_facts
+            .memory_types
+            .iter()
+            .any(|fact| fact.type_name == "local" || fact.type_name == "global"));
         assert!(analysis.kir.expressions.available);
-        assert!(
-            kir_render_preview(&analysis.kir, 16)
-                .iter()
-                .any(|line| line.contains(" = load(") || line.contains(" = add("))
-        );
+        assert!(kir_render_preview(&analysis.kir, 16)
+            .iter()
+            .any(|line| line.contains(" = load(") || line.contains(" = add(")));
         assert!(
             kir_structured_preview(&analysis.kir, &analysis.function, &analysis.cfg, 32)
                 .iter()
                 .any(|line| line.ends_with(':') || line.contains("goto block_"))
         );
-        assert!(
-            analysis
-                .kir
-                .expressions
-                .assignments
-                .iter()
-                .any(|assignment| assignment.target.contains('_')
-                    && (assignment.expression.starts_with("add(")
-                        || assignment.expression.starts_with("sub(")
-                        || assignment.expression.starts_with("mul(")
-                        || assignment.expression.starts_with("load(")))
-        );
+        assert!(analysis
+            .kir
+            .expressions
+            .assignments
+            .iter()
+            .any(|assignment| assignment.target.contains('_')
+                && (assignment.expression.starts_with("add(")
+                    || assignment.expression.starts_with("sub(")
+                    || assignment.expression.starts_with("mul(")
+                    || assignment.expression.starts_with("load("))));
         assert!(analysis.kir.ssa.dominance_available);
         assert!(analysis.kir.ssa.block_states.iter().any(|block| {
             !block.dominance_frontier.is_empty() || block.immediate_dominator.is_some()
         }));
-        assert!(
-            analysis
-                .kir
-                .ssa
-                .phi_nodes
-                .iter()
-                .all(|phi| phi.reason.contains("dominance-frontier") && phi.version > 0)
-        );
+        assert!(analysis
+            .kir
+            .ssa
+            .phi_nodes
+            .iter()
+            .all(|phi| phi.reason.contains("dominance-frontier") && phi.version > 0));
         assert!(analysis.kir.ssa.phi_nodes.iter().all(|phi| {
             analysis.kir.ssa.definitions.iter().any(|def| {
                 def.vaddr == phi.block
@@ -4059,12 +4053,10 @@ mod tests {
                         && assignment.expression.starts_with("phi(")
                 })
         }));
-        assert!(
-            analysis
-                .dataflow
-                .variable_candidates
-                .iter()
-                .any(|candidate| candidate.kind == "stack" || candidate.kind == "global")
-        );
+        assert!(analysis
+            .dataflow
+            .variable_candidates
+            .iter()
+            .any(|candidate| candidate.kind == "stack" || candidate.kind == "global"));
     }
 }

@@ -103,7 +103,8 @@ pub fn recover(path: &Path, max_functions: usize) -> Result<RecoveryIndex> {
 
     let global_xrefs = recover_xrefs(arch, &sections, None);
     for xref in &global_xrefs {
-        if xref.kind == "call" && section_for(&sections, parse_hex(&xref.to).unwrap_or(0)).is_some() {
+        if xref.kind == "call" && section_for(&sections, parse_hex(&xref.to).unwrap_or(0)).is_some()
+        {
             upsert_seed(
                 &mut seeds,
                 Seed {
@@ -131,7 +132,10 @@ pub fn recover(path: &Path, max_functions: usize) -> Result<RecoveryIndex> {
 
     seeds.sort_by_key(|s| (seed_priority(s), s.addr));
     seeds.dedup_by_key(|s| s.addr);
-    let seeds = seeds.into_iter().take(max_functions.max(1)).collect::<Vec<_>>();
+    let seeds = seeds
+        .into_iter()
+        .take(max_functions.max(1))
+        .collect::<Vec<_>>();
     let functions = match arch {
         Architecture::X86_64 | Architecture::X86_64_X32 | Architecture::I386 => seeds
             .iter()
@@ -210,7 +214,11 @@ pub fn xrefs_to(path: &Path, target: u64, max_functions: usize) -> Result<Vec<Re
     Ok(xrefs)
 }
 
-pub fn cfg_for(path: &Path, function: u64, max_functions: usize) -> Result<Option<RecoveredFunction>> {
+pub fn cfg_for(
+    path: &Path,
+    function: u64,
+    max_functions: usize,
+) -> Result<Option<RecoveredFunction>> {
     let index = recover(path, max_functions)?;
     Ok(index
         .functions
@@ -222,7 +230,10 @@ fn executable_sections(obj: &object::File<'_>) -> Result<Vec<ExecSection>> {
     let mut out = Vec::new();
     for section in obj.sections() {
         let is_text = matches!(section.kind(), SectionKind::Text)
-            || section.name().ok().is_some_and(|n| n == ".text" || n == "__text");
+            || section
+                .name()
+                .ok()
+                .is_some_and(|n| n == ".text" || n == "__text");
         if !is_text || section.address() == 0 || section.size() == 0 {
             continue;
         }
@@ -351,13 +362,21 @@ fn recover_x86_function(
     }
 
     blocks.sort_by_key(|b| parse_hex(&b.start).unwrap_or(0));
-    edges.sort_by_key(|e| (parse_hex(&e.from).unwrap_or(0), parse_hex(&e.to).unwrap_or(0)));
+    edges.sort_by_key(|e| {
+        (
+            parse_hex(&e.from).unwrap_or(0),
+            parse_hex(&e.to).unwrap_or(0),
+        )
+    });
     edges.dedup_by(|a, b| a.from == b.from && a.to == b.to && a.kind == b.kind);
 
     Ok(RecoveredFunction {
         start: hex(seed.addr),
         size: max_end.saturating_sub(seed.addr).max(1),
-        name: seed.name.clone().unwrap_or_else(|| format!("FUN_{:x}", seed.addr)),
+        name: seed
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("FUN_{:x}", seed.addr)),
         confidence: if instruction_starts.is_empty() {
             "seed-only".to_string()
         } else {
@@ -369,7 +388,11 @@ fn recover_x86_function(
     })
 }
 
-fn recover_xrefs(arch: Architecture, sections: &[ExecSection], function: Option<String>) -> Vec<RecoveredXref> {
+fn recover_xrefs(
+    arch: Architecture,
+    sections: &[ExecSection],
+    function: Option<String>,
+) -> Vec<RecoveredXref> {
     use iced_x86::{Decoder, DecoderOptions, FlowControl, Formatter, IntelFormatter};
 
     let bitness = match arch {
@@ -379,7 +402,12 @@ fn recover_xrefs(arch: Architecture, sections: &[ExecSection], function: Option<
     };
     let mut xrefs = Vec::new();
     for section in sections {
-        let mut decoder = Decoder::with_ip(bitness, &section.bytes, section.address, DecoderOptions::NONE);
+        let mut decoder = Decoder::with_ip(
+            bitness,
+            &section.bytes,
+            section.address,
+            DecoderOptions::NONE,
+        );
         let mut formatter = IntelFormatter::new();
         while decoder.can_decode() {
             let instr = decoder.decode();
@@ -406,7 +434,12 @@ fn recover_xrefs(arch: Architecture, sections: &[ExecSection], function: Option<
             });
         }
     }
-    xrefs.sort_by_key(|x| (parse_hex(&x.to).unwrap_or(0), parse_hex(&x.from).unwrap_or(0)));
+    xrefs.sort_by_key(|x| {
+        (
+            parse_hex(&x.to).unwrap_or(0),
+            parse_hex(&x.from).unwrap_or(0),
+        )
+    });
     xrefs.dedup_by(|a, b| a.from == b.from && a.to == b.to && a.kind == b.kind);
     xrefs
 }
@@ -418,7 +451,10 @@ fn fallback_function(sections: &[ExecSection], seed: &Seed) -> RecoveredFunction
     RecoveredFunction {
         start: hex(seed.addr),
         size,
-        name: seed.name.clone().unwrap_or_else(|| format!("FUN_{:x}", seed.addr)),
+        name: seed
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("FUN_{:x}", seed.addr)),
         confidence: "seed-only".to_string(),
         source: vec![seed.source.clone()],
         blocks: vec![RecoveredBlock {
@@ -455,7 +491,9 @@ fn edge(from: u64, to: u64, kind: &str) -> RecoveredEdge {
 }
 
 fn section_for(sections: &[ExecSection], addr: u64) -> Option<&ExecSection> {
-    sections.iter().find(|section| section_contains(section, addr))
+    sections
+        .iter()
+        .find(|section| section_contains(section, addr))
 }
 
 fn section_contains(section: &ExecSection, addr: u64) -> bool {

@@ -71,7 +71,9 @@ async fn handle_op(workspace: &Workspace, bus: &EventBus, req: &IpcRequest) -> I
     let id = req.id.clone();
     match &req.op {
         IpcOp::Ping => IpcResponse::ok(id, Value::String("pong".into())),
-        IpcOp::WorkspaceInfo => IpcResponse::ok(id, serde_json::to_value(workspace.info()).unwrap()),
+        IpcOp::WorkspaceInfo => {
+            IpcResponse::ok(id, serde_json::to_value(workspace.info()).unwrap())
+        }
         IpcOp::ListTools => IpcResponse::ok(id, crate::mcp::tools::tool_definitions()),
         IpcOp::CallTool { name, args } => {
             let call_id = uuid::Uuid::new_v4().simple().to_string();

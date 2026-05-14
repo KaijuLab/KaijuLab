@@ -8,7 +8,6 @@ pub mod symbol_resolver;
 use std::borrow::Cow;
 
 use goblin::Object;
-use object::{Object as _, ObjectSymbol};
 use ir::{
     abstract_syntax_tree::{AbstractSyntaxTree, AstStatement},
     address::Address,
@@ -18,6 +17,7 @@ use ir::{
     high_function::HighFunction,
 };
 use memory::{LiteralKind, LiteralState, Memory};
+use object::{Object as _, ObjectSymbol};
 
 // ─── SLEIGH path ────────────────────────────────────────────────────────────
 
@@ -64,10 +64,11 @@ pub fn decompile_function(path: &str, vaddr: u64) -> String {
 pub fn decompile_function_flat(path: &str, base_addr: u64, vaddr: u64, arch_str: &str) -> String {
     let path = path.to_string();
     let arch_str = arch_str.to_string();
-    let result = run_in_large_stack(move || decompile_flat_inner(&path, base_addr, vaddr, &arch_str));
+    let result =
+        run_in_large_stack(move || decompile_flat_inner(&path, base_addr, vaddr, &arch_str));
     match result {
         Ok(text) => text,
-        Err(e)   => format!("Decompiler error: {e}"),
+        Err(e) => format!("Decompiler error: {e}"),
     }
 }
 
@@ -77,8 +78,7 @@ fn decompile_flat_inner(
     vaddr: u64,
     arch_str: &str,
 ) -> anyhow::Result<String> {
-    let data = std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
+    let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))?;
 
     let dir = sleigh_dir();
     let (ldefs_file, lang_id) = match arch_str {
@@ -119,7 +119,9 @@ fn decompile_flat_inner(
 
     // Load the entire file as a single flat segment at base_addr
     let literal = memory::LiteralState::from_bytes(base_addr, data.clone());
-    let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+    let _ = memory
+        .literal
+        .insert_strict(literal.get_interval(), literal);
 
     let addr = Address(vaddr);
     lift_function(addr, &mut memory)
@@ -130,6 +132,12 @@ fn decompile_flat_inner(
         return Err(anyhow::anyhow!(
             "Function too complex to decompile ({ir_block_count} IR blocks > limit of 3000). \
              Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
+        ));
+    }
+    if memory.ir.slot_by_address(addr).is_none() {
+        return Err(anyhow::anyhow!(
+            "No IR block recovered at requested function start 0x{:x}; choose a recovered function entry from ir-query/decompile context.",
+            vaddr
         ));
     }
 
@@ -162,9 +170,7 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     let project = crate::project::Project::load_for(path);
 
     // Detect architecture to pick the right SLEIGH language ID
-    let arch = object::File::parse(&*data)
-        .ok()
-        .map(|f| f.architecture());
+    let arch = object::File::parse(&*data).ok().map(|f| f.architecture());
 
     let (ldefs_file, lang_id) = match arch {
         Some(object::Architecture::X86_64) | Some(object::Architecture::X86_64_X32) => {
@@ -220,16 +226,25 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     if let Ok(obj_file) = object::File::parse(&*data) {
         for sym in obj_file.symbols() {
             let addr = sym.address();
-            if addr == 0 { continue; }
-            if !matches!(sym.kind(),
+            if addr == 0 {
+                continue;
+            }
+            if !matches!(
+                sym.kind(),
                 object::SymbolKind::Text | object::SymbolKind::Unknown
-            ) { continue; }
+            ) {
+                continue;
+            }
             let name = match sym.name() {
                 Ok(n) => n.trim(),
                 Err(_) => continue,
             };
-            if name.is_empty() || name.starts_with('$') { continue; }
-            if project.renames.contains_key(&addr) { continue; }
+            if name.is_empty() || name.starts_with('$') {
+                continue;
+            }
+            if project.renames.contains_key(&addr) {
+                continue;
+            }
             let sz = (sym.size().min(255).max(1)) as u8;
             memory.symbols.add(addr, sz, name.to_string());
         }
@@ -238,15 +253,23 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     // For ELF: register PLT stub addresses via .rela.plt so imported function
     // names (malloc, read, write, …) appear instead of FUN_xxxxxxxx.
     if let Ok(Object::Elf(elf)) = Object::parse(&data) {
-        let plt_base = elf.section_headers.iter()
+        let plt_base = elf
+            .section_headers
+            .iter()
             .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(".plt"))
             .map(|sh| sh.sh_addr);
         if let Some(plt_base) = plt_base {
             for (i, reloc) in elf.pltrelocs.iter().enumerate() {
                 let stub_addr = plt_base + 16 + (i as u64) * 16;
-                if project.renames.contains_key(&stub_addr) { continue; }
-                if reloc.r_sym == 0 { continue; }
-                if let Some(name) = elf.dynsyms.get(reloc.r_sym)
+                if project.renames.contains_key(&stub_addr) {
+                    continue;
+                }
+                if reloc.r_sym == 0 {
+                    continue;
+                }
+                if let Some(name) = elf
+                    .dynsyms
+                    .get(reloc.r_sym)
                     .and_then(|sym| elf.dynstrtab.get_at(sym.st_name))
                 {
                     memory.symbols.add(stub_addr, 16_u8, name.to_string());
@@ -261,8 +284,7 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
     }
 
     // Load binary sections
-    load_binary(&data, &mut memory)
-        .map_err(|e| anyhow::anyhow!("Binary load failed: {e}"))?;
+    load_binary(&data, &mut memory).map_err(|e| anyhow::anyhow!("Binary load failed: {e}"))?;
 
     // Lift the function at vaddr to IR
     let addr = Address(vaddr);
@@ -280,6 +302,12 @@ fn decompile_inner(path: &str, vaddr: u64) -> anyhow::Result<String> {
         return Err(anyhow::anyhow!(
             "Function too complex to decompile ({ir_block_count} IR blocks > limit of 3000). \
              Use `disassemble` for a raw listing, or `run_python` with capstone for pattern scanning."
+        ));
+    }
+    if memory.ir.slot_by_address(addr).is_none() {
+        return Err(anyhow::anyhow!(
+            "No IR block recovered at requested function start 0x{:x}; choose a recovered function entry from ir-query/decompile context.",
+            vaddr
         ));
     }
 
@@ -346,16 +374,19 @@ fn load_binary(data: &[u8], memory: &mut Memory) -> anyhow::Result<()> {
                 raw[..copy_len].copy_from_slice(&section_bytes[..copy_len]);
 
                 let literal = LiteralState::from_bytes(section.sh_addr, raw);
-                let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+                let _ = memory
+                    .literal
+                    .insert_strict(literal.get_interval(), literal);
             }
         }
         Object::PE(pe) => {
             for section in &pe.sections {
                 if let Ok(Some(sec_data)) = section.data(data) {
                     let vaddr = pe.image_base as u64 + section.virtual_address as u64;
-                    let literal =
-                        LiteralState::from_bytes(vaddr, sec_data.to_vec());
-                    let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+                    let literal = LiteralState::from_bytes(vaddr, sec_data.to_vec());
+                    let _ = memory
+                        .literal
+                        .insert_strict(literal.get_interval(), literal);
                 }
             }
         }
@@ -385,7 +416,9 @@ fn load_binary(data: &[u8], memory: &mut Memory) -> anyhow::Result<()> {
                     continue;
                 }
                 let literal = LiteralState::from_bytes(seg_addr, seg_data.to_vec());
-                let _ = memory.literal.insert_strict(literal.get_interval(), literal);
+                let _ = memory
+                    .literal
+                    .insert_strict(literal.get_interval(), literal);
             }
         }
         _ => return Err(anyhow::anyhow!("Unsupported binary format")),
@@ -429,12 +462,9 @@ fn lift_function(addr: Address, memory: &mut Memory) -> anyhow::Result<()> {
         all[..all.len().min(MAX_DECODE_BYTES)].to_vec()
     };
 
-    let instructions = LiteralState::from_machine_code(
-        Cow::Owned(bytes_owned),
-        addr.0,
-        &memory.lang,
-    )
-    .ok_or_else(|| anyhow::anyhow!("No instructions decoded at 0x{:x}", addr.0))?;
+    let instructions =
+        LiteralState::from_machine_code(Cow::Owned(bytes_owned), addr.0, &memory.lang)
+            .ok_or_else(|| anyhow::anyhow!("No instructions decoded at 0x{:x}", addr.0))?;
 
     let bs = std::mem::take(&mut memory.ir);
     let ir = ir::lift(instructions.get_instructions(), &memory.lang, Some(bs));
@@ -490,9 +520,7 @@ fn render_expr(
                 format!("0x{v:x}")
             }
         }
-        ExpressionOp::Variable(sym) => {
-            resolve_name(mem, sym, ast, sese).into_owned()
-        }
+        ExpressionOp::Variable(sym) => resolve_name(mem, sym, ast, sese).into_owned(),
         ExpressionOp::Dereference(d) => {
             // Check if the inner is a simple address or variable for clean display
             match &expr[*d] {
@@ -654,9 +682,7 @@ fn render_stmt(
             let name_str = resolve_name(mem, name, ast, hf.pts.root);
             let args_str: Vec<String> = args
                 .iter()
-                .map(|a| {
-                    format!("int32_t {}", resolve_name(mem, a, ast, hf.pts.root))
-                })
+                .map(|a| format!("int32_t {}", resolve_name(mem, a, ast, hf.pts.root)))
                 .collect();
             out.push_str(&format!(
                 "{indent}void {}({}) {{\n",
@@ -666,20 +692,29 @@ fn render_stmt(
             render_stmt(out, body, ast, hf, mem, depth + 1);
             out.push_str(&format!("{indent}}}\n"));
         }
-        AstStatement::Assignment { sese, destination, value } => {
+        AstStatement::Assignment {
+            sese,
+            destination,
+            value,
+        } => {
             let dst = render_expr(
                 destination,
                 destination.get_entry_point(),
-                mem, ast, hf, *sese, false,
+                mem,
+                ast,
+                hf,
+                *sese,
+                false,
             );
-            let val = render_expr(
-                value,
-                value.get_entry_point(),
-                mem, ast, hf, *sese, false,
-            );
+            let val = render_expr(value, value.get_entry_point(), mem, ast, hf, *sese, false);
             out.push_str(&format!("{indent}{dst} = {val};\n"));
         }
-        AstStatement::Call { destination, params, call_from, sese } => {
+        AstStatement::Call {
+            destination,
+            params,
+            call_from,
+            sese,
+        } => {
             let call_result = VariableSymbol::CallResult {
                 call_from: *call_from,
                 call_to: Box::new(destination.clone()),
@@ -687,7 +722,11 @@ fn render_stmt(
             let result_name = {
                 let r = resolve_name(mem, &call_result, ast, *sese);
                 // Only show result if it's been given a human name (not "unresolved_...")
-                if r.starts_with("unresolved_") { None } else { Some(r.into_owned()) }
+                if r.starts_with("unresolved_") {
+                    None
+                } else {
+                    Some(r.into_owned())
+                }
             };
 
             let dst_str = render_dest(destination, mem);
@@ -702,17 +741,24 @@ fn render_stmt(
                     params_str.join(", ")
                 ));
             } else {
-                out.push_str(&format!(
-                    "{indent}{dst_str}({});\n",
-                    params_str.join(", ")
-                ));
+                out.push_str(&format!("{indent}{dst_str}({});\n", params_str.join(", ")));
             }
         }
-        AstStatement::If { sese, condition, true_statement, else_statement, .. } => {
+        AstStatement::If {
+            sese,
+            condition,
+            true_statement,
+            else_statement,
+            ..
+        } => {
             let cond = render_expr(
                 condition,
                 condition.get_entry_point(),
-                mem, ast, hf, *sese, false,
+                mem,
+                ast,
+                hf,
+                *sese,
+                false,
             );
             out.push_str(&format!("{indent}if ({cond}) {{\n"));
             render_stmt(out, true_statement, ast, hf, mem, depth + 1);
@@ -722,22 +768,27 @@ fn render_stmt(
             }
             out.push_str(&format!("{indent}}}\n"));
         }
-        AstStatement::Loop { sese, condition, body, .. } => {
+        AstStatement::Loop {
+            sese,
+            condition,
+            body,
+            ..
+        } => {
             let cond = render_expr(
                 condition,
                 condition.get_entry_point(),
-                mem, ast, hf, *sese, false,
+                mem,
+                ast,
+                hf,
+                *sese,
+                false,
             );
             out.push_str(&format!("{indent}while ({cond}) {{\n"));
             render_stmt(out, body, ast, hf, mem, depth + 1);
             out.push_str(&format!("{indent}}}\n"));
         }
         AstStatement::Return { sese, result } => {
-            let val = render_expr(
-                result,
-                result.get_entry_point(),
-                mem, ast, hf, *sese, false,
-            );
+            let val = render_expr(result, result.get_entry_point(), mem, ast, hf, *sese, false);
             out.push_str(&format!("{indent}return {val};\n"));
         }
     }
@@ -756,11 +807,7 @@ fn render_ast(ast: &AbstractSyntaxTree, hf: &HighFunction, mem: &Memory) -> Stri
 /// 3. Apply function-level variable renames from the project sidecar
 /// 4. Apply parameter type / name annotations from the project sidecar
 /// 5. Replace the default `void` return type with the user-specified one
-fn apply_project_annotations(
-    out: &mut String,
-    project: &crate::project::Project,
-    fn_vaddr: u64,
-) {
+fn apply_project_annotations(out: &mut String, project: &crate::project::Project, fn_vaddr: u64) {
     // 1. Remove `& 0xffffffffffffffff` — meaningless 64-bit mask.
     *out = out.replace(" & 0xffffffffffffffff", "");
 
@@ -770,8 +817,8 @@ fn apply_project_annotations(
         ("RSI", "arg_2"),
         ("RDX", "arg_3"),
         ("RCX", "arg_4"),
-        ("R8",  "arg_5"),
-        ("R9",  "arg_6"),
+        ("R8", "arg_5"),
+        ("R9", "arg_6"),
     ];
     for (reg, name) in SYSV64_ARGS {
         *out = replace_identifier(out, reg, name);
@@ -896,7 +943,10 @@ mod tests {
 
     #[test]
     fn replace_identifier_at_end_of_string() {
-        assert_eq!(replace_identifier("foo = RDI", "RDI", "arg_1"), "foo = arg_1");
+        assert_eq!(
+            replace_identifier("foo = RDI", "RDI", "arg_1"),
+            "foo = arg_1"
+        );
     }
 
     #[test]
@@ -914,7 +964,7 @@ mod tests {
         let mut s = "arg_10 + arg_1".to_string();
         // Replace longer name first
         s = replace_identifier(&s, "arg_10", "count");
-        s = replace_identifier(&s, "arg_1",  "buf");
+        s = replace_identifier(&s, "arg_1", "buf");
         assert_eq!(s, "count + buf");
     }
 
@@ -935,8 +985,8 @@ mod tests {
         apply_project_annotations(&mut out, &p, 0x401000);
         assert!(out.contains("arg_1"), "RDI should become arg_1");
         assert!(out.contains("arg_2"), "RSI should become arg_2");
-        assert!(!out.contains("RDI"),  "no raw RDI should remain");
-        assert!(!out.contains("RSI"),  "no raw RSI should remain");
+        assert!(!out.contains("RDI"), "no raw RDI should remain");
+        assert!(!out.contains("RSI"), "no raw RSI should remain");
     }
 
     #[test]
@@ -992,7 +1042,10 @@ mod tests {
 
         let mut out = "void f(int32_t arg_1) { return arg_1; }".to_string();
         apply_project_annotations(&mut out, &p, 0x401000);
-        assert!(out.contains("size_t count"), "should have typed+renamed param");
+        assert!(
+            out.contains("size_t count"),
+            "should have typed+renamed param"
+        );
         assert!(!out.contains("arg_1"), "old name should be gone");
     }
 

@@ -20,10 +20,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn events_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn events_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 

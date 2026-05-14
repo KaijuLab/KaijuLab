@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{evidence, recovery, workstation, workspace::Workspace};
+use super::{evidence, recovery, workspace::Workspace, workstation};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeGraph {
@@ -89,7 +89,10 @@ pub fn build(ws: &Workspace, max_functions: usize, max_evidence: usize) -> Resul
                 continue;
             };
             let id = format!("section:{name}");
-            let vaddr = section.get("address").and_then(|v| v.as_str()).map(str::to_string);
+            let vaddr = section
+                .get("address")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             let size = section.get("size").and_then(|v| v.as_u64());
             let mut facts = BTreeMap::new();
             facts.insert("section".to_string(), section.clone());
@@ -99,7 +102,11 @@ pub fn build(ws: &Workspace, max_functions: usize, max_evidence: usize) -> Resul
                 label: name.to_string(),
                 vaddr,
                 size,
-                tags: vec![section.get("kind").and_then(|v| v.as_str()).unwrap_or("section").to_string()],
+                tags: vec![section
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("section")
+                    .to_string()],
                 facts,
                 provenance: vec!["index-build:/object/sections".to_string()],
             });
@@ -161,14 +168,29 @@ fn binary_node(ws: &Workspace, index: &Value) -> KnowledgeNode {
         id: "binary".to_string(),
         kind: "binary".to_string(),
         label: ws.display_name().to_string(),
-        vaddr: index.pointer("/elf/entry").and_then(|v| v.as_str()).map(str::to_string),
+        vaddr: index
+            .pointer("/elf/entry")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         size: index.get("size").and_then(|v| v.as_u64()),
         tags: vec![
-            index.pointer("/elf/arch").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-            index.pointer("/elf/format").and_then(|v| v.as_str()).unwrap_or("binary").to_string(),
+            index
+                .pointer("/elf/arch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            index
+                .pointer("/elf/format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("binary")
+                .to_string(),
         ],
         facts,
-        provenance: vec!["index-build".to_string(), "project-db".to_string(), "evidence-jsonl".to_string()],
+        provenance: vec![
+            "index-build".to_string(),
+            "project-db".to_string(),
+            "evidence-jsonl".to_string(),
+        ],
     }
 }
 
@@ -185,7 +207,8 @@ fn add_recovered_functions(
             node.label = function.name.clone();
             node.tags.push("recovered".to_string());
             node.facts.insert("recovery".to_string(), json!(function));
-            node.provenance.push("professional-recovery:function".to_string());
+            node.provenance
+                .push("professional-recovery:function".to_string());
         } else {
             let mut facts = BTreeMap::new();
             facts.insert("recovery".to_string(), json!(function));
@@ -296,7 +319,10 @@ fn add_entry_node(
     let id = format!("function:{}", entry.to_lowercase());
     let mut facts = BTreeMap::new();
     facts.insert("entry".to_string(), json!(entry));
-    facts.insert("confidence".to_string(), json!("entry fallback; function prologues unavailable"));
+    facts.insert(
+        "confidence".to_string(),
+        json!("entry fallback; function prologues unavailable"),
+    );
     nodes.push(KnowledgeNode {
         id: id.clone(),
         kind: "function".to_string(),
@@ -316,7 +342,11 @@ fn add_entry_node(
     });
 }
 
-fn overlay_project(ws: &Workspace, nodes: &mut [KnowledgeNode], address_to_node: &BTreeMap<String, String>) {
+fn overlay_project(
+    ws: &Workspace,
+    nodes: &mut [KnowledgeNode],
+    address_to_node: &BTreeMap<String, String>,
+) {
     let project = ws.with_project(|p| p.clone());
     for node in nodes.iter_mut() {
         if node.kind == "binary" {
@@ -401,12 +431,17 @@ fn link_evidence(
 }
 
 fn triage(nodes: &[KnowledgeNode], evidence_links: &[EvidenceLink]) -> Vec<TriageItem> {
-    let evidence_by_node = evidence_links.iter().fold(BTreeMap::<String, Vec<String>>::new(), |mut acc, link| {
-        if let Some(node) = &link.target_node {
-            acc.entry(node.clone()).or_default().push(link.evidence_id.clone());
-        }
-        acc
-    });
+    let evidence_by_node =
+        evidence_links
+            .iter()
+            .fold(BTreeMap::<String, Vec<String>>::new(), |mut acc, link| {
+                if let Some(node) = &link.target_node {
+                    acc.entry(node.clone())
+                        .or_default()
+                        .push(link.evidence_id.clone());
+                }
+                acc
+            });
     let mut items = Vec::new();
     for node in nodes.iter().filter(|n| n.kind == "function") {
         let mut score = 0;
@@ -428,7 +463,9 @@ fn triage(nodes: &[KnowledgeNode], evidence_links: &[EvidenceLink]) -> Vec<Triag
             reasons.push(format!("{} linked evidence records", ids.len()));
         }
         let label_l = node.label.to_ascii_lowercase();
-        for needle in ["read", "recv", "gets", "scanf", "strcpy", "memcpy", "system", "exec", "open"] {
+        for needle in [
+            "read", "recv", "gets", "scanf", "strcpy", "memcpy", "system", "exec", "open",
+        ] {
             if label_l.contains(needle) {
                 score += 12;
                 reasons.push(format!("name contains {needle}"));

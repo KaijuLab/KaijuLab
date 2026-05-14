@@ -256,7 +256,7 @@ impl ControlFlowGraph {
                 (slot, *v)
             } else {
                 (BlockSlot::default(), u32::MAX)
-            } 
+            }
         })
         .collect::<HashMap<BlockSlot, u32>>();
 
@@ -287,9 +287,6 @@ impl ControlFlowGraph {
 }
 
 mod test {
-    
-
-    
 
     // /// Graph from [Wikipedia](https://en.wikipedia.org/wiki/Dominator_(graph_theory))
     // /// ```

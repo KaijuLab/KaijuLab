@@ -61,7 +61,7 @@ use serde_json::json;
 #[derive(Debug, Clone)]
 pub struct PluginOutput {
     /// All text written via `print()` / `debug()` inside the script.
-    pub text:  String,
+    pub text: String,
     /// Non-empty when the script raised an uncaught Rhai error.
     pub error: Option<String>,
 }
@@ -71,7 +71,10 @@ impl PluginOutput {
         PluginOutput { text, error: None }
     }
     pub fn error(msg: impl Into<String>) -> Self {
-        PluginOutput { text: String::new(), error: Some(msg.into()) }
+        PluginOutput {
+            text: String::new(),
+            error: Some(msg.into()),
+        }
     }
 }
 
@@ -110,12 +113,17 @@ pub fn list_plugins() -> Vec<PluginMeta> {
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rhai"))
             .map(|e| {
                 let path = e.path();
-                let name = path.file_stem()
+                let name = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("?")
                     .to_string();
                 let description = first_comment(&path);
-                PluginMeta { name, path, description }
+                PluginMeta {
+                    name,
+                    path,
+                    description,
+                }
             })
             .collect(),
         Err(_) => Vec::new(),
@@ -185,19 +193,31 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
     });
 
     engine.register_fn("disassemble", |path: &str, vaddr: i64| -> String {
-        call("disassemble", json!({"path": path, "vaddr": vaddr as u64, "length": 128}))
+        call(
+            "disassemble",
+            json!({"path": path, "vaddr": vaddr as u64, "length": 128}),
+        )
     });
 
-    engine.register_fn("disassemble_at", |path: &str, vaddr: i64, length: i64| -> String {
-        call("disassemble", json!({"path": path, "vaddr": vaddr as u64, "length": length as usize}))
-    });
+    engine.register_fn(
+        "disassemble_at",
+        |path: &str, vaddr: i64, length: i64| -> String {
+            call(
+                "disassemble",
+                json!({"path": path, "vaddr": vaddr as u64, "length": length as usize}),
+            )
+        },
+    );
 
     engine.register_fn("list_functions", |path: &str| -> String {
         call("list_functions", json!({"path": path, "max_results": 500}))
     });
 
     engine.register_fn("strings_extract", |path: &str| -> String {
-        call("strings_extract", json!({"path": path, "min_len": 4, "max_results": 200}))
+        call(
+            "strings_extract",
+            json!({"path": path, "min_len": 4, "max_results": 200}),
+        )
     });
 
     engine.register_fn("decompile", |path: &str, vaddr: i64| -> String {
@@ -220,9 +240,15 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
         call("call_graph", json!({"path": path, "max_depth": 5}))
     });
 
-    engine.register_fn("hexdump", |path: &str, offset: i64, length: i64| -> String {
-        call("hexdump", json!({"path": path, "offset": offset as usize, "length": length as usize}))
-    });
+    engine.register_fn(
+        "hexdump",
+        |path: &str, offset: i64, length: i64| -> String {
+            call(
+                "hexdump",
+                json!({"path": path, "offset": offset as usize, "length": length as usize}),
+            )
+        },
+    );
 
     engine.register_fn("section_entropy", |path: &str| -> String {
         call("section_entropy", json!({"path": path}))
@@ -249,7 +275,10 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
     });
 
     engine.register_fn("generate_yara", |path: &str, vaddr: i64| -> String {
-        call("generate_yara_rule", json!({"path": path, "vaddr": vaddr as u64}))
+        call(
+            "generate_yara_rule",
+            json!({"path": path, "vaddr": vaddr as u64}),
+        )
     });
 
     engine.register_fn("identify_library_functions", |path: &str| -> String {
@@ -261,46 +290,91 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
     });
 
     engine.register_fn("explain_function", |path: &str, vaddr: i64| -> String {
-        call("explain_function", json!({"path": path, "vaddr": vaddr as u64}))
+        call(
+            "explain_function",
+            json!({"path": path, "vaddr": vaddr as u64}),
+        )
     });
 
     // ── Annotation tools (write) ──────────────────────────────────────────────
 
-    engine.register_fn("rename_function", |path: &str, vaddr: i64, name: &str| -> String {
-        call("rename_function", json!({"path": path, "vaddr": vaddr as u64, "name": name}))
-    });
+    engine.register_fn(
+        "rename_function",
+        |path: &str, vaddr: i64, name: &str| -> String {
+            call(
+                "rename_function",
+                json!({"path": path, "vaddr": vaddr as u64, "name": name}),
+            )
+        },
+    );
 
-    engine.register_fn("add_comment", |path: &str, vaddr: i64, text: &str| -> String {
-        call("add_comment", json!({"path": path, "vaddr": vaddr as u64, "text": text}))
-    });
+    engine.register_fn(
+        "add_comment",
+        |path: &str, vaddr: i64, text: &str| -> String {
+            call(
+                "add_comment",
+                json!({"path": path, "vaddr": vaddr as u64, "text": text}),
+            )
+        },
+    );
 
     engine.register_fn("add_note", |path: &str, text: &str| -> String {
         call("add_note", json!({"path": path, "text": text}))
     });
 
-    engine.register_fn("add_note_at", |path: &str, text: &str, vaddr: i64| -> String {
-        call("add_note", json!({"path": path, "text": text, "vaddr": vaddr as u64}))
-    });
+    engine.register_fn(
+        "add_note_at",
+        |path: &str, text: &str, vaddr: i64| -> String {
+            call(
+                "add_note",
+                json!({"path": path, "text": text, "vaddr": vaddr as u64}),
+            )
+        },
+    );
 
-    engine.register_fn("set_vuln_score", |path: &str, vaddr: i64, score: i64| -> String {
-        call("set_vuln_score", json!({"path": path, "vaddr": vaddr as u64, "score": score as u8}))
-    });
+    engine.register_fn(
+        "set_vuln_score",
+        |path: &str, vaddr: i64, score: i64| -> String {
+            call(
+                "set_vuln_score",
+                json!({"path": path, "vaddr": vaddr as u64, "score": score as u8}),
+            )
+        },
+    );
 
     engine.register_fn("rename_variable", |path: &str, fn_vaddr: i64, old: &str, new: &str| -> String {
         call("rename_variable", json!({"path": path, "fn_vaddr": fn_vaddr as u64, "old_name": old, "new_name": new}))
     });
 
-    engine.register_fn("set_return_type", |path: &str, vaddr: i64, ty: &str| -> String {
-        call("set_return_type", json!({"path": path, "vaddr": vaddr as u64, "return_type": ty}))
-    });
+    engine.register_fn(
+        "set_return_type",
+        |path: &str, vaddr: i64, ty: &str| -> String {
+            call(
+                "set_return_type",
+                json!({"path": path, "vaddr": vaddr as u64, "return_type": ty}),
+            )
+        },
+    );
 
-    engine.register_fn("set_param_type", |path: &str, vaddr: i64, n: i64, ty: &str| -> String {
-        call("set_param_type", json!({"path": path, "vaddr": vaddr as u64, "param_index": n, "param_type": ty}))
-    });
+    engine.register_fn(
+        "set_param_type",
+        |path: &str, vaddr: i64, n: i64, ty: &str| -> String {
+            call(
+                "set_param_type",
+                json!({"path": path, "vaddr": vaddr as u64, "param_index": n, "param_type": ty}),
+            )
+        },
+    );
 
-    engine.register_fn("set_param_name", |path: &str, vaddr: i64, n: i64, name: &str| -> String {
-        call("set_param_name", json!({"path": path, "vaddr": vaddr as u64, "param_index": n, "param_name": name}))
-    });
+    engine.register_fn(
+        "set_param_name",
+        |path: &str, vaddr: i64, n: i64, name: &str| -> String {
+            call(
+                "set_param_name",
+                json!({"path": path, "vaddr": vaddr as u64, "param_index": n, "param_name": name}),
+            )
+        },
+    );
 
     engine.register_fn("delete_note", |path: &str, id: i64| -> String {
         call("delete_note", json!({"path": path, "id": id}))
@@ -309,9 +383,7 @@ pub fn build_engine(print_buf: Arc<Mutex<String>>) -> Engine {
     // ── Utility functions ─────────────────────────────────────────────────────
 
     // Format an integer as a hex string: hex(0x401000) → "0x401000"
-    engine.register_fn("hex", |n: i64| -> String {
-        format!("0x{:x}", n as u64)
-    });
+    engine.register_fn("hex", |n: i64| -> String { format!("0x{:x}", n as u64) });
 
     // Parse a hex or decimal address string: parse_addr("0x401000") → 4198400i64
     engine.register_fn("parse_addr", |s: &str| -> i64 {
@@ -352,7 +424,10 @@ pub fn run_source(source: &str, binary_path: &str) -> PluginOutput {
         }
         Err(e) => {
             let text = print_buf.lock().unwrap().clone();
-            PluginOutput { text, error: Some(e.to_string()) }
+            PluginOutput {
+                text,
+                error: Some(e.to_string()),
+            }
         }
     }
 }
@@ -361,9 +436,9 @@ pub fn run_source(source: &str, binary_path: &str) -> PluginOutput {
 pub fn run_file(script_path: &Path, binary_path: &str) -> PluginOutput {
     let source = match std::fs::read_to_string(script_path) {
         Ok(s) => s,
-        Err(e) => return PluginOutput::error(format!(
-            "Cannot read '{}': {}", script_path.display(), e
-        )),
+        Err(e) => {
+            return PluginOutput::error(format!("Cannot read '{}': {}", script_path.display(), e))
+        }
     };
     run_source(&source, binary_path)
 }
@@ -392,12 +467,20 @@ pub fn format_plugin_list() -> String {
         );
     }
     let mut out = format!("Plugins ({}):\n\n", metas.len());
-    out.push_str(&format!("  {:<30}  {}\n  {}\n", "Name", "Description", "─".repeat(60)));
+    out.push_str(&format!(
+        "  {:<30}  {}\n  {}\n",
+        "Name",
+        "Description",
+        "─".repeat(60)
+    ));
     for m in &metas {
         let desc = m.description.as_deref().unwrap_or("—");
         out.push_str(&format!("  {:<30}  {}\n", m.name, desc));
     }
-    out.push_str(&format!("\nPlugins directory: {}\n", plugins_dir().display()));
+    out.push_str(&format!(
+        "\nPlugins directory: {}\n",
+        plugins_dir().display()
+    ));
     out.push_str("Run a plugin:  run <name>  or  run <name> /path/to/binary\n");
     out
 }
@@ -443,7 +526,10 @@ mod tests {
     fn file_info_reachable() {
         // Pass a non-existent path — we just verify the function exists and
         // returns an error string rather than panicking.
-        let out = run_source(r#"let r = file_info("/nonexistent_kaijulab_test"); print(r);"#, "");
+        let out = run_source(
+            r#"let r = file_info("/nonexistent_kaijulab_test"); print(r);"#,
+            "",
+        );
         assert!(out.error.is_none(), "Rhai error: {:?}", out.error);
         // Should mention an error from the tool itself
         assert!(!out.text.is_empty(), "should have produced output");

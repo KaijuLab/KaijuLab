@@ -266,12 +266,25 @@ fn replay_corrections(path: &Path) -> Result<()> {
 
 fn apply_correction(path: &Path, id: i64) -> Result<()> {
     let conn = open(path)?;
-    let (action, vaddr, target, note, data): (String, String, Option<String>, Option<String>, String) =
-        conn.query_row(
-            "SELECT action, vaddr, target, note, data FROM recovery_corrections WHERE id = ?1",
-            params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )?;
+    let (action, vaddr, target, note, data): (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = conn.query_row(
+        "SELECT action, vaddr, target, note, data FROM recovery_corrections WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
     let parsed = serde_json::from_str::<Value>(&data).unwrap_or(Value::Null);
     match action.as_str() {
         "rename_function" => {
@@ -300,9 +313,18 @@ fn apply_correction(path: &Path, id: i64) -> Result<()> {
             )?;
         }
         "mark_data" => {
-            conn.execute("DELETE FROM recovery_functions WHERE start = ?1", params![vaddr])?;
-            conn.execute("DELETE FROM recovery_blocks WHERE function_start = ?1", params![vaddr])?;
-            conn.execute("DELETE FROM recovery_edges WHERE function_start = ?1", params![vaddr])?;
+            conn.execute(
+                "DELETE FROM recovery_functions WHERE start = ?1",
+                params![vaddr],
+            )?;
+            conn.execute(
+                "DELETE FROM recovery_blocks WHERE function_start = ?1",
+                params![vaddr],
+            )?;
+            conn.execute(
+                "DELETE FROM recovery_edges WHERE function_start = ?1",
+                params![vaddr],
+            )?;
         }
         "mark_code" | "split_function" => {
             let name = parsed
@@ -333,7 +355,10 @@ fn apply_correction(path: &Path, id: i64) -> Result<()> {
         }
         "merge_function" => {
             if let Some(target) = target {
-                conn.execute("DELETE FROM recovery_functions WHERE start = ?1", params![vaddr])?;
+                conn.execute(
+                    "DELETE FROM recovery_functions WHERE start = ?1",
+                    params![vaddr],
+                )?;
                 conn.execute(
                     "UPDATE recovery_blocks SET function_start = ?1 WHERE function_start = ?2",
                     params![target, vaddr],

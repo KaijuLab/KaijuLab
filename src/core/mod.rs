@@ -6,9 +6,9 @@
 
 pub mod analysis;
 pub mod debug_session;
-pub mod evidence;
-pub mod events;
 pub mod decompile;
+pub mod events;
+pub mod evidence;
 pub mod findings;
 pub mod jobs;
 pub mod knowledge;
@@ -16,8 +16,8 @@ pub mod playbooks;
 pub mod project_store;
 pub mod recovery;
 pub mod recovery_store;
-pub mod workstation;
 pub mod workspace;
+pub mod workstation;
 
 pub use events::{Event, EventBus, Source};
 pub use findings::{Finding, FindingKind, FindingStatus, Severity};

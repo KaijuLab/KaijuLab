@@ -121,9 +121,7 @@ impl Workspace {
 }
 
 fn hash_path(path: &Path) -> String {
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());
     let digest = hasher.finalize();
@@ -221,7 +219,11 @@ impl WorkspaceRegistry {
         let ws = Workspace::open(path, self.policy)?;
         let hash = ws.workspace_hash().to_string();
         let mut g = self.inner.write().unwrap();
-        let entry = g.workspaces.entry(hash.clone()).or_insert_with(|| ws.clone()).clone();
+        let entry = g
+            .workspaces
+            .entry(hash.clone())
+            .or_insert_with(|| ws.clone())
+            .clone();
         g.active = Some(hash);
         // Best-effort: append to recent-files list.
         let path_str = entry.binary_path_str();
@@ -275,7 +277,10 @@ impl WorkspaceRegistry {
 
     pub fn active(&self) -> Option<Workspace> {
         let g = self.inner.read().unwrap();
-        g.active.as_deref().and_then(|h| g.workspaces.get(h)).cloned()
+        g.active
+            .as_deref()
+            .and_then(|h| g.workspaces.get(h))
+            .cloned()
     }
 
     pub fn get(&self, hash: &str) -> Option<Workspace> {

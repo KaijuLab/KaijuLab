@@ -10,10 +10,7 @@ use super::{
     program_tree_structure::ProgramTreeStructure,
     Expression, ExpressionOp, VariableSymbol,
 };
-use crate::decompiler::{
-    ir::expression::InstructionSize,
-    memory::Memory,
-};
+use crate::decompiler::{ir::expression::InstructionSize, memory::Memory};
 
 use super::{Address, BasicBlock};
 
@@ -37,12 +34,8 @@ fn detect_calling_convention(lang: &SleighLanguage) -> CallingConvention {
 /// Return register varnode for the given calling convention
 fn return_reg(lang: &SleighLanguage, cc: CallingConvention) -> Option<VarNode> {
     match cc {
-        CallingConvention::Cdecl => {
-            lang.sleigh.get_reg("EAX").and_then(|v| v.get_var())
-        }
-        CallingConvention::SysV64 => {
-            lang.sleigh.get_reg("RAX").and_then(|v| v.get_var())
-        }
+        CallingConvention::Cdecl => lang.sleigh.get_reg("EAX").and_then(|v| v.get_var()),
+        CallingConvention::SysV64 => lang.sleigh.get_reg("RAX").and_then(|v| v.get_var()),
     }
 }
 
@@ -179,7 +172,10 @@ impl HighFunction {
                     copy_vec.push(composed);
                 }
                 while let Some(composed) = copy_vec.pop() {
-                    if composed_blocks.get_by_identifier(composed.identifier).is_none() {
+                    if composed_blocks
+                        .get_by_identifier(composed.identifier)
+                        .is_none()
+                    {
                         analysis(
                             &composed,
                             mem.lang.sp,

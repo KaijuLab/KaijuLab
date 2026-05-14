@@ -24,15 +24,14 @@ use crate::{
     core::{
         analysis,
         debug_session::{DebugAction, StartDebugSession},
-        evidence,
         events::Source,
+        evidence,
         findings::{
             self, CreateFinding, CreatedBy, Evidence, Finding, FindingKind, Severity, UpdateFinding,
         },
         knowledge,
         playbooks::{self, PlaybookId, PlaybookRunRequest},
-        recovery, recovery_store,
-        project_store,
+        project_store, recovery, recovery_store,
         workspace::{read_recent, socket_path_for, Workspace},
     },
 };
@@ -67,14 +66,23 @@ pub fn router(state: AppState) -> Router {
         .route("/api/recovery", get(recovery_index))
         .route("/api/recovery/stored", get(recovery_stored))
         .route("/api/recovery/rebuild", post(recovery_rebuild))
-        .route("/api/recovery/corrections", get(recovery_corrections).post(recovery_correct))
+        .route(
+            "/api/recovery/corrections",
+            get(recovery_corrections).post(recovery_correct),
+        )
         .route("/api/recovery/xrefs/:vaddr", get(recovery_xrefs))
         .route("/api/recovery/cfg/:vaddr", get(recovery_cfg))
         .route("/api/evidence", get(list_evidence))
         .route("/api/execution-profiles", get(execution_profiles))
         .route("/api/debug/session-contract", get(debug_session_contract))
-        .route("/api/debug/sessions", get(list_debug_sessions).post(start_debug_session))
-        .route("/api/debug/sessions/:id", get(get_debug_session).delete(stop_debug_session))
+        .route(
+            "/api/debug/sessions",
+            get(list_debug_sessions).post(start_debug_session),
+        )
+        .route(
+            "/api/debug/sessions/:id",
+            get(get_debug_session).delete(stop_debug_session),
+        )
         .route("/api/debug/sessions/:id/action", post(debug_session_action))
         .route("/api/benchmarks/smoke", get(benchmark_smoke))
         .route("/api/project", get(project_snapshot))
@@ -368,9 +376,13 @@ async fn knowledge_graph(
     Query(q): Query<KnowledgeQuery>,
 ) -> Result<Json<knowledge::KnowledgeGraph>, ApiError> {
     let ws = active(&s)?;
-    knowledge::build(&ws, q.max_functions.unwrap_or(300), q.max_evidence.unwrap_or(200))
-        .map(Json)
-        .map_err(ApiError::from)
+    knowledge::build(
+        &ws,
+        q.max_functions.unwrap_or(300),
+        q.max_evidence.unwrap_or(200),
+    )
+    .map(Json)
+    .map_err(ApiError::from)
 }
 
 #[derive(Deserialize)]

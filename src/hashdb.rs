@@ -48,40 +48,58 @@ impl FnHashDb {
 
     /// Register a named function with its normalised hash.
     /// Silently overwrites if (hash, name) already exists.
-    pub fn register(&self, hash: u64, name: &str, source_path: &str, byte_count: usize) -> Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO fn_hashes (hash, name, source_path, byte_count) \
+    pub fn register(
+        &self,
+        hash: u64,
+        name: &str,
+        source_path: &str,
+        byte_count: usize,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO fn_hashes (hash, name, source_path, byte_count) \
              VALUES (?1, ?2, ?3, ?4)",
-            params![hash as i64, name, source_path, byte_count as i64],
-        ).context("insert into fn_hashes")?;
+                params![hash as i64, name, source_path, byte_count as i64],
+            )
+            .context("insert into fn_hashes")?;
         Ok(())
     }
 
     /// Return all known names (and sources) for a given hash.
     pub fn lookup(&self, hash: u64) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name, source_path FROM fn_hashes WHERE hash = ?1 ORDER BY added_at DESC"
-        ).context("prepare lookup")?;
-        let rows = stmt.query_map(params![hash as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).context("query fn_hashes")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().context("collect rows")
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT name, source_path FROM fn_hashes WHERE hash = ?1 ORDER BY added_at DESC",
+            )
+            .context("prepare lookup")?;
+        let rows = stmt
+            .query_map(params![hash as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .context("query fn_hashes")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect rows")
     }
 
     /// Return all entries, sorted by name.
     pub fn all(&self) -> Result<Vec<(u64, String, String, usize)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT hash, name, source_path, byte_count FROM fn_hashes ORDER BY name"
-        ).context("prepare all")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)? as u64,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)? as usize,
-            ))
-        }).context("query all fn_hashes")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().context("collect all rows")
+        let mut stmt = self
+            .conn
+            .prepare("SELECT hash, name, source_path, byte_count FROM fn_hashes ORDER BY name")
+            .context("prepare all")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)? as usize,
+                ))
+            })
+            .context("query all fn_hashes")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect all rows")
     }
 }
 
@@ -114,16 +132,23 @@ fn normalise(bytes: &[u8], bitness: u32) -> Vec<u8> {
     let mut dec = Decoder::with_ip(bitness, bytes, ip, DecoderOptions::NONE);
 
     for instr in &mut dec {
-        if instr.is_invalid() { continue; }
+        if instr.is_invalid() {
+            continue;
+        }
         let off = instr.ip() as usize;
         let len = instr.len();
 
         // Near-branch relative displacement
-        let has_rel = (0..instr.op_count()).any(|i| matches!(
-            instr.op_kind(i),
-            OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
-            | OpKind::FarBranch16 | OpKind::FarBranch32
-        ));
+        let has_rel = (0..instr.op_count()).any(|i| {
+            matches!(
+                instr.op_kind(i),
+                OpKind::NearBranch16
+                    | OpKind::NearBranch32
+                    | OpKind::NearBranch64
+                    | OpKind::FarBranch16
+                    | OpKind::FarBranch32
+            )
+        });
         if has_rel && len > 1 {
             let opcode_len = if bytes.get(off) == Some(&0x0F) { 2 } else { 1 };
             for i in (off + opcode_len)..(off + len).min(out.len()) {
@@ -132,9 +157,8 @@ fn normalise(bytes: &[u8], bitness: u32) -> Vec<u8> {
         }
 
         // RIP-relative memory operand (last 4 bytes of encoding)
-        let has_rip = (0..instr.op_count()).any(|i| {
-            instr.op_kind(i) == OpKind::Memory && instr.memory_base() == Register::RIP
-        });
+        let has_rip = (0..instr.op_count())
+            .any(|i| instr.op_kind(i) == OpKind::Memory && instr.memory_base() == Register::RIP);
         if has_rip && len >= 5 {
             for i in (off + len - 4)..(off + len).min(out.len()) {
                 out[i] = 0;
@@ -190,7 +214,11 @@ mod tests {
         assert_ne!(h, 0, "hash of 'a' must be non-zero");
         assert_eq!(h, fnv1a(b"a"), "hash must be deterministic");
         // Different byte → different hash
-        assert_ne!(h, fnv1a(b"b"), "different bytes must produce different hashes");
+        assert_ne!(
+            h,
+            fnv1a(b"b"),
+            "different bytes must produce different hashes"
+        );
     }
 
     #[test]
@@ -237,8 +265,8 @@ mod tests {
     #[test]
     fn normalised_hash_different_non_branch_code_differs() {
         // NOP vs. INC eax — no branches, raw bytes differ
-        let nop  = vec![0x90u8]; // NOP
-        let inc  = vec![0xFFu8, 0xC0]; // INC eax
+        let nop = vec![0x90u8]; // NOP
+        let inc = vec![0xFFu8, 0xC0]; // INC eax
         assert_ne!(normalised_hash(&nop, 64), normalised_hash(&inc, 64));
     }
 
@@ -272,7 +300,7 @@ mod tests {
     fn register_multiple_names_for_same_hash() {
         let db = open_in_memory();
         db.register(0xAABB_u64, "alpha", "/a", 10).unwrap();
-        db.register(0xAABB_u64, "beta",  "/b", 20).unwrap();
+        db.register(0xAABB_u64, "beta", "/b", 20).unwrap();
         let results = db.lookup(0xAABB_u64).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -283,7 +311,11 @@ mod tests {
         db.register(0x1111_u64, "foo", "/x", 5).unwrap();
         db.register(0x1111_u64, "foo", "/x", 5).unwrap(); // should not error
         let results = db.lookup(0x1111_u64).unwrap();
-        assert_eq!(results.len(), 1, "deduplication: same (hash, name) should appear once");
+        assert_eq!(
+            results.len(),
+            1,
+            "deduplication: same (hash, name) should appear once"
+        );
     }
 
     #[test]
@@ -309,7 +341,8 @@ mod tests {
     #[test]
     fn all_entry_fields_correct() {
         let db = open_in_memory();
-        db.register(0xCAFE_u64, "parse", "/path/to/binary", 128).unwrap();
+        db.register(0xCAFE_u64, "parse", "/path/to/binary", 128)
+            .unwrap();
         let all = db.all().unwrap();
         assert_eq!(all.len(), 1);
         let (hash, name, source, byte_count) = &all[0];

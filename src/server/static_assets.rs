@@ -6,14 +6,14 @@
 //! Rust binary.
 
 use axum::{
-    Router,
     body::Body,
     extract::Path,
-    http::{StatusCode, Uri, header},
+    http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
+    Router,
 };
-use include_dir::{Dir, include_dir};
+use include_dir::{include_dir, Dir};
 
 static DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 

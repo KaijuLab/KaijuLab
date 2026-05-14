@@ -79,7 +79,12 @@ fn run(s: &AppState, req: &PaletteRequest) -> PaletteResult {
     }
 }
 
-fn run_slash(s: &AppState, ws: &Workspace, cmd: &str, current_vaddr: Option<&str>) -> PaletteResult {
+fn run_slash(
+    s: &AppState,
+    ws: &Workspace,
+    cmd: &str,
+    current_vaddr: Option<&str>,
+) -> PaletteResult {
     let mut parts = cmd.splitn(2, char::is_whitespace);
     let head = parts.next().unwrap_or("");
     let rest = parts.next().unwrap_or("").trim();

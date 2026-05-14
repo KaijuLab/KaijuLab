@@ -160,7 +160,10 @@ impl DebugSessionManager {
             session.cmd(&format!("target remote {remote}"), Duration::from_secs(8))?;
         } else {
             if !args.is_empty() {
-                session.cmd(&format!("set args {}", args.join(" ")), Duration::from_secs(3))?;
+                session.cmd(
+                    &format!("set args {}", args.join(" ")),
+                    Duration::from_secs(3),
+                )?;
             }
             session.cmd("starti", Duration::from_secs(8))?;
         }
@@ -174,7 +177,10 @@ impl DebugSessionManager {
             snapshot.clone(),
         )?;
         let info = session.info.clone();
-        self.sessions.lock().expect("debug sessions poisoned").insert(id, session);
+        self.sessions
+            .lock()
+            .expect("debug sessions poisoned")
+            .insert(id, session);
         Ok(json!({ "session": info, "snapshot": snapshot }))
     }
 
@@ -228,7 +234,11 @@ impl DebugSessionManager {
     }
 
     pub fn stop(&self, id: &str) -> Result<Option<Value>> {
-        let Some(mut session) = self.sessions.lock().expect("debug sessions poisoned").remove(id)
+        let Some(mut session) = self
+            .sessions
+            .lock()
+            .expect("debug sessions poisoned")
+            .remove(id)
         else {
             return Ok(None);
         };
@@ -364,7 +374,11 @@ fn spawn_stdout_reader(mut stdout: ChildStdout) -> mpsc::Receiver<u8> {
 fn summarize_action(action: &str, result: &Value) -> String {
     let pc = result
         .get("registers")
-        .and_then(|r| r.get("rip").or_else(|| r.get("eip")).or_else(|| r.get("pc")))
+        .and_then(|r| {
+            r.get("rip")
+                .or_else(|| r.get("eip"))
+                .or_else(|| r.get("pc"))
+        })
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let signals = result
@@ -446,19 +460,56 @@ fn parse_registers(text: &str) -> Value {
 fn is_register_name(name: &str) -> bool {
     matches!(
         name,
-        "eax" | "ebx" | "ecx" | "edx" | "esi" | "edi" | "ebp" | "esp" | "eip" | "eflags"
-            | "rax" | "rbx" | "rcx" | "rdx" | "rsi" | "rdi" | "rbp" | "rsp" | "rip" | "r8"
-            | "r9" | "r10" | "r11" | "r12" | "r13" | "r14" | "r15" | "x0" | "x1" | "x2"
-            | "x3" | "x4" | "x5" | "x6" | "x7" | "sp" | "pc" | "lr" | "cpsr"
+        "eax"
+            | "ebx"
+            | "ecx"
+            | "edx"
+            | "esi"
+            | "edi"
+            | "ebp"
+            | "esp"
+            | "eip"
+            | "eflags"
+            | "rax"
+            | "rbx"
+            | "rcx"
+            | "rdx"
+            | "rsi"
+            | "rdi"
+            | "rbp"
+            | "rsp"
+            | "rip"
+            | "r8"
+            | "r9"
+            | "r10"
+            | "r11"
+            | "r12"
+            | "r13"
+            | "r14"
+            | "r15"
+            | "x0"
+            | "x1"
+            | "x2"
+            | "x3"
+            | "x4"
+            | "x5"
+            | "x6"
+            | "x7"
+            | "sp"
+            | "pc"
+            | "lr"
+            | "cpsr"
     )
 }
 
 fn extract_signals(text: &str) -> Vec<String> {
-    ["SIGSEGV", "SIGILL", "SIGABRT", "SIGBUS", "SIGFPE", "SIGTRAP"]
-        .iter()
-        .filter(|sig| text.contains(**sig))
-        .map(|sig| (*sig).to_string())
-        .collect()
+    [
+        "SIGSEGV", "SIGILL", "SIGABRT", "SIGBUS", "SIGFPE", "SIGTRAP",
+    ]
+    .iter()
+    .filter(|sig| text.contains(**sig))
+    .map(|sig| (*sig).to_string())
+    .collect()
 }
 
 fn parse_backtrace(text: &str) -> Vec<Value> {

@@ -1,10 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use petgraph::{
-    algo::dominators::Dominators,
-    csr::DefaultIx,
-    visit::IntoNeighbors,
-};
+use petgraph::{algo::dominators::Dominators, csr::DefaultIx, visit::IntoNeighbors};
 
 use super::{
     basic_block::{BlockSlot, BlockStorage, NextBlock},
@@ -181,8 +177,7 @@ fn compute_sese_address_ranges(
                 }
 
                 if c_pts.1 != ctx.cfg.single_end() {
-                    branch_block =
-                        assign_path_to_sese(block_ownership_table, ctx, c_pts.1, root);
+                    branch_block = assign_path_to_sese(block_ownership_table, ctx, c_pts.1, root);
                 }
                 if c_pts.1 == root.1 {
                     break;

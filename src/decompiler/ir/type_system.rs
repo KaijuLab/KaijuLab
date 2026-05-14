@@ -1,8 +1,7 @@
 use nodit::{Interval, NoditMap};
 
-
 #[derive(Clone, Debug)]
-pub enum VariableType{
+pub enum VariableType {
     Byte,
     Char,
     S16,
@@ -13,7 +12,7 @@ pub enum VariableType{
     F64,
     Pointer(Box<VariableType>),
     /// Offset into [`KnownStructs::storage`]
-    Struct(usize)
+    Struct(usize),
 }
 
 impl Default for VariableType {
@@ -24,10 +23,10 @@ impl Default for VariableType {
 
 pub struct Struct {
     #[allow(dead_code)]
-    fields: NoditMap<Interval<usize>, usize, VariableType>
+    fields: NoditMap<Interval<usize>, usize, VariableType>,
 }
 
-pub struct KnownStructs{
+pub struct KnownStructs {
     #[allow(dead_code)]
-    storage:Vec<Struct>
+    storage: Vec<Struct>,
 }

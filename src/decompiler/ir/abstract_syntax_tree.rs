@@ -101,11 +101,10 @@ impl AbstractSyntaxTree {
 
         for call_result in &hf.used_call_results {
             if let VariableSymbol::CallResult { call_from, call_to } = call_result {
-                let Some(call_from_slot) = hf.composed_blocks.slot_by_address(*call_from) else { continue };
-                if let Some(section) = hf
-                    .pts
-                    .get_section(call_from_slot)
-                {
+                let Some(call_from_slot) = hf.composed_blocks.slot_by_address(*call_from) else {
+                    continue;
+                };
+                if let Some(section) = hf.pts.get_section(call_from_slot) {
                     let key = VariableSymbol::CallResult {
                         call_from: *call_from,
                         call_to: call_to.clone(),
@@ -305,13 +304,25 @@ fn add_program_segment(
         false_branch,
     } = &branch_block.next
     {
-        let Some(true_branch_slot) = hf.composed_blocks.slot_by_destination(true_branch) else { return };
-        let Some(false_branch_slot) = hf.composed_blocks.slot_by_destination(false_branch) else { return };
+        let Some(true_branch_slot) = hf.composed_blocks.slot_by_destination(true_branch) else {
+            return;
+        };
+        let Some(false_branch_slot) = hf.composed_blocks.slot_by_destination(false_branch) else {
+            return;
+        };
 
-        let _true_branch_distance_to_return =
-            hf.cfg.distance_to_return.get(&true_branch_slot).copied().unwrap_or(u32::MAX);
-        let false_branch_distance_to_return =
-            hf.cfg.distance_to_return.get(&false_branch_slot).copied().unwrap_or(u32::MAX);
+        let _true_branch_distance_to_return = hf
+            .cfg
+            .distance_to_return
+            .get(&true_branch_slot)
+            .copied()
+            .unwrap_or(u32::MAX);
+        let false_branch_distance_to_return = hf
+            .cfg
+            .distance_to_return
+            .get(&false_branch_slot)
+            .copied()
+            .unwrap_or(u32::MAX);
 
         // (true_branch_distance_to_return == 0 && *true_branch != pts.1) ||
         // (false_branch_distance_to_return == 0  && *false_branch != pts.1) ||
@@ -433,7 +444,9 @@ fn add_return(
 ) {
     match hf.calling_convention {
         CallingConvention::Cdecl => {
-            if let Some(eax) = lang.sleigh.get_reg("EAX")
+            if let Some(eax) = lang
+                .sleigh
+                .get_reg("EAX")
                 .and_then(|r| r.get_var())
                 .and_then(|vn| block.registers.get(vn))
             {
@@ -444,7 +457,9 @@ fn add_return(
             }
         }
         CallingConvention::SysV64 => {
-            if let Some(rax) = lang.sleigh.get_reg("RAX")
+            if let Some(rax) = lang
+                .sleigh
+                .get_reg("RAX")
                 .and_then(|r| r.get_var())
                 .and_then(|vn| block.registers.get(vn))
             {
@@ -481,7 +496,9 @@ fn add_assignments<'a>(
             {
                 let mut destination = addr.clone();
                 destination.dereference();
-                let Some(state) = block.memory.get(addr) else { continue };
+                let Some(state) = block.memory.get(addr) else {
+                    continue;
+                };
                 stmts.push(AstStatement::Assignment {
                     sese,
                     destination,

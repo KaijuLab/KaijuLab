@@ -91,11 +91,7 @@ pub enum Event {
         ts: i64,
     },
     #[serde(rename = "job.started")]
-    JobStarted {
-        id: String,
-        kind: String,
-        ts: i64,
-    },
+    JobStarted { id: String, kind: String, ts: i64 },
     #[serde(rename = "job.progress")]
     JobProgress { id: String, pct: f32 },
     #[serde(rename = "job.finished")]
