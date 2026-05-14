@@ -2883,3 +2883,4 @@ _[Checkpoint: 6a05206f — Added PoC synthesis, constrained-write planning, and 
 [01:21:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/agent_bridge/claude.rs
 [01:21:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [01:21:26] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+[01:21:26] OBSERVE: listed files under samples/PwnableTW
