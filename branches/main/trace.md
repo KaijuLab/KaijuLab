@@ -2707,3 +2707,4 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 _[Checkpoint: 6a0511d5 — Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.]_
 ---
 
+[00:24:04] THINK: Implemented Priority 1 as exploit-drive stepwise child-process driver over changing exploit-interact because existing stdin compiler remains useful for simple one-shot probes.
