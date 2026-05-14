@@ -2967,3 +2967,4 @@ _[Checkpoint: 6a0526a3 — Added no-claude-p offline auto-pwn path; verified aut
 [01:47:38] OBSERVE: searched sysroots for "*libc.so.6"
 [01:47:38] OBSERVE: listed files under samples/PwnableTW/tcache-tear
 [01:47:38] OBSERVE: listed files under samples/PwnableTW/realloc
+[01:47:38] OBSERVE: listed files under realloc
