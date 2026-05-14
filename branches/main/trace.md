@@ -2765,3 +2765,4 @@ _[Checkpoint: 6a051631 — Implemented Priority 1 exploit-drive and Priority 2 l
 [00:33:34] OBSERVE: searched src/main.rs for "shared_object_symbol_offsets|libc_symbol""
 [00:33:34] OBSERVE: searched main.rs for "ExploitDrive|LeakProbe|heap_probe_plan_json|leak_probe_json|exploit_loop_prompt|ExploitVerify|fn shared_object_symbol_offsets|libc_symbol"
 [00:33:34] OBSERVE: read src/main.rs
+[00:33:34] OBSERVE: read src/main.rs
