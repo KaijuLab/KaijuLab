@@ -3378,3 +3378,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:30:33] OBSERVE: read src/main.rs
 [03:30:33] ACT: edited src/main.rs
 [03:30:33] OBSERVE: searched src/main.rs for "select_matching_libc_loader|matching_loaders""
+[03:30:33] OBSERVE: searched main.rs for "fn select_matching_libc_loader|matching_loaders"
