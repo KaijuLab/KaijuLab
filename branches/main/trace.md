@@ -3026,3 +3026,4 @@ _[Checkpoint: 6a052b15 — Added adjacent libc version/loader detection; auto-pw
 [01:58:14] OBSERVE: searched root for "libc.so.6"
 [01:58:14] OBSERVE: searched . for "^(GNU C Library|glibc )"
 [01:58:14] OBSERVE: listed files under /tmp/x86_64sysroot-2.27/root
+[01:58:14] OBSERVE: listed files under /tmp/x86_64sysroot-2.29/root
