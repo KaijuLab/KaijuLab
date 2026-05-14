@@ -2753,3 +2753,4 @@ _[Checkpoint: 6a0511d5 — Ran KaijuLab+Claude bounded solve loops for hacknote,
 [00:24:04] OBSERVE: searched src/main.rs
 [00:24:04] OBSERVE: read src/main.rs
 [00:24:04] OBSERVE: searched main.rs for "ExploitRecipe|BinaryFacts|ExploitScaffold|ExploitDrive|LeakProbe"
+[00:24:04] OBSERVE: searched drive_summary|fn for "interaction_summary|fn"
