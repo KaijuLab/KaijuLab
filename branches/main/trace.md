@@ -2700,3 +2700,4 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 [00:05:41] OBSERVE: listed files under /tmp/kaijulab-batch-realloc.py
 [00:05:41] OBSERVE: listed files under kaijulab-batch-realloc.py
 [00:05:41] OBSERVE: listed files under /tmp/kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py
+[00:05:41] OBSERVE: listed files under kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py
