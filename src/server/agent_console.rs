@@ -12,21 +12,21 @@ use std::{
     os::fd::{FromRawFd, RawFd},
     path::PathBuf,
     sync::{
-        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
     },
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axum::{
-    Json, Router,
     extract::{
-        Path, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, State,
     },
     response::IntoResponse,
     routing::{delete, get},
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,10 @@ const DEFAULT_TRANSCRIPT_BYTES: u64 = 5 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/agent-console", get(list_sessions))
-        .route("/api/agent-console/:agent", get(console_handler).delete(terminate_session))
+        .route(
+            "/api/agent-console/:agent",
+            get(console_handler).delete(terminate_session),
+        )
         .route(
             "/api/agent-console/:agent/transcript",
             delete(delete_transcript),
@@ -408,35 +411,33 @@ impl AgentSession {
         let child_pid = self.child_pid;
         let tx = self.tx.clone();
         let info = self.info();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(30));
-                if !running.load(Ordering::SeqCst) {
-                    break;
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(30));
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+            let now = crate::core::events::now_ts();
+            let idle_expired = idle_secs > 0
+                && now.saturating_sub(last_activity.load(Ordering::SeqCst)) as u64 > idle_secs;
+            let runtime_expired =
+                max_runtime_secs > 0 && now.saturating_sub(started_at) as u64 > max_runtime_secs;
+            if idle_expired || runtime_expired {
+                running.store(false, Ordering::SeqCst);
+                unsafe {
+                    libc::kill(child_pid, libc::SIGHUP);
                 }
-                let now = crate::core::events::now_ts();
-                let idle_expired = idle_secs > 0
-                    && now.saturating_sub(last_activity.load(Ordering::SeqCst)) as u64 > idle_secs;
-                let runtime_expired = max_runtime_secs > 0
-                    && now.saturating_sub(started_at) as u64 > max_runtime_secs;
-                if idle_expired || runtime_expired {
-                    running.store(false, Ordering::SeqCst);
-                    unsafe {
-                        libc::kill(child_pid, libc::SIGHUP);
-                    }
-                    let reason = if idle_expired {
-                        "idle timeout"
-                    } else {
-                        "runtime limit"
-                    };
-                    let _ = tx.send(ServerMessage::Error(format!(
-                        "agent console stopped by {reason}"
-                    )));
-                    let mut stopped = info.clone();
-                    stopped.running = false;
-                    let _ = tx.send(ServerMessage::Status(stopped));
-                    break;
-                }
+                let reason = if idle_expired {
+                    "idle timeout"
+                } else {
+                    "runtime limit"
+                };
+                let _ = tx.send(ServerMessage::Error(format!(
+                    "agent console stopped by {reason}"
+                )));
+                let mut stopped = info.clone();
+                stopped.running = false;
+                let _ = tx.send(ServerMessage::Status(stopped));
+                break;
             }
         });
     }
@@ -584,9 +585,18 @@ fn agent_program(agent: &str) -> Result<AgentCommand> {
             });
         }
     }
+    let args = if agent == "claude" {
+        std::env::var("KAIJULAB_AGENT_CONSOLE_CLAUDE_EFFORT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| vec!["--effort".to_string(), value])
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     Ok(AgentCommand {
         program: agent.to_string(),
-        args: Vec::new(),
+        args,
     })
 }
 
