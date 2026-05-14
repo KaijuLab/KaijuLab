@@ -2664,3 +2664,9 @@ _[Checkpoint: 6a051039 — wrote kaijulab-batch-realloc.py; wrote kaijulab-batch
 
 [00:00:33] ACT: wrote kaijulab-batch-seethefile.py
 [00:00:48] ACT: edited kaijulab-batch-seethefile.py
+
+
+---
+_[Checkpoint: 6a0510bf — wrote kaijulab-batch-tcache-tear.py; wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py]_
+---
+
