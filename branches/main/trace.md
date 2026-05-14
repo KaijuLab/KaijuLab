@@ -3441,3 +3441,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [04:21:37] ACT: edited src/main.rs
 [04:21:37] ACT: edited src/main.rs
 [04:21:37] ACT: edited src/main.rs
+[04:21:37] OBSERVE: read /tmp/kaijulab-autopwn-variants/kaijulab-tcache_tear-autopwn.py
