@@ -3328,3 +3328,4 @@ _[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loa
 _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.]_
 ---
 
+[03:14:15] OBSERVE: searched elf_plt_got_map|fn for "TargetCommand|fn"
