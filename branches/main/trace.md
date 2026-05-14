@@ -2814,3 +2814,4 @@ _[Checkpoint: 6a0519f5 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a051db5 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…]_
 ---
 
+[00:57:26] OBSERVE: read samples/PwnableTW/silver-bullet/silver_bullet.kaiju.evidence.jsonl
