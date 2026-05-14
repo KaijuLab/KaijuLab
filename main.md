@@ -128,11 +128,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 - [x] Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.
 - [x] Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.
+- [x] Implemented offline auto-pwn variant execution and added dubblesort/applestore finalizer variants; release build passes, focused verification still leaves tcache-tear,dubblesort,applestore unsolved.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 04:21 UTC] `main`: Implemented offline auto-pwn variant execution and added dubblesort/applestore finalizer variants; release build passes, focused verification still leaves tcache-tear,dubblesort,applestore unsolved.
 - [2026-05-14 03:00 UTC] `main`: Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.
 - [2026-05-14 02:45 UTC] `main`: Fixed release-mode agent prompts, direct matching-loader PoC scaffolds, capped scaffold output, and target activation before console agents so MCP active workspace is not stale.
 - [2026-05-14 02:43 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
