@@ -3061,3 +3061,4 @@ _[Checkpoint: 6a052f47 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 [02:12:24] OBSERVE: read /tmp/kaijulab-claude-tcache-after-loaders/kaijulab-tcache_tear-poc.py
 [02:12:24] OBSERVE: listed files under kaijulab-claude-tcache-after-loaders
 [02:12:24] OBSERVE: searched running|SCRIPT_READY" for "Console|console"
+[02:12:24] OBSERVE: searched main.rs for "exploit-batch-loop|exploit_loop|Agent Console|console running|SCRIPT_READY"
