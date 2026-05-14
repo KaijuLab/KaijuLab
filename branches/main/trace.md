@@ -3515,3 +3515,9 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 [04:30:10] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/server/agent_console.rs
 [04:30:10] OBSERVE: searched name|apple for "your"
 [04:30:10] OBSERVE: searched main.rs for "PwnableTW|silver_bullet|hacknote_uaf|tcache_tear|seethefile|realloc_fmt|dubblesort|applestore|what your name|apple store|tcache tear|silver bullet|hacknote|werewolf"
+
+
+---
+_[Checkpoint: 6a054fd8 — Removed challenge-specific auto-pwn recipes from main.rs, switched default batch discovery to generic ELF scan, kept auto-pwn as scaffold/facts handoff, and added Claude console effort env knob.]_
+---
+
