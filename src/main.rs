@@ -5854,7 +5854,13 @@ fn auto_pwn_json(
         let data = std::fs::read(&path).unwrap_or_default();
         let arch = binary_arch_from_data(&data);
         let interpreter = binary_interpreter_from_data(&data);
-        let effective_sysroot = effective_sysroot(sysroot, arch.as_deref(), interpreter.as_deref());
+        let effective_sysroot = auto_pwn_effective_sysroot(
+            &path,
+            &data,
+            sysroot,
+            arch.as_deref(),
+            interpreter.as_deref(),
+        );
         let stem = path
             .file_name()
             .and_then(|v| v.to_str())
@@ -5903,6 +5909,7 @@ fn auto_pwn_json(
             "status": if solved { "solved" } else { status },
             "family": candidate.get("family"),
             "confidence": candidate.get("confidence"),
+            "runtime_notes": candidate.get("runtime_notes"),
             "success_predicate": if let Some(output) = expect_output {
                 serde_json::json!({"expect_output": output})
             } else {
@@ -5934,6 +5941,7 @@ fn auto_pwn_candidate(
     let sysroot_s = sysroot
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let runtime_notes = auto_pwn_runtime_notes(binary, &lower, sysroot);
     if lower.contains("silver bullet") && lower.contains("werewolf") {
         return Ok(serde_json::json!({
             "family": "i386 stack/control-data overwrite to imported exit",
@@ -5942,6 +5950,7 @@ fn auto_pwn_candidate(
                 "Signature requires Silver Bullet menu strings and no libc leak.",
                 "Payload uses integer-overflow power accumulation to overwrite the saved return path and calls exit@plt(42)."
             ],
+            "runtime_notes": runtime_notes,
             "script": silver_bullet_exit42_script(binary, &sysroot_s),
         }));
     }
@@ -5954,6 +5963,7 @@ fn auto_pwn_candidate(
                 "Candidate derives libc offsets from the actual qemu sysroot libc before finalizing.",
                 "Predicate is deterministic command output because this UAF naturally reaches system(command)."
             ],
+            "runtime_notes": runtime_notes,
             "expect_output": "uid=",
             "script": hacknote_uaf_script(binary, &sysroot_s),
         }));
@@ -5975,8 +5985,62 @@ fn auto_pwn_candidate(
             "No verified offline finalizer matched this target's structural signature.",
             "Generated script is intentionally a non-success scaffold; it should not print SCRIPT_READY."
         ],
+        "runtime_notes": runtime_notes,
         "script": scaffold,
     }))
+}
+
+fn auto_pwn_effective_sysroot(
+    _binary: &Path,
+    data: &[u8],
+    explicit: Option<&Path>,
+    arch: Option<&str>,
+    interpreter: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        return Some(path.to_path_buf());
+    }
+    let lower = String::from_utf8_lossy(data).to_ascii_lowercase();
+    if arch == Some("i386")
+        && (lower.contains("dubblesort")
+            || lower.contains("what your name")
+            || lower.contains("seethefile")
+            || lower.contains("apple store"))
+    {
+        let legacy = PathBuf::from("/tmp/i386sysroot/root");
+        if legacy.join("lib/i386-linux-gnu/ld-2.23.so").exists()
+            || legacy.join("lib/ld-linux.so.2").exists()
+            || legacy.join("usr/lib/i386-linux-gnu/ld-linux.so.2").exists()
+        {
+            return Some(legacy);
+        }
+    }
+    effective_sysroot(None, arch, interpreter).map(|p| p.into_owned())
+}
+
+fn auto_pwn_runtime_notes(binary: &Path, lower_text: &str, sysroot: Option<&Path>) -> Vec<String> {
+    let mut notes = Vec::new();
+    let sysroot_s = sysroot
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if (lower_text.contains("tcache")
+        || lower_text.contains("realloc")
+        || lower_text.contains("malloc"))
+        && sysroot_s.contains("/opt/sysroots")
+        && !adjacent_shared_objects(binary).is_empty()
+    {
+        notes.push("selected sysroot may be newer than the bundled challenge libc; old tcache/realloc primitives can require a matching old dynamic loader, not only LD_PRELOAD".to_string());
+    }
+    if lower_text.contains("dubblesort") || lower_text.contains("what your name") {
+        notes.push("sorted ret2libc finalizer depends on libc addresses sorting above the stack canary; modern qemu/sysroot mappings can invalidate the classic layout".to_string());
+    }
+    if lower_text.contains("seethefile") {
+        notes.push("FILE/vtable finalizer depends on glibc FILE layout; use a matching i386 glibc/loader before trusting fake FILE offsets".to_string());
+    }
+    if lower_text.contains("apple store") {
+        notes.push("unlink/stack finalizer depends on stable i386 libc environ and stack layout; use matching glibc/loader for the classic primitive".to_string());
+    }
+    notes
 }
 
 fn auto_pwn_root_causes(
@@ -5998,6 +6062,16 @@ fn auto_pwn_root_causes(
         == "low"
     {
         causes.push("no verified reusable finalizer for this structural family yet");
+    }
+    if let Some(notes) = candidate.get("runtime_notes").and_then(|v| v.as_array()) {
+        for note in notes.iter().filter_map(|v| v.as_str()) {
+            if note.contains("matching old dynamic loader")
+                || note.contains("matching i386 glibc")
+                || note.contains("modern qemu/sysroot")
+            {
+                causes.push(note);
+            }
+        }
     }
     if let Some(verify) = verify {
         let combined = format!(
