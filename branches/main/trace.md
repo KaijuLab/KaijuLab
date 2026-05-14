@@ -3053,3 +3053,4 @@ _[Checkpoint: 6a052f47 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 
 [02:12:24] NOTE: Claude console retest after loader sysroots: tcache-tear timed out 300s with no PoC; realloc wrote best-effort PoC but verify failed SIGABRT double-free, no target exit 42.
 [02:12:24] OBSERVE: listed files under /tmp/x86_64sysroot-2.27/root
+[02:12:24] OBSERVE: listed files under /tmp/x86_64sysroot-2.29/root
