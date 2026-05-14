@@ -3521,3 +3521,4 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 _[Checkpoint: 6a054fd8 — Removed challenge-specific auto-pwn recipes from main.rs, switched default batch discovery to generic ELF scan, kept auto-pwn as scaffold/facts handoff, and added Claude console effort env knob.]_
 ---
 
+[04:49:00] OBSERVE: read kaijulab-re-alloc-poc.py
