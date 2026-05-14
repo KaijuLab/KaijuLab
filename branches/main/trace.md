@@ -3461,3 +3461,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and added dubblesort/applestore finalizer variants; release build passes, focused verification still leaves tcache-tear,dubblesort,applestore unsolved.]_
 ---
 
+[04:29:57] THINK: Remove challenge-specific auto-pwn finalizers over fixing individual samples because KaijuLab should provide reusable RE primitives; agents write target-specific scripts outside workstation core.
