@@ -2696,3 +2696,4 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 [00:05:41] OBSERVE: read /tmp/kaijulab-batch-silver-bullet.log
 [00:05:41] OBSERVE: read /tmp/kaijulab-batch-silver-bullet.log
 [00:05:41] OBSERVE: listed files under samples/PwnableTW/realloc
+[00:05:41] OBSERVE: listed files under realloc
