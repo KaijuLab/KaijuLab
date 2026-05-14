@@ -3372,3 +3372,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:30:33] OBSERVE: listed files under samples/PwnableTW/tcache-tear
 [03:30:33] OBSERVE: listed files under tcache-tear
 [03:30:33] ACT: edited src/main.rs
+[03:30:33] OBSERVE: read src/main.rs
