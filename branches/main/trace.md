@@ -3008,3 +3008,4 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 [01:53:11] OBSERVE: searched main.rs for "fn adjacent_shared_objects|fn select_libc_path|fn libc_symbol_offsets|glibc"
 [01:53:11] OBSERVE: read src/main.rs
 [01:53:11] OBSERVE: read src/main.rs
+[01:53:11] OBSERVE: read src/main.rs
