@@ -3322,3 +3322,9 @@ _[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loa
 [03:00:39] OBSERVE: searched src/main.rs
 [03:00:39] OBSERVE: searched main.rs for "send_hex|send_bytes|send_line|recv_until|read_for_ms"
 [03:00:39] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and probes in src/main.rs; release build passes, re-alloc heap-probe-plan now emits targeted realloc-zero/tcache guidance and poc-synthesize emits concrete menu helpers.]_
+---
+
