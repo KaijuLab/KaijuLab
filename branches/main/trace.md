@@ -3002,3 +3002,4 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 [01:53:11] OBSERVE: listed files under /opt/sysroots
 [01:53:11] OBSERVE: read src/main.rs
 [01:53:11] OBSERVE: read src/main.rs
+[01:53:11] OBSERVE: listed files under koukyosyumei
