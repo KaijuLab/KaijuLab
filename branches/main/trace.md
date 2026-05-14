@@ -2822,3 +2822,4 @@ _[Checkpoint: 6a051db5 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; e
 _[Checkpoint: 6a051f20 — edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…]_
 ---
 
+[01:07:46] NOTE: Exploit batch canary: console mode idled without writing; claude-exec with dontAsk reported tool/write denial; adapter switched default permission-mode to bypassPermissions; canary still timed out at 240s, no PoC.
