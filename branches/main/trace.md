@@ -2887,3 +2887,9 @@ _[Checkpoint: 6a05206f — Added PoC synthesis, constrained-write planning, and 
 [01:21:27] OBSERVE: listed files under PwnableTW
 [01:21:27] OBSERVE: searched . for "/realloc$|realloc/"
 [01:21:27] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a05239e — Removed default claude -p usage from batch automation; added prompt-pack flow, disabled claude-exec, fixed realloc default target path, verified all seven prompt packs.]_
+---
+
