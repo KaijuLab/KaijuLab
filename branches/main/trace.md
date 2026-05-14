@@ -3490,3 +3490,4 @@ _[Checkpoint: 6a054ddf — Implemented offline auto-pwn variant execution and ad
 [04:30:10] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
 [04:30:10] OBSERVE: searched name|apple for "your"
 [04:30:10] OBSERVE: searched src/main.rs
+[04:30:10] OBSERVE: searched main.rs for "default_pwnabletw_batch_files|default_local_binary_batch_files|auto_pwn_candidate\("
