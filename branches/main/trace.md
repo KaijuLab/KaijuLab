@@ -3030,3 +3030,9 @@ _[Checkpoint: 6a052b15 — Added adjacent libc version/loader detection; auto-pw
 [01:58:14] OBSERVE: searched root for "ld-2.27.so"
 [01:58:14] OBSERVE: searched root for "ld-2.29.so"
 [01:58:14] ACT: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs
+
+
+---
+_[Checkpoint: 6a052c45 — Downloaded/extracted Ubuntu glibc loaders: 2.27 and 2.29 amd64 into /tmp/x86_64sysroot/root and clean /tmp/x86_64sysroot-<version>/root; KaijuLab detects them.]_
+---
+
