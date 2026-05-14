@@ -2690,3 +2690,4 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 [00:05:41] OBSERVE: listed files under samples
 [00:05:41] OBSERVE: searched samples for "realloc"
 [00:05:41] OBSERVE: listed files under /tmp/kaijulab-batch-hacknote.py
+[00:05:41] OBSERVE: listed files under kaijulab-batch-hacknote.py
