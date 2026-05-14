@@ -3005,3 +3005,4 @@ _[Checkpoint: 6a0529d5 — Committed auto-pwn compatibility detection; current a
 [01:53:11] OBSERVE: listed files under koukyosyumei
 [01:53:11] OBSERVE: searched . for "ld-(2\.(27|29)|linux-x86-64).*so|ld-2\.27|ld-2\.29"
 [01:53:11] OBSERVE: searched select_libc_path|fn for "adjacent_shared_objects|fn"
+[01:53:11] OBSERVE: searched main.rs for "fn adjacent_shared_objects|fn select_libc_path|fn libc_symbol_offsets|glibc"
