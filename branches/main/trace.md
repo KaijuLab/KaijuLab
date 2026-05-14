@@ -2701,3 +2701,9 @@ _[Checkpoint: 6a05118b — edited kaijulab-batch-seethefile.py; wrote kaijulab-b
 [00:05:41] OBSERVE: listed files under kaijulab-batch-realloc.py
 [00:05:41] OBSERVE: listed files under /tmp/kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py
 [00:05:41] OBSERVE: listed files under kaijulab-batch-{hacknote,silver-bullet,realloc,tcache-tear,seethefile,dubblesort,applestore}.py
+
+
+---
+_[Checkpoint: 6a0511d5 — Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.]_
+---
+

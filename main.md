@@ -108,11 +108,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] wrote kaijulab-batch-tcache-tear.py; wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py
 - [x] wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py
 - [x] edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py
+- [x] Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 00:05 UTC] `main`: Ran KaijuLab+Claude bounded solve loops for hacknote, silver-bullet, realloc, tcache-tear, seethefile, dubblesort, applestore. All produced artifacts except no success; independent exploit-verify confirmed success=false for all seven.
 - [2026-05-14 00:04 UTC] `main`: edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py; wrote kaijulab-batch-applestore.py
 - [2026-05-14 00:02 UTC] `main`: wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py; wrote kaijulab-batch-dubblesort.py
 - [2026-05-14 00:01 UTC] `main`: wrote kaijulab-batch-tcache-tear.py; wrote kaijulab-batch-seethefile.py; edited kaijulab-batch-seethefile.py
