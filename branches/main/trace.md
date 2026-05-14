@@ -3342,3 +3342,4 @@ _[Checkpoint: 6a053adb — Improved realloc-menu heap primitive synthesis and pr
 [03:14:15] OBSERVE: searched main.rs for "auto-pwn|autopwn|AUTO_PWN|offline finalizer|silver|hacknote|seethefile|dubblesort|applestore|tcache|realloc|Known"
 [03:14:15] OBSERVE: read src/main.rs
 [03:14:15] OBSERVE: listed files under samples/PwnableTW/tcache-tear
+[03:14:15] OBSERVE: listed files under tcache-tear
