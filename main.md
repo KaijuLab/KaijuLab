@@ -120,11 +120,13 @@ Evaluate web app refactor and Claude/Codex integration strategy
 - [x] Committed auto-pwn compatibility detection; current auto-pwn still solves 2/7 and explains libc/loader blockers for remaining five.
 - [x] Added adjacent libc version/loader detection; auto-pwn now reports tcache-tear glibc 2.27 missing ld-2.27.so and realloc glibc 2.29 missing ld-2.29.so.
 - [x] Downloaded/extracted Ubuntu glibc loaders: 2.27 and 2.29 amd64 into /tmp/x86_64sysroot/root and clean /tmp/x86_64sysroot-<version>/root; KaijuLab detects them.
+- [x] edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 
 ## Active Branches
 - main (primary)
 
 ## Notes
+- [2026-05-14 02:03 UTC] `main`: edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/koukyosyumei/Dev/KaijuLab/src/main.rs; edited /home/kou…
 - [2026-05-14 01:58 UTC] `main`: Downloaded/extracted Ubuntu glibc loaders: 2.27 and 2.29 amd64 into /tmp/x86_64sysroot/root and clean /tmp/x86_64sysroot-<version>/root; KaijuLab detects them.
 - [2026-05-14 01:53 UTC] `main`: Added adjacent libc version/loader detection; auto-pwn now reports tcache-tear glibc 2.27 missing ld-2.27.so and realloc glibc 2.29 missing ld-2.29.so.
 - [2026-05-14 01:48 UTC] `main`: Committed auto-pwn compatibility detection; current auto-pwn still solves 2/7 and explains libc/loader blockers for remaining five.
