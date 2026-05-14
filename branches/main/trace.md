@@ -3294,3 +3294,4 @@ _[Checkpoint: 6a053732 — Fixed release-mode agent prompts, direct matching-loa
 [03:00:39] OBSERVE: read /tmp/kaijulab-batch-realloc.py
 [03:00:39] OBSERVE: read /tmp/kaijulab-resolve-realloc.py
 [03:00:39] OBSERVE: searched poc_synthesize_json|fn for "poc_skeleton_text|fn"
+[03:00:39] OBSERVE: searched main.rs for "fn poc_skeleton_text|fn poc_synthesize_json|fn heap_probe_plan_json|fn runtime_run_json|fn interesting_strings|imports|dynsym|realloc"
